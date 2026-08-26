@@ -1,0 +1,3 @@
+{
+  "buildCommand": "rm -f prisma/demo-seed.db prisma/demo-seed.db-journal && npx prisma generate && DATABASE_URL=\"file:./demo-seed.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./demo-seed.db\" npx tsx prisma/seed.ts && next build"
+}

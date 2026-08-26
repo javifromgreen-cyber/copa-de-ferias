@@ -27,6 +27,24 @@ autenticación de Admin por contraseña (ver más abajo).
 4. Ejecuta `npx prisma migrate deploy` como parte del build o de un paso
    previo — no hagas `migrate dev` en producción.
 
+### `vercel.json` — solo para Preview Deployments en modo demo
+
+El `vercel.json` de este repo tiene un `buildCommand` pensado únicamente
+para poder navegar una Preview Deployment sin conectar Postgres/Supabase:
+genera `prisma/demo-seed.db` (SQLite migrado + con el seed habitual) antes
+de `next build`, y `src/lib/db.ts` copia ese archivo a `/tmp` en cada
+arranque en frío del entorno serverless de Vercel (el resto del filesystem
+del despliegue es de solo lectura). Esto **no es persistencia real**: cada
+instancia serverless nueva arranca desde el estado del seed, y los cambios
+solo duran mientras esa instancia siga caliente. Ese comportamiento solo se
+activa cuando `process.env.VERCEL` existe **y** `APP_MODE` no es
+`"production"` — nunca afecta a un despliegue de producción.
+
+Para un despliegue real en Vercel (Postgres/Supabase, `APP_MODE=production`):
+sustituye el `buildCommand` de `vercel.json` por uno normal (`next build`,
+o bórralo para que Vercel use `npm run build`) y sigue el resto de esta
+sección tal cual.
+
 ## Cron
 
 Configura una tarea diaria contra `/api/cron/process-emails` con la

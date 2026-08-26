@@ -44,6 +44,9 @@ next-env.d.ts
 # database (local demo)
 /prisma/dev.db
 /prisma/dev.db-journal
+# built by vercel.json's buildCommand for Preview Deployments — see docs/DEPLOYMENT.md
+/prisma/demo-seed.db
+/prisma/demo-seed.db-journal
 
 # playwright
 /test-results/

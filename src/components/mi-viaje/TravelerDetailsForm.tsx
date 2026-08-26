@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { updateTravelerDetails } from "@/server/actions/mi-viaje";
 import { track } from "@/lib/analytics/events";
+import { isTravelerComplete } from "@/lib/mi-viaje/completeness";
 
 export type TravelerDetailsData = {
   id: string;
@@ -20,20 +21,6 @@ export type TravelerDetailsData = {
   emergencyContact: string;
   address: string;
 };
-
-type CompletenessCheck = {
-  docType: string;
-  docNumber: string;
-  docExpiry: string | Date | null;
-  nationality: string;
-  phone: string;
-  emergencyContact: string;
-  address: string;
-};
-
-export function isTravelerComplete(t: CompletenessCheck) {
-  return Boolean(t.docType && t.docNumber && t.docExpiry && t.nationality && t.phone && t.emergencyContact && t.address);
-}
 
 export function TravelerDetailsForm({ accessToken, traveler }: { accessToken: string; traveler: TravelerDetailsData }) {
   const router = useRouter();
