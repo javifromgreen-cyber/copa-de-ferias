@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+:root {
+  --color-ivory: #efe9da;
+  --color-ivory-dark: #e2dac2;
+  --color-carbon: #1b1912;
+  --color-carbon-soft: #322e24;
+  --color-cement: #8f897a;
+  --color-cement-light: #cac4b2;
+  --color-stamp: #a85a2a;
+  --color-white: #ffffff;
+
+  --background: var(--color-ivory);
+  --foreground: var(--color-carbon);
+}
+
+@theme inline {
+  --color-ivory: var(--color-ivory);
+  --color-ivory-dark: var(--color-ivory-dark);
+  --color-carbon: var(--color-carbon);
+  --color-carbon-soft: var(--color-carbon-soft);
+  --color-cement: var(--color-cement);
+  --color-cement-light: var(--color-cement-light);
+  --color-stamp: var(--color-stamp);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --font-display: var(--font-oswald), "Arial Narrow", sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-ivory);
+  color: var(--color-carbon);
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+/* Subtle film-grain texture used behind hero/photo blocks. */
+.grain-overlay {
+  position: relative;
+}
+.grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+.sticky-cta-safe-area {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in {
+    animation: cdf-fade-in 0.4s ease-out;
+  }
+}
+
+@keyframes cdf-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
