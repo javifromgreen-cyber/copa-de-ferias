@@ -57,11 +57,12 @@ export type NormalizedFlightOffer = {
 
 export interface FlightProvider {
   readonly kind: string;
-  /** Returns [] (never throws) when unavailable — e.g. no credentials configured. */
-  getOffers(params: {
-    originAirport: string;
-    destinationAirport: string;
-    outboundDaypart?: Daypart;
-    returnDaypart?: Daypart;
-  }): Promise<NormalizedFlightOffer[]>;
+  /**
+   * Returns every real candidate round-trip for the given route and
+   * calendar days — daypart/preference filtering happens downstream (see
+   * src/lib/checkout-atu-aire/flightOptions.ts), never inside the
+   * provider. Returns [] (never throws) when unavailable — e.g. no
+   * credentials configured.
+   */
+  getOffers(params: { originAirport: string; destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<NormalizedFlightOffer[]>;
 }
