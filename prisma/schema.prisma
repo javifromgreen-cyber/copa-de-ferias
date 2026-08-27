@@ -103,6 +103,11 @@ model Trip {
   // separately, only when a traveler needs a same-sex roommate match.
   requiredTravelerFields String @default("nationality,docType,docNumber,docExpiry,docCountry")
 
+  // Whether this trip needs a shipping/billing address before payment (e.g.
+  // to send the physical Pasaporte CDF pack) — a single address on the
+  // booking/buyer, never one per traveler (see checkout §4).
+  requiresShippingAddress Boolean @default(false)
+
   scheduleStatus ScheduleStatus @default(provisional)
 
   heroImageKey String @default("default") // maps to a generated placeholder photo treatment
@@ -322,7 +327,10 @@ model Traveler {
   roomPreference RoomPreference @default(share_with_group)
   roomPartnerName String @default("")
 
-  // Post-purchase progressive data collection ("Mi Viaje" checklist).
+  // Data captured during checkout when the trip requires it (see
+  // Trip.requiredTravelerFields) — no longer a post-purchase "Mi Viaje"
+  // checklist for a new booking, though the fields remain editable there
+  // for corrections.
   nationality       String    @default("")
   sex               String    @default("")
   docType            String   @default("") // dni | passport
@@ -330,8 +338,8 @@ model Traveler {
   docExpiry          DateTime?
   docCountry          String  @default("")
   phone               String  @default("")
-  emergencyContact    String  @default("")
-  address             String  @default("")
+  emergencyContactName  String @default("")
+  emergencyContactPhone String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -25,6 +25,7 @@ export const BLANK_TRIP_FORM: TripFormInput = {
   minDeadlineDate: "",
   singleSupplement: 0,
   requiredTravelerFields: "nationality,docType,docNumber,docExpiry,docCountry",
+  requiresShippingAddress: false,
   scheduleStatus: "provisional",
   heroImageKey: "default",
   description: "",
@@ -82,6 +83,7 @@ type TripWithRelations = {
   minDeadlineDate: Date | null;
   singleSupplement: number;
   requiredTravelerFields: string;
+  requiresShippingAddress: boolean;
   scheduleStatus: TripFormInput["scheduleStatus"];
   heroImageKey: string;
   description: string;
@@ -140,6 +142,7 @@ export function tripToFormInput(trip: TripWithRelations): TripFormInput {
     minDeadlineDate: trip.minDeadlineDate ? trip.minDeadlineDate.toISOString() : "",
     singleSupplement: trip.singleSupplement,
     requiredTravelerFields: trip.requiredTravelerFields,
+    requiresShippingAddress: trip.requiresShippingAddress,
     scheduleStatus: trip.scheduleStatus,
     heroImageKey: trip.heroImageKey,
     description: trip.description,

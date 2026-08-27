@@ -30,6 +30,9 @@ type TravelerFull = {
   docExpiry: string;
   docCountry: string;
   sex: string;
+  phone: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
 };
 
 function emptyTraveler(defaultOrigin: string): TravelerFull {
@@ -44,6 +47,9 @@ function emptyTraveler(defaultOrigin: string): TravelerFull {
     docExpiry: "",
     docCountry: "",
     sex: "",
+    phone: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
   };
 }
 
@@ -59,6 +65,7 @@ type TripInfo = {
   isDemo: boolean;
   origins: string[];
   requiredTravelerFields: string[];
+  requiresShippingAddress: boolean;
   hotelStars: number;
   ticketCategory: string;
   hasInsurance: boolean;
@@ -126,7 +133,10 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
   const canGoStep2 = travelers.every((t) => {
     if (!t.firstName.trim() || !t.lastName.trim()) return false;
     if (trip.origins.length > 0 && !t.originCity.trim()) return false;
-    return trip.requiredTravelerFields.every((key) => Boolean(t[key as keyof TravelerFull]));
+    return trip.requiredTravelerFields.every((key) => {
+      if (key === "emergencyContact") return t.emergencyContactName.trim() && t.emergencyContactPhone.trim();
+      return Boolean(t[key as keyof TravelerFull]);
+    });
   });
   const canGoStep3 =
     isRoomAssignmentComplete(roomOf) &&
@@ -135,7 +145,8 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
     buyer.buyerFirstName.trim() &&
     buyer.buyerLastName.trim() &&
     /.+@.+\..+/.test(buyer.buyerEmail) &&
-    buyer.buyerPhone.trim().length >= 6;
+    buyer.buyerPhone.trim().length >= 6 &&
+    (!trip.requiresShippingAddress || buyer.billingAddress.trim());
 
   const stepValid = useMemo(() => {
     if (step === 0) return canGoStep1;
@@ -244,133 +255,200 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
                 cerrada de una vez. Los campos marcados con * son obligatorios para este viaje.
               </p>
             </div>
-            {travelers.map((t, i) => (
-              <fieldset key={i} className="rounded-sm border border-carbon/15 p-4">
-                <legend className="px-1 text-sm font-medium">Viajero {i + 1}</legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="mb-1 block text-xs tracking-wide uppercase">Nombre *</span>
-                    <input
-                      value={t.firstName}
-                      onChange={(e) => updateTraveler(i, { firstName: e.target.value })}
-                      className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      required
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs tracking-wide uppercase">Apellidos *</span>
-                    <input
-                      value={t.lastName}
-                      onChange={(e) => updateTraveler(i, { lastName: e.target.value })}
-                      className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      required
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs tracking-wide uppercase">
-                      Ciudad de salida{trip.origins.length > 0 ? " *" : ""}
-                    </span>
-                    {trip.origins.length > 0 ? (
-                      <select
-                        value={t.originCity}
-                        onChange={(e) => updateTraveler(i, { originCity: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      >
-                        {trip.origins.map((city) => (
-                          <option key={city} value={city}>
-                            {city}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        value={t.originCity}
-                        onChange={(e) => updateTraveler(i, { originCity: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    )}
-                  </label>
-                  {trip.requiredTravelerFields.includes("birthDate") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.birthDate} *
-                      </span>
-                      <input
-                        type="date"
-                        value={t.birthDate}
-                        onChange={(e) => updateTraveler(i, { birthDate: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
+            {travelers.map((t, i) => {
+              const req = (key: string) => trip.requiredTravelerFields.includes(key);
+              const hasDocGroup = req("docType") || req("docNumber") || req("docExpiry") || req("docCountry");
+              const hasContactGroup = req("phone") || req("emergencyContact");
+              return (
+                <fieldset key={i} className="space-y-5 rounded-sm border border-carbon/15 p-4">
+                  <legend className="px-1 text-sm font-medium">Viajero {i + 1}</legend>
+
+                  <div>
+                    <p className="mb-2 text-xs font-medium tracking-wide text-carbon/50 uppercase">Datos personales</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs tracking-wide uppercase">Nombre *</span>
+                        <input
+                          value={t.firstName}
+                          onChange={(e) => updateTraveler(i, { firstName: e.target.value })}
+                          className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          required
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs tracking-wide uppercase">Apellidos *</span>
+                        <input
+                          value={t.lastName}
+                          onChange={(e) => updateTraveler(i, { lastName: e.target.value })}
+                          className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          required
+                        />
+                      </label>
+                      {req("birthDate") ? (
+                        <label className="block">
+                          <span className="mb-1 block text-xs tracking-wide uppercase">
+                            {TRAVELER_FIELD_LABELS.birthDate} *
+                          </span>
+                          <input
+                            type="date"
+                            value={t.birthDate}
+                            onChange={(e) => updateTraveler(i, { birthDate: e.target.value })}
+                            className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          />
+                        </label>
+                      ) : null}
+                      {req("nationality") ? (
+                        <label className="block">
+                          <span className="mb-1 block text-xs tracking-wide uppercase">
+                            {TRAVELER_FIELD_LABELS.nationality} *
+                          </span>
+                          <input
+                            value={t.nationality}
+                            onChange={(e) => updateTraveler(i, { nationality: e.target.value })}
+                            className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-xs font-medium tracking-wide text-carbon/50 uppercase">Viaje</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs tracking-wide uppercase">
+                          Ciudad de salida{trip.origins.length > 0 ? " *" : ""}
+                        </span>
+                        {trip.origins.length > 0 ? (
+                          <select
+                            value={t.originCity}
+                            onChange={(e) => updateTraveler(i, { originCity: e.target.value })}
+                            className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          >
+                            {trip.origins.map((city) => (
+                              <option key={city} value={city}>
+                                {city}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={t.originCity}
+                            onChange={(e) => updateTraveler(i, { originCity: e.target.value })}
+                            className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                          />
+                        )}
+                      </label>
+                    </div>
+                  </div>
+
+                  {hasDocGroup ? (
+                    <div>
+                      <p className="mb-2 text-xs font-medium tracking-wide text-carbon/50 uppercase">Documentación</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {req("docType") ? (
+                          <label className="block">
+                            <span className="mb-1 block text-xs tracking-wide uppercase">
+                              {TRAVELER_FIELD_LABELS.docType} *
+                            </span>
+                            <select
+                              value={t.docType}
+                              onChange={(e) => updateTraveler(i, { docType: e.target.value as TravelerFull["docType"] })}
+                              className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="">Selecciona</option>
+                              <option value="dni">DNI</option>
+                              <option value="passport">Pasaporte</option>
+                            </select>
+                          </label>
+                        ) : null}
+                        {req("docNumber") ? (
+                          <label className="block">
+                            <span className="mb-1 block text-xs tracking-wide uppercase">
+                              {TRAVELER_FIELD_LABELS.docNumber} *
+                            </span>
+                            <input
+                              value={t.docNumber}
+                              onChange={(e) => updateTraveler(i, { docNumber: e.target.value })}
+                              className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                        ) : null}
+                        {req("docExpiry") ? (
+                          <label className="block">
+                            <span className="mb-1 block text-xs tracking-wide uppercase">
+                              {TRAVELER_FIELD_LABELS.docExpiry} *
+                            </span>
+                            <input
+                              type="date"
+                              value={t.docExpiry}
+                              onChange={(e) => updateTraveler(i, { docExpiry: e.target.value })}
+                              className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                        ) : null}
+                        {req("docCountry") ? (
+                          <label className="block">
+                            <span className="mb-1 block text-xs tracking-wide uppercase">
+                              {TRAVELER_FIELD_LABELS.docCountry} *
+                            </span>
+                            <input
+                              value={t.docCountry}
+                              onChange={(e) => updateTraveler(i, { docCountry: e.target.value })}
+                              className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+                    </div>
                   ) : null}
-                  {trip.requiredTravelerFields.includes("nationality") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.nationality} *
-                      </span>
-                      <input
-                        value={t.nationality}
-                        onChange={(e) => updateTraveler(i, { nationality: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
+
+                  {hasContactGroup ? (
+                    <div>
+                      <p className="mb-2 text-xs font-medium tracking-wide text-carbon/50 uppercase">Contacto</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {req("phone") ? (
+                          <label className="block">
+                            <span className="mb-1 block text-xs tracking-wide uppercase">
+                              {TRAVELER_FIELD_LABELS.phone} *
+                            </span>
+                            <input
+                              value={t.phone}
+                              onChange={(e) => updateTraveler(i, { phone: e.target.value })}
+                              className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                        ) : null}
+                        {req("emergencyContact") ? (
+                          <>
+                            <label className="block">
+                              <span className="mb-1 block text-xs tracking-wide uppercase">
+                                Contacto de emergencia — nombre *
+                              </span>
+                              <input
+                                value={t.emergencyContactName}
+                                onChange={(e) => updateTraveler(i, { emergencyContactName: e.target.value })}
+                                className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block text-xs tracking-wide uppercase">
+                                Contacto de emergencia — teléfono *
+                              </span>
+                              <input
+                                value={t.emergencyContactPhone}
+                                onChange={(e) => updateTraveler(i, { emergencyContactPhone: e.target.value })}
+                                className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
                   ) : null}
-                  {trip.requiredTravelerFields.includes("docType") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.docType} *
-                      </span>
-                      <select
-                        value={t.docType}
-                        onChange={(e) => updateTraveler(i, { docType: e.target.value as TravelerFull["docType"] })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      >
-                        <option value="">Selecciona</option>
-                        <option value="dni">DNI</option>
-                        <option value="passport">Pasaporte</option>
-                      </select>
-                    </label>
-                  ) : null}
-                  {trip.requiredTravelerFields.includes("docNumber") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.docNumber} *
-                      </span>
-                      <input
-                        value={t.docNumber}
-                        onChange={(e) => updateTraveler(i, { docNumber: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
-                  ) : null}
-                  {trip.requiredTravelerFields.includes("docExpiry") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.docExpiry} *
-                      </span>
-                      <input
-                        type="date"
-                        value={t.docExpiry}
-                        onChange={(e) => updateTraveler(i, { docExpiry: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
-                  ) : null}
-                  {trip.requiredTravelerFields.includes("docCountry") ? (
-                    <label className="block">
-                      <span className="mb-1 block text-xs tracking-wide uppercase">
-                        {TRAVELER_FIELD_LABELS.docCountry} *
-                      </span>
-                      <input
-                        value={t.docCountry}
-                        onChange={(e) => updateTraveler(i, { docCountry: e.target.value })}
-                        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
-                  ) : null}
-                </div>
-              </fieldset>
-            ))}
+                </fieldset>
+              );
+            })}
           </section>
         ) : null}
 
@@ -453,7 +531,12 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
                 />
               </label>
               <label className="block sm:col-span-2">
-                <span className="mb-1 block text-xs tracking-wide uppercase">Dirección de facturación (opcional)</span>
+                <span className="mb-1 block text-xs tracking-wide uppercase">
+                  Dirección de envío{trip.requiresShippingAddress ? " *" : " (opcional)"}
+                </span>
+                {trip.requiresShippingAddress ? (
+                  <p className="mb-1 text-xs text-carbon/50">La necesitamos para enviarte tu Pasaporte CDF y la pegatina del viaje.</p>
+                ) : null}
                 <input
                   value={buyer.billingAddress}
                   onChange={(e) => setBuyer((b) => ({ ...b, billingAddress: e.target.value }))}

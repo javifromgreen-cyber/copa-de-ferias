@@ -34,6 +34,9 @@ export const checkoutTravelerSchema = z.object({
   docCountry: z.string().trim().max(80).optional().default(""),
   // Only ever needed to match a same-sex roommate — never a blanket requirement.
   sex: z.string().trim().max(40).optional().default(""),
+  phone: z.string().trim().max(30).optional().default(""),
+  emergencyContactName: z.string().trim().max(160).optional().default(""),
+  emergencyContactPhone: z.string().trim().max(30).optional().default(""),
   roomPreference: travelerRoomPreference,
   roomPartnerName: z.string().trim().max(160).optional().default(""),
 });
@@ -44,6 +47,8 @@ export const checkoutSchema = z.object({
   buyerLastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
   buyerEmail: z.string().trim().email("Email no válido"),
   buyerPhone: z.string().trim().min(6, "Teléfono no válido").max(30),
+  // Required only when the trip is configured to need it (Trip.requiresShippingAddress) —
+  // enforced server-side in createBooking(), not by this static schema.
   billingAddress: z.string().trim().max(200).optional().default(""),
   travelers: z.array(checkoutTravelerSchema).min(1).max(20),
   acceptedConditions: z.literal(true, { message: "Debes aceptar las condiciones" }),
@@ -60,8 +65,8 @@ export const travelerDetailsSchema = z.object({
   docExpiry: z.string().optional().default(""),
   docCountry: z.string().trim().max(80).optional().default(""),
   phone: z.string().trim().max(30).optional().default(""),
-  emergencyContact: z.string().trim().max(160).optional().default(""),
-  address: z.string().trim().max(200).optional().default(""),
+  emergencyContactName: z.string().trim().max(160).optional().default(""),
+  emergencyContactPhone: z.string().trim().max(30).optional().default(""),
 });
 export type TravelerDetailsInput = z.infer<typeof travelerDetailsSchema>;
 

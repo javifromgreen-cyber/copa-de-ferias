@@ -18,10 +18,17 @@ export type TravelerDetailsData = {
   docExpiry: string; // yyyy-mm-dd or ""
   docCountry: string;
   phone: string;
-  emergencyContact: string;
-  address: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
 };
 
+/**
+ * A consult-first row: for a normal booking these fields were already
+ * collected at checkout, so this defaults to collapsed with a "Datos
+ * completos" summary. It only opens automatically when something is
+ * genuinely still missing (see checkout §11) — it is not a place a
+ * client is routinely invited to "complete" things.
+ */
 export function TravelerDetailsForm({ accessToken, traveler }: { accessToken: string; traveler: TravelerDetailsData }) {
   const router = useRouter();
   const [form, setForm] = useState(traveler);
@@ -54,7 +61,7 @@ export function TravelerDetailsForm({ accessToken, traveler }: { accessToken: st
           {traveler.firstName} {traveler.lastName}
         </span>
         <span className={complete ? "text-xs text-carbon/50 uppercase" : "text-xs text-stamp uppercase"}>
-          {complete ? "Completo" : "Datos pendientes"}
+          {complete ? "Datos completos" : "Datos pendientes"}
         </span>
       </button>
 
@@ -123,18 +130,18 @@ export function TravelerDetailsForm({ accessToken, traveler }: { accessToken: st
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs tracking-wide uppercase">Contacto de emergencia</span>
+              <span className="mb-1 block text-xs tracking-wide uppercase">Contacto de emergencia — nombre</span>
               <input
-                value={form.emergencyContact}
-                onChange={(e) => setForm((f) => ({ ...f, emergencyContact: e.target.value }))}
+                value={form.emergencyContactName}
+                onChange={(e) => setForm((f) => ({ ...f, emergencyContactName: e.target.value }))}
                 className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
               />
             </label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-xs tracking-wide uppercase">Dirección postal</span>
+            <label className="block">
+              <span className="mb-1 block text-xs tracking-wide uppercase">Contacto de emergencia — teléfono</span>
               <input
-                value={form.address}
-                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+                value={form.emergencyContactPhone}
+                onChange={(e) => setForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))}
                 className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
               />
             </label>

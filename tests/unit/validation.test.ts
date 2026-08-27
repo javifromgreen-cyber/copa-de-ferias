@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { leadSchema, checkoutSchema } from "@/lib/validation/schemas";
+import { leadSchema, checkoutSchema, checkoutTravelerSchema } from "@/lib/validation/schemas";
+import { TRAVELER_FIELD_KEYS, TRAVELER_FIELD_GROUPS, parseRequiredFields } from "@/lib/checkout/travelerFields";
 
 describe("leadSchema", () => {
   it("requires explicit consent before saving a lead", () => {
@@ -28,7 +29,6 @@ describe("leadSchema", () => {
 describe("checkoutSchema", () => {
   const base = {
     tripId: "trip_1",
-    originCity: "Barcelona",
     buyerFirstName: "Ana",
     buyerLastName: "García",
     buyerEmail: "ana@example.com",
@@ -45,5 +45,55 @@ describe("checkoutSchema", () => {
   it("accepts checkout once conditions are accepted", () => {
     const result = checkoutSchema.safeParse({ ...base, acceptedConditions: true });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("checkoutTravelerSchema", () => {
+  it("accepts the full set of checkout-time fields, including emergency contact", () => {
+    const result = checkoutTravelerSchema.safeParse({
+      firstName: "Ana",
+      lastName: "García",
+      originCity: "Barcelona",
+      birthDate: "1990-01-01",
+      nationality: "Española",
+      docType: "dni",
+      docNumber: "12345678A",
+      docExpiry: "2030-01-01",
+      docCountry: "España",
+      sex: "",
+      phone: "600000000",
+      emergencyContactName: "Pedro García",
+      emergencyContactPhone: "600111222",
+      roomPreference: "share_with_group",
+      roomPartnerName: "",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("still works with only name+room, everything else optional at the schema level", () => {
+    const result = checkoutTravelerSchema.safeParse({
+      firstName: "Ana",
+      lastName: "García",
+      roomPreference: "single",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("travelerFields config", () => {
+  it("lists phone and emergencyContact as configurable required fields", () => {
+    expect(TRAVELER_FIELD_KEYS).toContain("phone");
+    expect(TRAVELER_FIELD_KEYS).toContain("emergencyContact");
+  });
+
+  it("groups contact fields separately from personal/documentación", () => {
+    expect(TRAVELER_FIELD_GROUPS.phone).toBe("contacto");
+    expect(TRAVELER_FIELD_GROUPS.emergencyContact).toBe("contacto");
+    expect(TRAVELER_FIELD_GROUPS.nationality).toBe("personal");
+    expect(TRAVELER_FIELD_GROUPS.docNumber).toBe("documentacion");
+  });
+
+  it("parseRequiredFields ignores unknown keys", () => {
+    expect(parseRequiredFields("nationality,made_up_key,phone")).toEqual(["nationality", "phone"]);
   });
 });

@@ -51,6 +51,7 @@ export default async function ReservarPage({ params }: { params: Promise<{ slug:
           isDemo: trip.isDemo,
           origins: trip.origins.map((o) => o.city),
           requiredTravelerFields: parseRequiredFields(trip.requiredTravelerFields),
+          requiresShippingAddress: trip.requiresShippingAddress,
           hotelStars: trip.hotelStars,
           ticketCategory: trip.ticketCategory,
           hasInsurance: Boolean(trip.insuranceDescription),

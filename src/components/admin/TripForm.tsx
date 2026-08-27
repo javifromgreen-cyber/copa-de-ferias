@@ -211,6 +211,19 @@ export function TripForm({ initial }: { initial: TripFormInput }) {
             );
           })}
         </div>
+        <div className="border-t border-carbon/10 pt-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.requiresShippingAddress}
+              onChange={(e) => set("requiresShippingAddress", e.target.checked)}
+            />
+            Requiere dirección de envío del comprador (p. ej. para el pack físico)
+          </label>
+          <p className="mt-1 text-xs text-carbon/60">
+            Una única dirección por reserva, no por viajero — se pide en el paso &ldquo;Comprador&rdquo; del checkout.
+          </p>
+        </div>
       </Section>
 
       <Section title="Contenido editorial">

@@ -8,7 +8,7 @@ import { TravelerDetailsForm } from "@/components/mi-viaje/TravelerDetailsForm";
 import { ChangeRequestButton } from "@/components/mi-viaje/ChangeRequestButton";
 import { WhatsAppLink } from "@/components/mi-viaje/WhatsAppLink";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
-import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon, PassportIcon } from "@/components/icons";
+import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon, PassportIcon, CalendarIcon, DocumentIcon } from "@/components/icons";
 import { groupBookedRooms } from "@/lib/checkout/rooms";
 
 // Must always reflect the traveler's live booking state (data just saved,
@@ -141,7 +141,10 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
 
       {booking.trip.planningDays.length > 0 ? (
         <section className="mb-12">
-          <h2 className="font-display mb-4 text-lg uppercase">Planning</h2>
+          <h2 className="font-display mb-4 flex items-center gap-2 text-lg uppercase">
+            <CalendarIcon className="h-5 w-5 shrink-0" />
+            Planning
+          </h2>
           <ol className="space-y-4">
             {booking.trip.planningDays.map((day) => (
               <li key={day.id} className="border-l-2 border-carbon/15 pl-4">
@@ -154,10 +157,13 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       ) : null}
 
       <section className="mb-12">
-        <h2 className="font-display mb-1 text-lg uppercase">Documentación de los viajeros</h2>
+        <h2 className="font-display mb-1 flex items-center gap-2 text-lg uppercase">
+          <DocumentIcon className="h-5 w-5 shrink-0" />
+          Documentación de los viajeros
+        </h2>
         <p className="mb-4 text-sm text-carbon/60">
-          Revisa o completa aquí algún dato adicional de cada viajero (contacto de emergencia, dirección postal…).
-          Nada de esto bloquea tu reserva, ya confirmada.
+          Los datos que este viaje necesitaba ya se recogieron al reservar. Consulta aquí lo registrado de cada
+          viajero; si algo queda pendiente, puedes completarlo, pero no afecta a tu reserva, ya confirmada.
         </p>
         <div className="space-y-3">
           {booking.travelers.map((t) => (
@@ -175,8 +181,8 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
                 docExpiry: t.docExpiry ? t.docExpiry.toISOString().slice(0, 10) : "",
                 docCountry: t.docCountry,
                 phone: t.phone,
-                emergencyContact: t.emergencyContact,
-                address: t.address,
+                emergencyContactName: t.emergencyContactName,
+                emergencyContactPhone: t.emergencyContactPhone,
               }}
             />
           ))}

@@ -25,6 +25,10 @@ function travelerFieldValue(t: CheckoutTraveler, key: string): string {
       return t.docExpiry;
     case "docCountry":
       return t.docCountry;
+    case "phone":
+      return t.phone;
+    // emergencyContact needs BOTH sub-fields — checked separately below so
+    // a partial name-only entry doesn't silently pass.
     default:
       return "";
   }
@@ -54,6 +58,12 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
   for (const t of data.travelers) {
     const name = `${t.firstName} ${t.lastName}`.trim();
     for (const key of requiredFields) {
+      if (key === "emergencyContact") {
+        if (!t.emergencyContactName || !t.emergencyContactPhone) {
+          return { ok: false, error: `Falta el contacto de emergencia de ${name} para este viaje` };
+        }
+        continue;
+      }
       if (!travelerFieldValue(t, key)) {
         return { ok: false, error: `Falta un dato obligatorio de ${name} para este viaje` };
       }
@@ -61,6 +71,12 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
     if (t.roomPreference === "share_same_sex" && !t.sex) {
       return { ok: false, error: `Indica el sexo de ${name} para poder buscarle compañero de habitación` };
     }
+  }
+
+  // Shipping/billing address lives once on the booking, not per traveler —
+  // required only when this trip is configured to need it (checkout §4).
+  if (trip.requiresShippingAddress && !data.billingAddress.trim()) {
+    return { ok: false, error: "Indica una dirección de envío para este viaje" };
   }
 
   const originCity = data.travelers[0]?.originCity || "";
@@ -116,6 +132,9 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
           docNumber: t.docNumber || "",
           docExpiry: t.docExpiry ? new Date(t.docExpiry) : null,
           docCountry: t.docCountry || "",
+          phone: t.phone || "",
+          emergencyContactName: t.emergencyContactName || "",
+          emergencyContactPhone: t.emergencyContactPhone || "",
           roomPreference: t.roomPreference,
           roomPartnerName: t.roomPartnerName || "",
         })),

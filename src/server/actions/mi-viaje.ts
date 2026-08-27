@@ -44,8 +44,8 @@ export async function updateTravelerDetails(
     docExpiry?: string;
     docCountry?: string;
     phone?: string;
-    emergencyContact?: string;
-    address?: string;
+    emergencyContactName?: string;
+    emergencyContactPhone?: string;
   }
 ) {
   const booking = await requireBooking(accessToken);
@@ -65,8 +65,8 @@ export async function updateTravelerDetails(
       docExpiry: parsed.data.docExpiry ? new Date(parsed.data.docExpiry) : null,
       docCountry: parsed.data.docCountry,
       phone: parsed.data.phone,
-      emergencyContact: parsed.data.emergencyContact,
-      address: parsed.data.address,
+      emergencyContactName: parsed.data.emergencyContactName,
+      emergencyContactPhone: parsed.data.emergencyContactPhone,
     },
   });
 
