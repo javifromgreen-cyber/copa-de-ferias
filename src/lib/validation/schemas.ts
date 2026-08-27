@@ -21,6 +21,7 @@ export const checkoutTravelerSchema = z.object({
   firstName: z.string().trim().min(1, "Nombre requerido").max(80),
   lastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
   roomPreference: travelerRoomPreference,
+  roomPartnerName: z.string().trim().max(160).optional().default(""),
 });
 
 export const checkoutSchema = z.object({

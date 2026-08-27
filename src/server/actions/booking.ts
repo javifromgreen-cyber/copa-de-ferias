@@ -70,6 +70,7 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
           firstName: t.firstName,
           lastName: t.lastName,
           roomPreference: t.roomPreference,
+          roomPartnerName: t.roomPartnerName || "",
         })),
       });
 

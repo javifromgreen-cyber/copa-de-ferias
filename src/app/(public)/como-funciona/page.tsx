@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
 import { Container } from "@/components/ui/Container";
 import { ButtonLink } from "@/components/ui/Button";
+import { StadiumIcon, TicketIcon, ClipboardIcon, ChatIcon, PlaneIcon } from "@/components/icons";
+import type { ComponentType, SVGProps } from "react";
 
 export const metadata: Metadata = {
   title: "Cómo funciona",
   description: "Cómo funcionan los viajes de Copa de Ferias: selección del partido, reserva, datos, WhatsApp y viaje.",
 };
 
-const STEPS = [
+const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVGElement>> }[] = [
   {
     title: "1. Copa de Ferias selecciona un viaje",
     body: "Elegimos previamente el partido, la ciudad y el estadio. No es un configurador: el producto ya viene montado.",
+    icon: StadiumIcon,
   },
   {
     title: "2. Publicamos fechas, precio y plazas",
@@ -18,11 +21,13 @@ const STEPS = [
   },
   {
     title: "3. Reservas y pagas",
-    body: "El viaje se paga íntegro en el momento de reservar. Sin depósitos ni pagos aplazados por nuestra parte, aunque puedes financiarlo con Klarna o PayPal si te interesa.",
+    body: "El viaje se paga íntegro en el momento de reservar, incluyendo los datos y la habitación de cada viajero. Sin depósitos ni pagos aplazados por nuestra parte, aunque puedes financiarlo con Klarna o PayPal si te interesa.",
+    icon: TicketIcon,
   },
   {
-    title: "4. Completas tus datos",
-    body: "Después de reservar, vas rellenando progresivamente el resto de datos necesarios desde tu área \"Mi Viaje\".",
+    title: "4. Completas datos adicionales",
+    body: "Ya con la reserva cerrada, vas completando en \"Mi Viaje\" la documentación adicional que haga falta (DNI/pasaporte, contacto de emergencia…).",
+    icon: ClipboardIcon,
   },
   {
     title: "5. Recibes información poco a poco",
@@ -31,15 +36,17 @@ const STEPS = [
   {
     title: "6. Te unes al grupo de WhatsApp",
     body: "Unos 15 días antes se activa el grupo del viaje para que os vayáis conociendo antes de salir.",
+    icon: ChatIcon,
   },
   {
     title: "7. Viajas y te encuentras con el grupo",
     body: "En destino, el coordinador y el host local se encargan de que todo funcione. Tú solo tienes que disfrutar del partido.",
+    icon: PlaneIcon,
   },
 ];
 
 const DETAILS = [
-  { title: "Habitaciones", body: "Doble compartida por defecto. Puedes compartir con alguien de tu reserva, con otro participante de tu mismo sexo, o pagar el suplemento de individual." },
+  { title: "Habitaciones", body: "Doble compartida por defecto. Durante la reserva eliges quién comparte con quién; si te quedas sin pareja, puedes compartir con otro participante de tu mismo sexo o pagar el suplemento de individual." },
   { title: "Venir solo o acompañado", body: "La mayoría de gente viaja sola. También puedes venir en pareja o en grupo — el precio es por persona." },
   { title: "Origen", body: "Cada viaje tiene unas ciudades de salida configuradas. En esta primera versión no es posible incorporarse directamente en destino." },
   { title: "Pago", body: "Tarjeta, wallets, Bizum y Klarna vía Stripe, o PayPal (incluyendo Pay Later cuando esté disponible)." },
@@ -56,9 +63,12 @@ export default function ComoFuncionaPage() {
 
       <ol className="mb-16 space-y-8">
         {STEPS.map((step) => (
-          <li key={step.title}>
-            <h2 className="font-display mb-1 text-lg uppercase">{step.title}</h2>
-            <p className="text-carbon/75">{step.body}</p>
+          <li key={step.title} className="flex gap-4">
+            {step.icon ? <step.icon className="mt-1 h-6 w-6 shrink-0 text-cement" /> : <span className="w-6 shrink-0" />}
+            <div>
+              <h2 className="font-display mb-1 text-lg uppercase">{step.title}</h2>
+              <p className="text-carbon/75">{step.body}</p>
+            </div>
           </li>
         ))}
       </ol>

@@ -6,12 +6,17 @@ import { Button } from "@/components/ui/Button";
 import { createBooking } from "@/server/actions/booking";
 import { formatCurrency } from "@/lib/utils";
 import { track } from "@/lib/analytics/events";
+import {
+  defaultRoomAssignment,
+  resizeRoomAssignment,
+  isRoomAssignmentComplete,
+  countSingleRooms,
+  resolveTravelerRooms,
+  type RoomChoice,
+} from "@/lib/checkout/rooms";
+import { RoomAssignmentStep } from "@/components/checkout/RoomAssignmentStep";
 
-type TravelerForm = {
-  firstName: string;
-  lastName: string;
-  roomPreference: "share_with_group" | "share_same_sex" | "single";
-};
+type TravelerName = { firstName: string; lastName: string };
 
 type TripInfo = {
   id: string;
@@ -25,29 +30,14 @@ type TripInfo = {
   origins: string[];
 };
 
-const ROOM_OPTIONS: { value: TravelerForm["roomPreference"]; label: string; hint: string }[] = [
-  {
-    value: "share_with_group",
-    label: "Comparto con alguien de mi reserva",
-    hint: "Viajo con alguien de mi grupo y queremos compartir habitación.",
-  },
-  {
-    value: "share_same_sex",
-    label: "Me da igual compartir",
-    hint: "Comparto con otro participante de mi mismo sexo.",
-  },
-  { value: "single", label: "Habitación individual", hint: "Suplemento aparte." },
-];
-
-const STEP_LABELS = ["Viajeros", "Datos de cada viajero", "Comprador", "Pago"];
+const STEP_LABELS = ["Viajeros", "Datos de cada viajero", "Habitaciones", "Comprador", "Pago"];
 
 export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulation: boolean }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [count, setCount] = useState(1);
-  const [travelers, setTravelers] = useState<TravelerForm[]>([
-    { firstName: "", lastName: "", roomPreference: "share_with_group" },
-  ]);
+  const [travelers, setTravelers] = useState<TravelerName[]>([{ firstName: "", lastName: "" }]);
+  const [roomOf, setRoomOf] = useState<RoomChoice[]>(defaultRoomAssignment(1));
   const [buyer, setBuyer] = useState({
     buyerFirstName: "",
     buyerLastName: "",
@@ -63,25 +53,28 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
 
   const maxCount = Math.min(trip.spotsLeft, 10);
 
-  const singleRooms = travelers.filter((t) => t.roomPreference === "single").length;
+  const resolvedTravelers = useMemo(() => resolveTravelerRooms(travelers, roomOf), [travelers, roomOf]);
+  const singleRooms = countSingleRooms(roomOf);
   const total = trip.price * count + trip.singleSupplement * singleRooms;
 
   function setTravelerCount(next: number) {
     setCount(next);
     setTravelers((prev) => {
       const arr = [...prev];
-      while (arr.length < next) arr.push({ firstName: "", lastName: "", roomPreference: "share_with_group" });
+      while (arr.length < next) arr.push({ firstName: "", lastName: "" });
       return arr.slice(0, next);
     });
+    setRoomOf((prev) => resizeRoomAssignment(prev, next));
   }
 
-  function updateTraveler(index: number, patch: Partial<TravelerForm>) {
+  function updateTraveler(index: number, patch: Partial<TravelerName>) {
     setTravelers((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
   }
 
   const canGoStep1 = count >= 1 && count <= maxCount;
   const canGoStep2 = travelers.every((t) => t.firstName.trim() && t.lastName.trim());
-  const canGoStep3 =
+  const canGoStep3 = isRoomAssignmentComplete(roomOf);
+  const canGoStep4 =
     buyer.buyerFirstName.trim() &&
     buyer.buyerLastName.trim() &&
     /.+@.+\..+/.test(buyer.buyerEmail) &&
@@ -92,8 +85,9 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
     if (step === 0) return canGoStep1;
     if (step === 1) return canGoStep2;
     if (step === 2) return canGoStep3;
+    if (step === 3) return canGoStep4;
     return acceptedConditions;
-  }, [step, canGoStep1, canGoStep2, canGoStep3, acceptedConditions]);
+  }, [step, canGoStep1, canGoStep2, canGoStep3, canGoStep4, acceptedConditions]);
 
   function next() {
     if (step === 0) track("booking_start", { tripId: trip.id, travelers: count });
@@ -117,7 +111,7 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
       buyerEmail: buyer.buyerEmail,
       buyerPhone: buyer.buyerPhone,
       billingAddress: buyer.billingAddress,
-      travelers,
+      travelers: resolvedTravelers,
       acceptedConditions: true,
       paymentMethod,
     });
@@ -170,8 +164,13 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
         ) : null}
 
         {step === 1 ? (
-          <section className="space-y-8">
-            <h2 className="font-display text-xl uppercase">Datos de cada viajero</h2>
+          <section className="space-y-4">
+            <div>
+              <h2 className="font-display text-xl uppercase">Datos de cada viajero</h2>
+              <p className="mt-1 text-sm text-carbon/60">
+                Nombre y apellidos tal como aparecen en el documento con el que viaja cada persona.
+              </p>
+            </div>
             {travelers.map((t, i) => (
               <fieldset key={i} className="rounded-sm border border-carbon/15 p-4">
                 <legend className="px-1 text-sm font-medium">Viajero {i + 1}</legend>
@@ -195,35 +194,22 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
                     />
                   </label>
                 </div>
-                <div className="mt-3">
-                  <p className="mb-2 text-xs tracking-wide uppercase">Habitación</p>
-                  <div className="space-y-2">
-                    {ROOM_OPTIONS.map((opt) => (
-                      <label key={opt.value} className="flex items-start gap-2 text-sm">
-                        <input
-                          type="radio"
-                          name={`room-${i}`}
-                          checked={t.roomPreference === opt.value}
-                          onChange={() => updateTraveler(i, { roomPreference: opt.value })}
-                          className="mt-1"
-                        />
-                        <span>
-                          <span className="font-medium">{opt.label}</span>
-                          {opt.value === "single" ? (
-                            <span className="text-carbon/50"> (+{formatCurrency(trip.singleSupplement, trip.currency)})</span>
-                          ) : null}
-                          <span className="block text-xs text-carbon/50">{opt.hint}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
               </fieldset>
             ))}
           </section>
         ) : null}
 
         {step === 2 ? (
+          <RoomAssignmentStep
+            travelers={travelers}
+            roomOf={roomOf}
+            onChange={setRoomOf}
+            singleSupplement={trip.singleSupplement}
+            currency={trip.currency}
+          />
+        ) : null}
+
+        {step === 3 ? (
           <section className="space-y-4">
             <h2 className="font-display text-xl uppercase">Datos del comprador</h2>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -294,7 +280,7 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
           </section>
         ) : null}
 
-        {step === 3 ? (
+        {step === 4 ? (
           <section className="space-y-5">
             <h2 className="font-display text-xl uppercase">Pago</h2>
             {isSimulation ? (
@@ -371,9 +357,7 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
           </div>
           {singleRooms > 0 ? (
             <div className="flex justify-between">
-              <dt>
-                {singleRooms} × suplemento individual
-              </dt>
+              <dt>{singleRooms} × suplemento individual</dt>
               <dd>{formatCurrency(trip.singleSupplement * singleRooms, trip.currency)}</dd>
             </div>
           ) : null}

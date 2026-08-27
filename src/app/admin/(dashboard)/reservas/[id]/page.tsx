@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { BookingNotesEditor, CancelBookingButton, PassportStatusSelect, ChangeRequestAdminRow } from "@/components/admin/BookingAdminControls";
+import { summarizeBookedRooms } from "@/lib/checkout/rooms";
 
 export const metadata: Metadata = { title: "Admin — Reserva" };
 
@@ -53,11 +54,25 @@ export default async function AdminBookingDetailPage({ params }: { params: Promi
                 {t.firstName} {t.lastName}
               </p>
               <p className="text-carbon/60">
-                Habitación: {t.roomPreference} · Documento: {t.docType || "—"} {t.docNumber}
+                Documento: {t.docType || "—"} {t.docNumber}
+                {t.roomPreference === "share_with_group" && t.roomPartnerName
+                  ? ` · Comparte con: ${t.roomPartnerName}`
+                  : t.roomPreference === "single"
+                    ? " · Habitación individual"
+                    : " · Comparte con otro participante (por asignar)"}
               </p>
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="font-display mb-3 text-lg uppercase">Habitaciones</h2>
+        <ul className="space-y-1 text-sm text-carbon/70">
+          {summarizeBookedRooms(booking.travelers).map((row, i) => (
+            <li key={i}>{row}</li>
+          ))}
+        </ul>
       </section>
 
       <section className="mb-8">

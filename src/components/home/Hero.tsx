@@ -20,7 +20,7 @@ export function Hero({ brand }: { brand: Brand }) {
                 Seleccionamos partidos, estadios y ciudades que justifican coger un avión. Montamos el viaje.
                 Tú decides si vienes.
               </p>
-              <ButtonLink href="/viajes" className="bg-ivory text-carbon hover:bg-ivory-dark">
+              <ButtonLink href="/viajes" variant="inverse">
                 Ver viajes
               </ButtonLink>
             </div>

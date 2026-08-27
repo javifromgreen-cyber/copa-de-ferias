@@ -10,6 +10,7 @@ import { effectiveStatus, spotsLeft } from "@/lib/trips/status";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { WaitlistCta } from "@/components/trips/WaitlistCta";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
+import { PlaneIcon, BuildingIcon, TicketIcon, StadiumIcon, CheckIcon, CrossIcon, ShieldIcon, BedIcon } from "@/components/icons";
 
 // Trip content and spots-left are admin/booking-driven — revalidate
 // instead of a permanent build-time snapshot. Actual oversell prevention
@@ -99,7 +100,10 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
 
           {/* Transporte */}
           <section>
-            <h2 className="font-display mb-4 text-2xl uppercase">Transporte</h2>
+            <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+              <PlaneIcon className="h-6 w-6 shrink-0" />
+              Transporte
+            </h2>
             <dl className="grid grid-cols-2 gap-4 text-sm sm:max-w-sm">
               <div>
                 <dt className="text-carbon/50 uppercase">Salida</dt>
@@ -114,7 +118,10 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
 
           {/* Hotel */}
           <section>
-            <h2 className="font-display mb-4 text-2xl uppercase">Hotel</h2>
+            <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+              <BuildingIcon className="h-6 w-6 shrink-0" />
+              Hotel
+            </h2>
             <p className="text-carbon/80">
               Hotel {trip.hotelCentric ? "céntrico " : ""}de {trip.hotelStars} estrellas
               {trip.hotelZone ? ` en ${trip.hotelZone}` : ""}. {trip.hotelDescription}
@@ -123,7 +130,10 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
 
           {/* Partido / Entrada */}
           <section>
-            <h2 className="font-display mb-4 text-2xl uppercase">Partido y entrada</h2>
+            <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+              <TicketIcon className="h-6 w-6 shrink-0" />
+              Partido y entrada
+            </h2>
             <p className="text-carbon/80">
               Entrada incluida en {trip.stadium}
               {trip.ticketCategory ? ` — ${trip.ticketCategory}` : ""}
@@ -135,7 +145,10 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
           {/* Experiencia futbolística */}
           {trip.activities.length > 0 ? (
             <section>
-              <h2 className="font-display mb-6 text-2xl uppercase">Experiencia futbolística</h2>
+              <h2 className="font-display mb-6 flex items-center gap-2 text-2xl uppercase">
+                <StadiumIcon className="h-6 w-6 shrink-0" />
+                Experiencia futbolística
+              </h2>
               <ul className="grid gap-6 sm:grid-cols-2">
                 {trip.activities.map((activity) => (
                   <li key={activity.id}>
@@ -156,8 +169,8 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
                   <p className="mb-3 text-xs font-semibold tracking-widest text-carbon uppercase">Incluido</p>
                   <ul className="space-y-2 text-sm text-carbon/80">
                     {included.map((i) => (
-                      <li key={i.id} className="flex gap-2">
-                        <span aria-hidden>✓</span>
+                      <li key={i.id} className="flex items-start gap-2">
+                        <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" />
                         {i.text}
                       </li>
                     ))}
@@ -167,8 +180,8 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
                   <p className="mb-3 text-xs font-semibold tracking-widest text-carbon/60 uppercase">No incluido</p>
                   <ul className="space-y-2 text-sm text-carbon/60">
                     {excluded.map((i) => (
-                      <li key={i.id} className="flex gap-2">
-                        <span aria-hidden>–</span>
+                      <li key={i.id} className="flex items-start gap-2">
+                        <CrossIcon className="mt-0.5 h-4 w-4 shrink-0" />
                         {i.text}
                       </li>
                     ))}
@@ -181,17 +194,23 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
           {/* Seguro */}
           {trip.insuranceDescription ? (
             <section>
-              <h2 className="font-display mb-4 text-2xl uppercase">Seguro</h2>
+              <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+                <ShieldIcon className="h-6 w-6 shrink-0" />
+                Seguro
+              </h2>
               <p className="text-carbon/80">{trip.insuranceDescription}</p>
             </section>
           ) : null}
 
           {/* Habitaciones */}
           <section>
-            <h2 className="font-display mb-4 text-2xl uppercase">Habitaciones</h2>
+            <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+              <BedIcon className="h-6 w-6 shrink-0" />
+              Habitaciones
+            </h2>
             <ul className="space-y-2 text-carbon/80">
               <li>· Habitación doble compartida, incluida por defecto.</li>
-              <li>· Si vienes con alguien de tu reserva, podéis compartir habitación.</li>
+              <li>· Durante la reserva eliges quién comparte habitación con quién.</li>
               <li>· Si vienes solo, te asignamos con otro participante de tu mismo sexo.</li>
               <li>
                 · Habitación individual: suplemento de {formatCurrency(trip.singleSupplement, trip.currency)}.

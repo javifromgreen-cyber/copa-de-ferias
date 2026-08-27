@@ -9,6 +9,8 @@ import { isTravelerComplete } from "@/lib/mi-viaje/completeness";
 import { ChangeRequestButton } from "@/components/mi-viaje/ChangeRequestButton";
 import { WhatsAppLink } from "@/components/mi-viaje/WhatsAppLink";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
+import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon } from "@/components/icons";
+import { summarizeBookedRooms } from "@/lib/checkout/rooms";
 
 // Must always reflect the traveler's live booking state (data just saved,
 // change requests, passport status) — never cache this per-token page.
@@ -61,7 +63,9 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
 
       {pendingTravelers.length > 0 ? (
         <div className="mb-8 rounded-sm border border-stamp/40 bg-stamp/10 p-4 text-sm text-stamp">
-          Te faltan datos por completar de {pendingTravelers.length} viajero{pendingTravelers.length === 1 ? "" : "s"}.
+          Nos falta documentación adicional de {pendingTravelers.length} viajero
+          {pendingTravelers.length === 1 ? "" : "s"} (documento de identidad, contacto de emergencia…). No es nada
+          de tu reserva: son datos que se piden más adelante, con tiempo antes del viaje.
         </div>
       ) : null}
 
@@ -107,6 +111,21 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
         </dl>
       </section>
 
+      <section className="mb-12">
+        <h2 className="font-display mb-4 flex items-center gap-2 text-lg uppercase">
+          <BedIcon className="h-5 w-5 shrink-0" />
+          Habitaciones
+        </h2>
+        <p className="mb-3 text-sm text-carbon/60">Así queda organizado el grupo, tal y como se eligió al reservar.</p>
+        <ul className="space-y-2 text-sm text-carbon/80">
+          {summarizeBookedRooms(booking.travelers).map((row, i) => (
+            <li key={i} className="rounded-sm border border-carbon/10 px-3 py-2">
+              {row}
+            </li>
+          ))}
+        </ul>
+      </section>
+
       {booking.trip.planningDays.length > 0 ? (
         <section className="mb-12">
           <h2 className="font-display mb-4 text-lg uppercase">Planning</h2>
@@ -122,7 +141,11 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       ) : null}
 
       <section className="mb-12">
-        <h2 className="font-display mb-4 text-lg uppercase">Datos de los viajeros</h2>
+        <h2 className="font-display mb-1 text-lg uppercase">Documentación de los viajeros</h2>
+        <p className="mb-4 text-sm text-carbon/60">
+          Datos adicionales que necesitaremos antes de viajar (documento, contacto de emergencia…). Se pueden
+          completar más adelante, cuando os venga bien.
+        </p>
         <div className="space-y-3">
           {booking.travelers.map((t) => (
             <TravelerDetailsForm
@@ -149,7 +172,10 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
 
       {booking.trip.requirements.length > 0 ? (
         <section className="mb-12">
-          <h2 className="font-display mb-4 text-lg uppercase">Checklist y requisitos</h2>
+          <h2 className="font-display mb-4 flex items-center gap-2 text-lg uppercase">
+            <ClipboardIcon className="h-5 w-5 shrink-0" />
+            Checklist y requisitos
+          </h2>
           <ul className="space-y-2 text-sm text-carbon/80">
             {booking.trip.requirements.map((r) => (
               <li key={r.id} className="flex gap-2">
@@ -162,7 +188,10 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       ) : null}
 
       <section className="mb-12">
-        <h2 className="font-display mb-4 text-lg uppercase">Grupo de WhatsApp</h2>
+        <h2 className="font-display mb-4 flex items-center gap-2 text-lg uppercase">
+          <ChatIcon className="h-5 w-5 shrink-0" />
+          Grupo de WhatsApp
+        </h2>
         {whatsappReady && booking.trip.whatsappUrl ? (
           <WhatsAppLink url={booking.trip.whatsappUrl} />
         ) : (
@@ -187,7 +216,10 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       </section>
 
       <section className="mb-12 space-y-4">
-        <h2 className="font-display text-lg uppercase">Gestionar mi reserva</h2>
+        <h2 className="font-display flex items-center gap-2 text-lg uppercase">
+          <SlidersIcon className="h-5 w-5 shrink-0" />
+          Gestionar mi reserva
+        </h2>
         <div className="flex flex-wrap gap-3">
           <ChangeRequestButton
             accessToken={token}

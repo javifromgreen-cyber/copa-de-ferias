@@ -54,11 +54,7 @@ export function CaptureSection() {
                 placeholder="tu@email.com"
                 className="w-full flex-1 rounded-sm border border-ivory/30 bg-transparent px-4 py-3 text-sm text-ivory placeholder:text-ivory/40 focus:border-ivory focus:outline-none"
               />
-              <Button
-                type="submit"
-                disabled={status === "submitting"}
-                className="bg-ivory text-carbon hover:bg-ivory-dark"
-              >
+              <Button type="submit" variant="inverse" disabled={status === "submitting"}>
                 {status === "submitting" ? "Enviando…" : "Avisadme"}
               </Button>
             </div>
