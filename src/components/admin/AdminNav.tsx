@@ -8,6 +8,8 @@ import { Logo } from "@/components/brand/Logo";
 const LINKS = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/viajes", label: "Viajes" },
+  { href: "/admin/eventos", label: "Eventos" },
+  { href: "/admin/competiciones", label: "Competiciones" },
   { href: "/admin/reservas", label: "Reservas" },
   { href: "/admin/viajeros", label: "Viajeros" },
   { href: "/admin/interesados", label: "Interesados" },

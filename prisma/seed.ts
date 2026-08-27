@@ -7,6 +7,8 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "node:crypto";
+import { KNOWN_COMPETITIONS } from "../src/lib/catalog/knownCompetitions";
+import { computeOrganizationFee, NO_OVERRIDES } from "../src/lib/pricing/organizationFee";
 
 const prisma = new PrismaClient();
 
@@ -73,11 +75,26 @@ async function main() {
   // §71-74/§163-166. Every existing/new trip uses these unless it sets its
   // own orgFee*Override.
   // -----------------------------------------------------------------
-  await prisma.organizationFeeConfig.upsert({
+  const feeConfig = await prisma.organizationFeeConfig.upsert({
     where: { id: "default" },
     create: { id: "default" },
     update: {},
   });
+
+  // -----------------------------------------------------------------
+  // Competition classification catalog (region → country → type →
+  // competition) — seeded once from the reference list so it's never
+  // re-entered ad hoc per Event. See src/lib/catalog/knownCompetitions.ts.
+  // -----------------------------------------------------------------
+  const competitionByName = new Map<string, string>();
+  for (const c of KNOWN_COMPETITIONS) {
+    const row = await prisma.competition.upsert({
+      where: { name_region: { name: c.name, region: c.region } },
+      create: c,
+      update: { country: c.country, competitionType: c.competitionType },
+    });
+    competitionByName.set(c.name, row.id);
+  }
 
   // -----------------------------------------------------------------
   // Global FAQ
@@ -244,11 +261,16 @@ async function main() {
   await prisma.event.create({
     data: {
       tripId: belgrado.id,
+      competitionId: competitionByName.get("Serbian SuperLiga") ?? null,
       homeTeam: belgrado.homeTeam,
       awayTeam: belgrado.awayTeam,
       stadium: belgrado.stadium,
+      city: belgrado.city,
+      country: belgrado.country,
+      timezone: "Europe/Belgrade",
       matchDate: belgrado.matchDate,
       scheduleStatus: belgrado.scheduleStatus,
+      status: "published",
       primaryEvent: true,
       order: 0,
     },
@@ -453,6 +475,240 @@ async function main() {
       primaryEvent: true,
       order: 0,
     },
+  });
+
+  // -----------------------------------------------------------------
+  // A_TU_AIRE demo products — three genuinely different scenarios for
+  // exercising the commercial engine, not three clones with a different
+  // team. Ticket prices come first; Trip.price below is only a legacy
+  // "desde" display figure (that column predates A_TU_AIRE and is still
+  // NOT NULL) computed once here from the real engine — it is not kept
+  // resynced automatically, since nothing reads it for A_TU_AIRE pricing
+  // yet (that happens in the still-unbuilt checkout, off computeQuote).
+  // -----------------------------------------------------------------
+  function fromPrice(cheapestTicketCost: number) {
+    return cheapestTicketCost + computeOrganizationFee({ packageType: "TICKET_ONLY", partySize: 1, matchCount: 1, global: feeConfig, overrides: NO_OVERRIDES }).total;
+  }
+
+  // --- DEMO A — Ámsterdam, De Klassieker — TICKET_ONLY only ----------
+  await prisma.trip.deleteMany({ where: { slug: "amsterdam-de-klassieker" } });
+  const demoA = await prisma.trip.create({
+    data: {
+      number: 4,
+      slug: "amsterdam-de-klassieker",
+      name: "Ámsterdam",
+      subtitle: "De Klassieker",
+      city: "Ámsterdam",
+      country: "Países Bajos",
+      homeTeam: "Ajax",
+      awayTeam: "Feyenoord",
+      stadium: "Johan Cruijff ArenA",
+      matchDate: nextSaturday(60),
+      durationDays: 2,
+      durationNights: 1,
+      status: "open",
+      published: true,
+      homeFeatured: false,
+      order: 3,
+      isDemo: true,
+      price: fromPrice(45),
+      scheduleStatus: "confirmed",
+      travelMode: "A_TU_AIRE",
+      maxPartySize: 6,
+      availablePackageTypes: "TICKET_ONLY",
+      heroImageKey: "amsterdam",
+      description: "Demo A_TU_AIRE — escenario de entrada suelta, sin hotel ni vuelo en el paquete.",
+      seoTitle: "Ámsterdam — De Klassieker | Copa de Ferias",
+      seoDescription: "Entrada para el Ajax - Feyenoord, a tu aire.",
+    },
+  });
+  const demoAEvent = await prisma.event.create({
+    data: {
+      tripId: demoA.id,
+      competitionId: competitionByName.get("Eredivisie") ?? null,
+      homeTeam: "Ajax",
+      awayTeam: "Feyenoord",
+      stadium: "Johan Cruijff ArenA",
+      city: "Ámsterdam",
+      country: "Países Bajos",
+      timezone: "Europe/Amsterdam",
+      matchDate: demoA.matchDate,
+      kickoff: new Date(new Date(demoA.matchDate).setHours(20, 0, 0, 0)),
+      scheduleStatus: "confirmed",
+      status: "published",
+      primaryEvent: true,
+      order: 0,
+    },
+  });
+  await prisma.ticketOffer.createMany({
+    data: [
+      {
+        eventId: demoAEvent.id,
+        provider: "manual",
+        category: "General",
+        sector: "Fondo",
+        costNet: 45,
+        currency: "EUR",
+        stock: 100,
+        deliveryType: "digital",
+        active: true,
+      },
+      {
+        eventId: demoAEvent.id,
+        provider: "manual",
+        category: "Tribuna preferente",
+        sector: "Lateral",
+        costNet: 85,
+        currency: "EUR",
+        stock: 30,
+        deliveryType: "digital",
+        active: true,
+      },
+    ],
+  });
+
+  // --- DEMO B — Milán, Derby della Madonnina — TICKET_ONLY + TICKET_HOTEL
+  // Party sizes needing a triple room (3/5/7/9 travelers) legitimately hit
+  // MockHotelProviderA's zero-triple inventory here: it stays the cheaper
+  // provider but becomes invalid, so selection must fall through to
+  // MockHotelProviderB. Party sizes 1/2/4/6/8 stay within A's inventory.
+  await prisma.trip.deleteMany({ where: { slug: "milan-derby-della-madonnina" } });
+  const demoB = await prisma.trip.create({
+    data: {
+      number: 5,
+      slug: "milan-derby-della-madonnina",
+      name: "Milán",
+      subtitle: "Derby della Madonnina",
+      city: "Milán",
+      country: "Italia",
+      homeTeam: "Inter",
+      awayTeam: "Milan",
+      stadium: "Stadio San Siro",
+      matchDate: nextSaturday(75),
+      durationDays: 3,
+      durationNights: 2,
+      status: "open",
+      published: true,
+      homeFeatured: false,
+      order: 4,
+      isDemo: true,
+      price: fromPrice(40),
+      scheduleStatus: "confirmed",
+      travelMode: "A_TU_AIRE",
+      maxPartySize: 8,
+      availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL",
+      heroImageKey: "milan",
+      description: "Demo A_TU_AIRE — escenario de entrada + hotel, con estancia de 1 o 2 noches.",
+      seoTitle: "Milán — Derby della Madonnina | Copa de Ferias",
+      seoDescription: "Entrada (y hotel opcional) para el Inter - Milan, a tu aire.",
+    },
+  });
+  const demoBEvent = await prisma.event.create({
+    data: {
+      tripId: demoB.id,
+      competitionId: competitionByName.get("Serie A") ?? null,
+      homeTeam: "Inter",
+      awayTeam: "Milan",
+      stadium: "Stadio San Siro",
+      city: "Milán",
+      country: "Italia",
+      timezone: "Europe/Rome",
+      matchDate: demoB.matchDate,
+      kickoff: new Date(new Date(demoB.matchDate).setHours(20, 45, 0, 0)),
+      scheduleStatus: "confirmed",
+      status: "published",
+      primaryEvent: true,
+      order: 0,
+    },
+  });
+  await prisma.ticketOffer.createMany({
+    data: [
+      { eventId: demoBEvent.id, provider: "manual", category: "Curva", sector: "Curva Nord", costNet: 40, currency: "EUR", stock: 80, deliveryType: "digital", active: true },
+      { eventId: demoBEvent.id, provider: "manual", category: "Tribuna", sector: "Tribuna Est", costNet: 95, currency: "EUR", stock: 25, deliveryType: "digital", active: true },
+    ],
+  });
+
+  // --- DEMO C — Londres, doble jornada Premier League ------------------
+  // TICKET_ONLY + TICKET_HOTEL + TICKET_HOTEL_FLIGHT, two Events under the
+  // same product: Arsenal-Tottenham CONFIRMED (Saturday) and Chelsea-
+  // Arsenal PROVISIONAL (Sunday, kickoff not yet fixed — realistic Premier
+  // League scheduling). Exercises additionalMatchFee, the multi-match
+  // flight-window bounds, and provisional-schedule flight blocking.
+  await prisma.trip.deleteMany({ where: { slug: "londres-doble-jornada" } });
+  const demoCMatch1Date = nextSaturday(90);
+  const demoCMatch2Date = addDays(demoCMatch1Date, 1);
+  const demoC = await prisma.trip.create({
+    data: {
+      number: 6,
+      slug: "londres-doble-jornada",
+      name: "Londres",
+      subtitle: "Doble jornada Premier League",
+      city: "Londres",
+      country: "Reino Unido",
+      homeTeam: "Arsenal",
+      awayTeam: "Tottenham",
+      stadium: "Emirates Stadium",
+      matchDate: demoCMatch1Date,
+      durationDays: 4,
+      durationNights: 3,
+      status: "open",
+      published: true,
+      homeFeatured: false,
+      order: 5,
+      isDemo: true,
+      price: fromPrice(60),
+      scheduleStatus: "confirmed",
+      travelMode: "A_TU_AIRE",
+      maxPartySize: 10,
+      availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
+      heroImageKey: "londres",
+      description: "Demo A_TU_AIRE — dos partidos en la misma experiencia, con vuelo y hotel opcionales.",
+      seoTitle: "Londres — Doble jornada Premier League | Copa de Ferias",
+      seoDescription: "Arsenal - Tottenham y Chelsea - Arsenal en el mismo viaje, a tu aire.",
+    },
+  });
+  const demoCEvent1 = await prisma.event.create({
+    data: {
+      tripId: demoC.id,
+      competitionId: competitionByName.get("Premier League") ?? null,
+      homeTeam: "Arsenal",
+      awayTeam: "Tottenham",
+      stadium: "Emirates Stadium",
+      city: "Londres",
+      country: "Reino Unido",
+      timezone: "Europe/London",
+      matchDate: demoCMatch1Date,
+      kickoff: new Date(new Date(demoCMatch1Date).setHours(17, 30, 0, 0)),
+      scheduleStatus: "confirmed",
+      status: "published",
+      primaryEvent: true,
+      order: 0,
+    },
+  });
+  const demoCEvent2 = await prisma.event.create({
+    data: {
+      tripId: demoC.id,
+      competitionId: competitionByName.get("Premier League") ?? null,
+      homeTeam: "Chelsea",
+      awayTeam: "Arsenal",
+      stadium: "Stamford Bridge",
+      city: "Londres",
+      country: "Reino Unido",
+      timezone: "Europe/London",
+      matchDate: demoCMatch2Date,
+      kickoff: null, // provisional — Premier League hasn't fixed the exact kickoff yet
+      scheduleStatus: "provisional",
+      status: "published",
+      primaryEvent: false,
+      order: 1,
+    },
+  });
+  await prisma.ticketOffer.createMany({
+    data: [
+      { eventId: demoCEvent1.id, provider: "manual", category: "General", sector: "Clock End", costNet: 60, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
+      { eventId: demoCEvent1.id, provider: "manual", category: "Members", sector: "Club Level", costNet: 120, currency: "EUR", stock: 20, deliveryType: "digital", active: true },
+      { eventId: demoCEvent2.id, provider: "manual", category: "General", sector: "Away end", costNet: 70, currency: "EUR", stock: 50, deliveryType: "digital", active: true },
+    ],
   });
 
   // -----------------------------------------------------------------

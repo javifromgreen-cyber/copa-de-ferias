@@ -27,6 +27,13 @@ export const BLANK_TRIP_FORM: TripFormInput = {
   requiredTravelerFields: "nationality,docType,docNumber,docExpiry,docCountry",
   requiresShippingAddress: false,
   scheduleStatus: "provisional",
+  travelMode: "GROUP_CDF",
+  maxPartySize: 10,
+  availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
+  orgFeeTicketOnlyOverride: null,
+  orgFeeHotelTiersOverride: "",
+  orgFeeHotelFlightTiersOverride: "",
+  additionalMatchFeeOverride: null,
   heroImageKey: "default",
   description: "",
   whyWeGo: "",
@@ -85,6 +92,13 @@ type TripWithRelations = {
   requiredTravelerFields: string;
   requiresShippingAddress: boolean;
   scheduleStatus: TripFormInput["scheduleStatus"];
+  travelMode: TripFormInput["travelMode"];
+  maxPartySize: number;
+  availablePackageTypes: string;
+  orgFeeTicketOnlyOverride: number | null;
+  orgFeeHotelTiersOverride: string;
+  orgFeeHotelFlightTiersOverride: string;
+  additionalMatchFeeOverride: number | null;
   heroImageKey: string;
   description: string;
   whyWeGo: string;
@@ -144,6 +158,13 @@ export function tripToFormInput(trip: TripWithRelations): TripFormInput {
     requiredTravelerFields: trip.requiredTravelerFields,
     requiresShippingAddress: trip.requiresShippingAddress,
     scheduleStatus: trip.scheduleStatus,
+    travelMode: trip.travelMode,
+    maxPartySize: trip.maxPartySize,
+    availablePackageTypes: trip.availablePackageTypes,
+    orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
+    orgFeeHotelTiersOverride: trip.orgFeeHotelTiersOverride,
+    orgFeeHotelFlightTiersOverride: trip.orgFeeHotelFlightTiersOverride,
+    additionalMatchFeeOverride: trip.additionalMatchFeeOverride,
     heroImageKey: trip.heroImageKey,
     description: trip.description,
     whyWeGo: trip.whyWeGo,

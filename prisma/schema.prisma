@@ -80,6 +80,33 @@ enum PackageType {
   TICKET_HOTEL_FLIGHT
 }
 
+// Geographic/competition classification (§ catalog block) — lets the
+// future public catalog query "all Europe events", "all domestic leagues
+// in Europe", "all Champions League events" etc. directly from the data
+// instead of hardcoded lists in frontend components. See
+// src/lib/catalog/queries.ts.
+enum Region {
+  EUROPE
+  SOUTH_AMERICA
+  NORTH_AMERICA
+  ASIA
+  AFRICA
+  OCEANIA
+}
+
+enum CompetitionType {
+  DOMESTIC_LEAGUE
+  DOMESTIC_CUP
+  CONTINENTAL_COMPETITION
+  OTHER
+}
+
+enum EventStatus {
+  draft
+  published
+  cancelled
+}
+
 model Trip {
   id       String @id @default(cuid())
   number   Int    @unique
@@ -209,23 +236,68 @@ model Trip {
   events       Event[]
 }
 
+// The classification unit for a match's league/cup/tournament — entered
+// once by Admin (or a seed), then referenced by every Event that belongs
+// to it. Never re-entered per Event and never hardcoded per frontend
+// screen; see src/lib/catalog/knownCompetitions.ts for the seeded
+// reference list and src/lib/catalog/queries.ts for the query helpers
+// that replace hardcoded per-region/per-competition component lists.
+model Competition {
+  id   String @id @default(cuid())
+  name String // e.g. "Premier League", "Champions League"
+
+  region          Region
+  // "" for competitions not tied to a single country (continental cups).
+  country         String          @default("")
+  competitionType CompetitionType
+
+  events Event[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, region])
+}
+
 // A Trip has one or more Events (matches). A single-match GROUP_CDF trip
 // still gets exactly one Event under the hood, kept in sync with the
 // legacy homeTeam/awayTeam/stadium/matchDate fields on Trip itself so the
 // existing GROUP_CDF pages/flow never need to branch on Event vs Trip.
+//
+// Event is the primary source of truth for a match — its own
+// city/country/stadium/timezone, not copied onto Trip or Competition.
+// competitionId is optional so already-seeded GROUP_CDF events keep
+// working unclassified; new A_TU_AIRE events are expected to set it.
 model Event {
   id     String @id @default(cuid())
   tripId String
   trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
+  competitionId String?
+  competition   Competition? @relation(fields: [competitionId], references: [id])
+
+  // Visible event name override, e.g. "El Derbi Eterno" — falls back to
+  // "{homeTeam} vs {awayTeam}" in the UI when blank.
+  name String @default("")
+
   homeTeam String
   awayTeam String
   stadium  String
+  city     String @default("")
+  country  String @default("")
+  timezone String @default("Europe/Madrid")
 
   matchDate DateTime
   kickoff   DateTime?
 
   scheduleStatus ScheduleStatus @default(provisional)
+
+  // Publication state — independent of scheduleStatus (which is only
+  // about kickoff-timing certainty). A draft Event is never shown or
+  // sellable publicly regardless of its trip's own published flag.
+  status EventStatus @default(draft)
+
+  imageKey String @default("default")
 
   // Exactly one Event per trip should be primaryEvent — used as the
   // trip-card/date anchor for multi-match A_TU_AIRE products.
@@ -251,8 +323,13 @@ model TicketOffer {
   category String @default("")
   sector   String @default("")
 
-  costNet Float @default(0)
-  stock   Int   @default(0)
+  costNet     Float   @default(0)
+  currency    String  @default("EUR")
+  stock       Int     @default(0)
+  // Optional cap distinct from remaining stock (e.g. "max 4 per booking"
+  // even when hundreds remain) — null means no separate cap.
+  maxQuantity Int?
+  active      Boolean @default(true)
 
   lastCheckedAt             DateTime  @default(now())
   validUntil                DateTime?
@@ -260,6 +337,7 @@ model TicketOffer {
 
   deliveryType  String @default("") // e.g. digital | physical | box_office
   deliveryNotes String @default("")
+  restrictions  String @default("") // buyer-facing conditions (age, ID match, etc.)
   internalNotes String @default("")
 
   createdAt DateTime @default(now())

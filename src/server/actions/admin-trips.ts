@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import type { TripStatus, ScheduleStatus } from "@prisma/client";
+import type { TripStatus, ScheduleStatus, TravelMode } from "@prisma/client";
+import { validateTripPublishable } from "@/lib/events/validation";
 
 export type TripFormInput = {
   id?: string;
@@ -33,6 +34,13 @@ export type TripFormInput = {
   requiredTravelerFields: string;
   requiresShippingAddress: boolean;
   scheduleStatus: ScheduleStatus;
+  travelMode: TravelMode;
+  maxPartySize: number;
+  availablePackageTypes: string;
+  orgFeeTicketOnlyOverride: number | null;
+  orgFeeHotelTiersOverride: string;
+  orgFeeHotelFlightTiersOverride: string;
+  additionalMatchFeeOverride: number | null;
   heroImageKey: string;
   description: string;
   whyWeGo: string;
@@ -91,6 +99,13 @@ function baseData(input: TripFormInput) {
     requiredTravelerFields: input.requiredTravelerFields,
     requiresShippingAddress: input.requiresShippingAddress,
     scheduleStatus: input.scheduleStatus,
+    travelMode: input.travelMode,
+    maxPartySize: input.maxPartySize,
+    availablePackageTypes: input.availablePackageTypes,
+    orgFeeTicketOnlyOverride: input.orgFeeTicketOnlyOverride,
+    orgFeeHotelTiersOverride: input.orgFeeHotelTiersOverride,
+    orgFeeHotelFlightTiersOverride: input.orgFeeHotelFlightTiersOverride,
+    additionalMatchFeeOverride: input.additionalMatchFeeOverride,
     heroImageKey: input.heroImageKey,
     description: input.description,
     whyWeGo: input.whyWeGo,
@@ -119,6 +134,16 @@ function baseData(input: TripFormInput) {
 export async function saveTrip(input: TripFormInput): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   if (!input.slug.trim() || !input.name.trim()) {
     return { ok: false, error: "Nombre y slug son obligatorios" };
+  }
+
+  if (input.published) {
+    const eventsCount = input.id ? await prisma.event.count({ where: { tripId: input.id } }) : 0;
+    const publishable = validateTripPublishable({
+      travelMode: input.travelMode,
+      eventsCount,
+      availablePackageTypes: input.availablePackageTypes,
+    });
+    if (!publishable.ok) return { ok: false, error: publishable.error };
   }
 
   try {
@@ -209,6 +234,13 @@ export async function duplicateTrip(id: string) {
         requiredTravelerFields: trip.requiredTravelerFields,
         requiresShippingAddress: trip.requiresShippingAddress,
         scheduleStatus: trip.scheduleStatus,
+        travelMode: trip.travelMode,
+        maxPartySize: trip.maxPartySize,
+        availablePackageTypes: trip.availablePackageTypes,
+        orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
+        orgFeeHotelTiersOverride: trip.orgFeeHotelTiersOverride,
+        orgFeeHotelFlightTiersOverride: trip.orgFeeHotelFlightTiersOverride,
+        additionalMatchFeeOverride: trip.additionalMatchFeeOverride,
         heroImageKey: trip.heroImageKey,
         description: trip.description,
         whyWeGo: trip.whyWeGo,

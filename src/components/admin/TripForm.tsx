@@ -6,9 +6,14 @@ import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/admin/FormField";
 import { saveTrip, type TripFormInput } from "@/server/actions/admin-trips";
 import { TRAVELER_FIELD_KEYS, TRAVELER_FIELD_LABELS, parseRequiredFields } from "@/lib/checkout/travelerFields";
+import { ALL_PACKAGE_TYPES, PACKAGE_TYPE_LABELS, parseAvailablePackageTypes } from "@/lib/pricing/packageTypes";
+import { computeOrganizationFee, type OrganizationFeeGlobalConfig } from "@/lib/pricing/organizationFee";
+import { formatCurrency } from "@/lib/utils";
 
 const STATUS_OPTIONS = ["draft", "upcoming", "open", "sold_out", "completed", "archived"] as const;
 const SCHEDULE_OPTIONS = ["provisional", "confirmed"] as const;
+const TRAVEL_MODE_OPTIONS = ["GROUP_CDF", "A_TU_AIRE"] as const;
+const PREVIEW_PARTY_SIZES = [1, 4, 8] as const;
 
 function toDateInput(value: string) {
   return value ? value.slice(0, 10) : "";
@@ -48,7 +53,74 @@ function TextListEditor({ items, onChange, placeholder }: { items: string[]; onC
   );
 }
 
-export function TripForm({ initial }: { initial: TripFormInput }) {
+/**
+ * Read-only preview of the organization fee this product would actually
+ * charge, computed live with the real engine (computeOrganizationFee) as
+ * the admin edits overrides — never a second pricing algorithm.
+ */
+function FeePreview({ form, globalFeeConfig }: { form: TripFormInput; globalFeeConfig: OrganizationFeeGlobalConfig }) {
+  const packageTypes = parseAvailablePackageTypes(form.availablePackageTypes);
+  if (packageTypes.length === 0) return null;
+
+  const overrides = {
+    orgFeeTicketOnlyOverride: form.orgFeeTicketOnlyOverride,
+    orgFeeHotelTiersOverride: form.orgFeeHotelTiersOverride,
+    orgFeeHotelFlightTiersOverride: form.orgFeeHotelFlightTiersOverride,
+    additionalMatchFeeOverride: form.additionalMatchFeeOverride,
+  };
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-sm border border-carbon/10">
+      <table className="w-full min-w-[420px] text-left text-xs">
+        <thead className="border-b border-carbon/10 text-carbon/50 uppercase">
+          <tr>
+            <th className="px-3 py-2">Modalidad</th>
+            {PREVIEW_PARTY_SIZES.map((n) => (
+              <th key={n} className="px-3 py-2">
+                {n} viajero{n > 1 ? "s" : ""}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {packageTypes.map((pt) => (
+            <tr key={pt} className="border-b border-carbon/5 last:border-0">
+              <td className="px-3 py-2">{PACKAGE_TYPE_LABELS[pt]}</td>
+              {PREVIEW_PARTY_SIZES.map((partySize) => {
+                if (partySize > form.maxPartySize) {
+                  return (
+                    <td key={partySize} className="px-3 py-2 text-carbon/30">
+                      —
+                    </td>
+                  );
+                }
+                try {
+                  const fee = computeOrganizationFee({ packageType: pt, partySize, matchCount: 1, global: globalFeeConfig, overrides });
+                  return (
+                    <td key={partySize} className="px-3 py-2">
+                      {formatCurrency(fee.total)}
+                    </td>
+                  );
+                } catch {
+                  return (
+                    <td key={partySize} className="px-3 py-2 text-stamp">
+                      JSON inválido
+                    </td>
+                  );
+                }
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="px-3 py-2 text-[11px] text-carbon/50">
+        Solo el fee de organización (nuestro margen), sin coste de entrada/hotel/vuelo — nunca se muestra así al cliente.
+      </p>
+    </div>
+  );
+}
+
+export function TripForm({ initial, globalFeeConfig }: { initial: TripFormInput; globalFeeConfig: OrganizationFeeGlobalConfig }) {
   const router = useRouter();
   const [form, setForm] = useState<TripFormInput>(initial);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
@@ -185,6 +257,104 @@ export function TripForm({ initial }: { initial: TripFormInput }) {
             <input type="date" value={toDateInput(form.minDeadlineDate)} onChange={(e) => set("minDeadlineDate", e.target.value)} className={inputClass} />
           </Field>
         </div>
+      </Section>
+
+      <Section title="Producto A TU AIRE">
+        <p className="text-xs text-carbon/60">
+          Configura qué puede comprar el usuario. GRUPO CDF ignora esta sección: sigue usando el precio y las plazas de
+          arriba tal cual.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Modalidad">
+            <select value={form.travelMode} onChange={(e) => set("travelMode", e.target.value as TripFormInput["travelMode"])} className={inputClass}>
+              {TRAVEL_MODE_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m === "A_TU_AIRE" ? "A TU AIRE" : "GRUPO CDF"}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Viajeros máximos por reserva">
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={form.maxPartySize}
+              onChange={(e) => set("maxPartySize", Number(e.target.value))}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+
+        {form.travelMode === "A_TU_AIRE" ? (
+          <>
+            <div>
+              <p className="mb-2 text-xs tracking-wide text-carbon/60 uppercase">Modalidades disponibles</p>
+              <div className="flex flex-wrap gap-4">
+                {ALL_PACKAGE_TYPES.map((pt) => {
+                  const selected = parseAvailablePackageTypes(form.availablePackageTypes).includes(pt);
+                  return (
+                    <label key={pt} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(e) => {
+                          const current = parseAvailablePackageTypes(form.availablePackageTypes);
+                          const next = e.target.checked ? [...current, pt] : current.filter((k) => k !== pt);
+                          set("availablePackageTypes", next.join(","));
+                        }}
+                      />
+                      {PACKAGE_TYPE_LABELS[pt]}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="border-t border-carbon/10 pt-4">
+              <p className="mb-2 text-xs tracking-wide text-carbon/60 uppercase">
+                Override de organization fee (vacío = usar la configuración global)
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Fee solo entrada (€/viajero)">
+                  <input
+                    type="number"
+                    value={form.orgFeeTicketOnlyOverride ?? ""}
+                    onChange={(e) => set("orgFeeTicketOnlyOverride", e.target.value === "" ? null : Number(e.target.value))}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Fee adicional por partido extra (€/viajero)">
+                  <input
+                    type="number"
+                    value={form.additionalMatchFeeOverride ?? ""}
+                    onChange={(e) => set("additionalMatchFeeOverride", e.target.value === "" ? null : Number(e.target.value))}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Tramos entrada + hotel (JSON, opcional)">
+                  <textarea
+                    value={form.orgFeeHotelTiersOverride}
+                    onChange={(e) => set("orgFeeHotelTiersOverride", e.target.value)}
+                    rows={2}
+                    placeholder='[{"minParty":1,"maxParty":2,"feePerTraveler":99}, ...]'
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Tramos entrada + hotel + vuelo (JSON, opcional)">
+                  <textarea
+                    value={form.orgFeeHotelFlightTiersOverride}
+                    onChange={(e) => set("orgFeeHotelFlightTiersOverride", e.target.value)}
+                    rows={2}
+                    placeholder='[{"minParty":1,"maxParty":2,"feePerTraveler":159}, ...]'
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <FeePreview form={form} globalFeeConfig={globalFeeConfig} />
+            </div>
+          </>
+        ) : null}
       </Section>
 
       <Section title="Datos de viajero requeridos en checkout">
