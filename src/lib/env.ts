@@ -81,6 +81,22 @@ export const resendConfig = {
   },
 };
 
+/**
+ * Real flight-search API credentials — deliberately generic (no vendor
+ * name baked into the app), gated the same way as payments: even with a
+ * key configured, RealFlightProvider is only ever reached in
+ * APP_MODE=production for a non-demo trip. See
+ * src/lib/providers/flights/realFlightProvider.ts.
+ */
+export const flightApiConfig = {
+  get apiKey() {
+    return process.env.FLIGHT_API_KEY || "";
+  },
+  get isConfigured() {
+    return Boolean(this.apiKey);
+  },
+};
+
 export const analyticsConfig = {
   get ga4Id() {
     return process.env.NEXT_PUBLIC_GA4_ID || "";
