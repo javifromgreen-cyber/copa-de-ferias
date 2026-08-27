@@ -69,6 +69,17 @@ async function main() {
   });
 
   // -----------------------------------------------------------------
+  // Organization fee config (singleton) — global margin defaults per
+  // §71-74/§163-166. Every existing/new trip uses these unless it sets its
+  // own orgFee*Override.
+  // -----------------------------------------------------------------
+  await prisma.organizationFeeConfig.upsert({
+    where: { id: "default" },
+    create: { id: "default" },
+    update: {},
+  });
+
+  // -----------------------------------------------------------------
   // Global FAQ
   // -----------------------------------------------------------------
   await prisma.faq.deleteMany();
@@ -227,6 +238,22 @@ async function main() {
     },
   });
 
+  // Kept in sync with the Trip's own homeTeam/awayTeam/stadium/matchDate —
+  // GROUP_CDF pages still read those legacy Trip fields directly; this
+  // Event row exists for forward-compatibility with the multi-match engine.
+  await prisma.event.create({
+    data: {
+      tripId: belgrado.id,
+      homeTeam: belgrado.homeTeam,
+      awayTeam: belgrado.awayTeam,
+      stadium: belgrado.stadium,
+      matchDate: belgrado.matchDate,
+      scheduleStatus: belgrado.scheduleStatus,
+      primaryEvent: true,
+      order: 0,
+    },
+  });
+
   await prisma.tripOrigin.createMany({
     data: [
       { tripId: belgrado.id, city: "Barcelona", order: 0 },
@@ -334,7 +361,7 @@ async function main() {
   // Trip #002 — Fútbol Inglés (UPCOMING, no public page yet)
   // -----------------------------------------------------------------
   await prisma.trip.deleteMany({ where: { slug: "futbol-ingles" } });
-  await prisma.trip.create({
+  const futbolInglesTrip = await prisma.trip.create({
     data: {
       number: 2,
       slug: "futbol-ingles",
@@ -366,12 +393,24 @@ async function main() {
       seoDescription: "Próximo viaje de Copa de Ferias: 3 partidos de fútbol inglés en 3 días.",
     },
   });
+  await prisma.event.create({
+    data: {
+      tripId: futbolInglesTrip.id,
+      homeTeam: futbolInglesTrip.homeTeam,
+      awayTeam: futbolInglesTrip.awayTeam,
+      stadium: futbolInglesTrip.stadium,
+      matchDate: futbolInglesTrip.matchDate,
+      scheduleStatus: futbolInglesTrip.scheduleStatus,
+      primaryEvent: true,
+      order: 0,
+    },
+  });
 
   // -----------------------------------------------------------------
   // Trip #003 — Lisboa, Derbi de Lisboa (UPCOMING, no public page yet)
   // -----------------------------------------------------------------
   await prisma.trip.deleteMany({ where: { slug: "derbi-lisboa" } });
-  await prisma.trip.create({
+  const lisboaTrip = await prisma.trip.create({
     data: {
       number: 3,
       slug: "derbi-lisboa",
@@ -401,6 +440,18 @@ async function main() {
       description: "Todavía en preparación. Déjanos tu email y te avisamos en cuanto abramos plazas.",
       seoTitle: "Lisboa — Derbi de Lisboa | Copa de Ferias",
       seoDescription: "Próximo viaje de Copa de Ferias: el derbi de Lisboa entre Sporting y Benfica.",
+    },
+  });
+  await prisma.event.create({
+    data: {
+      tripId: lisboaTrip.id,
+      homeTeam: lisboaTrip.homeTeam,
+      awayTeam: lisboaTrip.awayTeam,
+      stadium: lisboaTrip.stadium,
+      matchDate: lisboaTrip.matchDate,
+      scheduleStatus: lisboaTrip.scheduleStatus,
+      primaryEvent: true,
+      order: 0,
     },
   });
 

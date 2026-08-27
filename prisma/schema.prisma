@@ -22,34 +22,34 @@ datasource db {
 // be hardcoded across the app.
 // ---------------------------------------------------------------------
 model BrandConfig {
-  id             String  @id @default("default")
-  name           String  @default("Copa de Ferias")
-  shortName      String  @default("CDF")
-  claim          String  @default("Fútbol que merece el viaje.")
-  contactEmail   String  @default("hola@copadeferias.com")
-  instagramUrl   String  @default("")
-  facebookUrl    String  @default("")
-  tiktokUrl      String  @default("")
+  id           String @id @default("default")
+  name         String @default("Copa de Ferias")
+  shortName    String @default("CDF")
+  claim        String @default("Fútbol que merece el viaje.")
+  contactEmail String @default("hola@copadeferias.com")
+  instagramUrl String @default("")
+  facebookUrl  String @default("")
+  tiktokUrl    String @default("")
 
   // Legal / trust placeholders — intentionally blank by default.
   // Never invent a company name, tax ID or licence number.
-  legalName      String  @default("")
-  legalTaxId     String  @default("")
-  legalAddress   String  @default("")
-  legalLicense   String  @default("")
-  insuranceInfo  String  @default("")
+  legalName     String @default("")
+  legalTaxId    String @default("")
+  legalAddress  String @default("")
+  legalLicense  String @default("")
+  insuranceInfo String @default("")
 
-  reviewsProvider String @default("none") // none | google | trustpilot
-  reviewsUrl      String @default("")
+  reviewsProvider String  @default("none") // none | google | trustpilot
+  reviewsUrl      String  @default("")
   reviewsVisible  Boolean @default(false)
 
-  ga4Id          String  @default("")
-  metaPixelId    String  @default("")
-  tiktokPixelId  String  @default("")
+  ga4Id         String @default("")
+  metaPixelId   String @default("")
+  tiktokPixelId String @default("")
 
   notifyEmailEnabled Boolean @default(false)
 
-  updatedAt      DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 enum TripStatus {
@@ -66,35 +66,49 @@ enum ScheduleStatus {
   provisional
 }
 
+// A_TU_AIRE: self-serve, ticket(+hotel/flight) product with no coordinator,
+// planning or WhatsApp group. GROUP_CDF: the original guided-group product.
+// Internal identifier only — public copy always says "A TU AIRE" / "GRUPO CDF".
+enum TravelMode {
+  A_TU_AIRE
+  GROUP_CDF
+}
+
+enum PackageType {
+  TICKET_ONLY
+  TICKET_HOTEL
+  TICKET_HOTEL_FLIGHT
+}
+
 model Trip {
-  id          String   @id @default(cuid())
-  number      Int      @unique
-  slug        String   @unique
-  name        String // e.g. "Belgrado"
-  subtitle    String // e.g. "El Derbi Eterno"
-  city        String
-  country     String
-  homeTeam    String
-  awayTeam    String
-  stadium     String
+  id       String @id @default(cuid())
+  number   Int    @unique
+  slug     String @unique
+  name     String // e.g. "Belgrado"
+  subtitle String // e.g. "El Derbi Eterno"
+  city     String
+  country  String
+  homeTeam String
+  awayTeam String
+  stadium  String
 
-  matchDate     DateTime
-  durationDays   Int @default(3)
-  durationNights Int @default(2)
+  matchDate      DateTime
+  durationDays   Int      @default(3)
+  durationNights Int      @default(2)
 
-  status      TripStatus @default(draft)
-  published   Boolean    @default(false)
-  homeFeatured Boolean   @default(false)
-  order        Int       @default(0)
-  isDemo       Boolean   @default(true)
+  status       TripStatus @default(draft)
+  published    Boolean    @default(false)
+  homeFeatured Boolean    @default(false)
+  order        Int        @default(0)
+  isDemo       Boolean    @default(true)
 
-  price             Float
-  currency          String  @default("EUR")
-  maxSpots          Int     @default(20)
-  soldSpots         Int     @default(0)
-  minSpots          Int     @default(8)
-  minDeadlineDate   DateTime?
-  singleSupplement  Float   @default(0)
+  price            Float
+  currency         String    @default("EUR")
+  maxSpots         Int       @default(20)
+  soldSpots        Int       @default(0)
+  minSpots         Int       @default(8)
+  minDeadlineDate  DateTime?
+  singleSupplement Float     @default(0)
 
   // Comma-separated Traveler field keys (birthDate,nationality,docType,
   // docNumber,docExpiry,docCountry) this trip requires from every traveler
@@ -109,6 +123,45 @@ model Trip {
   requiresShippingAddress Boolean @default(false)
 
   scheduleStatus ScheduleStatus @default(provisional)
+
+  travelMode TravelMode @default(GROUP_CDF)
+
+  // A_TU_AIRE only, from here down — GROUP_CDF trips keep using the fields
+  // above unchanged (bundled ticket+hotel+host, fixed maxSpots headcount).
+  maxPartySize Int @default(10) // hard cap enforced both client- and server-side
+
+  // Comma-separated PackageType values this trip actually offers — a
+  // product with no flight inventory simply never lists TICKET_HOTEL_FLIGHT.
+  availablePackageTypes String @default("TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT")
+
+  // Host CDF: an optional ~3h pre-match experience tied to one Event.
+  // Hidden entirely from the customer whenever hostAvailable is false —
+  // never shown as "coming soon" or with placeholder pricing.
+  hostAvailable   Boolean @default(false)
+  hostPrice       Float   @default(0)
+  hostPricingType String  @default("per_person") // per_person | flat
+  hostCapacity    Int     @default(0)
+  hostLanguage    String  @default("")
+  hostNotes       String  @default("")
+
+  // Guía CDF: a static PDF reference, never auto-generated.
+  guideEnabled   Boolean   @default(false)
+  guideTitle     String    @default("")
+  guidePdfUrl    String    @default("")
+  guideVersion   String    @default("")
+  guideUpdatedAt DateTime?
+
+  // Flight-timing constraints used to filter/validate flight offers against
+  // this trip's Event(s) — see src/lib/pricing/flightWindow.ts.
+  minimumArrivalBufferBeforeKickoffMinutes Int @default(180)
+  minimumReturnBufferAfterEventMinutes     Int @default(120)
+
+  // Pricing overrides — null/empty means "use the global OrganizationFeeConfig
+  // default"; a product-level value here always wins (see §88 override rule).
+  orgFeeTicketOnlyOverride       Float?
+  orgFeeHotelTiersOverride       String @default("") // JSON, same shape as OrganizationFeeConfig.feeHotelTiers
+  orgFeeHotelFlightTiersOverride String @default("")
+  additionalMatchFeeOverride     Float?
 
   heroImageKey String @default("default") // maps to a generated placeholder photo treatment
 
@@ -133,11 +186,11 @@ model Trip {
   coordinatorName String @default("")
   hostName        String @default("")
 
-  cancellationPolicy String @default("")
+  cancellationPolicy  String @default("")
   importantConditions String @default("")
 
-  whatsappUrl          String    @default("")
-  whatsappAvailableAt  DateTime?
+  whatsappUrl         String    @default("")
+  whatsappAvailableAt DateTime?
 
   seoTitle       String @default("")
   seoDescription String @default("")
@@ -145,14 +198,107 @@ model Trip {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  origins       TripOrigin[]
-  planningDays  TripPlanningDay[]
-  activities    TripActivity[]
-  inclusions    TripInclusion[]
-  requirements  TripRequirement[]
-  faqs          TripFaq[]
-  leads         Lead[]
-  bookings      Booking[]
+  origins      TripOrigin[]
+  planningDays TripPlanningDay[]
+  activities   TripActivity[]
+  inclusions   TripInclusion[]
+  requirements TripRequirement[]
+  faqs         TripFaq[]
+  leads        Lead[]
+  bookings     Booking[]
+  events       Event[]
+}
+
+// A Trip has one or more Events (matches). A single-match GROUP_CDF trip
+// still gets exactly one Event under the hood, kept in sync with the
+// legacy homeTeam/awayTeam/stadium/matchDate fields on Trip itself so the
+// existing GROUP_CDF pages/flow never need to branch on Event vs Trip.
+model Event {
+  id     String @id @default(cuid())
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  homeTeam String
+  awayTeam String
+  stadium  String
+
+  matchDate DateTime
+  kickoff   DateTime?
+
+  scheduleStatus ScheduleStatus @default(provisional)
+
+  // Exactly one Event per trip should be primaryEvent — used as the
+  // trip-card/date anchor for multi-match A_TU_AIRE products.
+  primaryEvent Boolean @default(true)
+  order        Int     @default(0)
+
+  ticketOffers TicketOffer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// P1 manual ticket inventory (no live provider API in V1) — Admin enters
+// and updates these by hand per Event. costNet is the internal supplier
+// cost and is never shown to the customer; the commercial price is
+// costNet + the organization fee computed at quote time.
+model TicketOffer {
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  provider String @default("manual")
+  category String @default("")
+  sector   String @default("")
+
+  costNet Float @default(0)
+  stock   Int   @default(0)
+
+  lastCheckedAt             DateTime  @default(now())
+  validUntil                DateTime?
+  seatingTogetherGuaranteed Boolean   @default(false)
+
+  deliveryType  String @default("") // e.g. digital | physical | box_office
+  deliveryNotes String @default("")
+  internalNotes String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------
+// Organization fee / margin configuration — singleton row (id = "default"),
+// same pattern as BrandConfig. Global defaults; a Trip's own orgFee*
+// Override columns take priority when set. Never exposed to customers —
+// only the resulting commercial total is shown at checkout.
+// ---------------------------------------------------------------------
+model OrganizationFeeConfig {
+  id String @id @default("default")
+
+  // TICKET_ONLY: flat fee per traveler regardless of party size.
+  feeTicketOnly Float @default(49)
+
+  // TICKET_HOTEL / TICKET_HOTEL_FLIGHT: JSON array of
+  // { minParty, maxParty, feePerTraveler }, evaluated in order.
+  feeHotelTiers       String @default("[{\"minParty\":1,\"maxParty\":2,\"feePerTraveler\":99},{\"minParty\":3,\"maxParty\":4,\"feePerTraveler\":94},{\"minParty\":5,\"maxParty\":6,\"feePerTraveler\":89},{\"minParty\":7,\"maxParty\":10,\"feePerTraveler\":84}]")
+  feeHotelFlightTiers String @default("[{\"minParty\":1,\"maxParty\":2,\"feePerTraveler\":159},{\"minParty\":3,\"maxParty\":4,\"feePerTraveler\":149},{\"minParty\":5,\"maxParty\":6,\"feePerTraveler\":139},{\"minParty\":7,\"maxParty\":10,\"feePerTraveler\":129}]")
+
+  additionalMatchFee Float @default(25) // per traveler, per additional match beyond the first
+
+  // JSON map of PaymentMethod -> internal cost fraction/flat fee, e.g.
+  // {"card":0,"bizum":0,"klarna":0.015,"paypal":0.034}. Internal-only cost,
+  // never surfaced to the customer as a surcharge.
+  paymentMethodFees String @default("{}")
+
+  pricingBuffer          Float @default(0) // flat amount added on top of cost+fee before rounding
+  minimumEstimatedProfit Float @default(0) // Admin warning threshold, per booking
+
+  // Explicitly-labeled-as-estimate optional tax preview — never a real
+  // accounting/tax engine.
+  taxEstimateEnabled Boolean @default(false)
+  taxEstimateRate    Float   @default(0)
+
+  updatedAt DateTime @updatedAt
 }
 
 model TripOrigin {
@@ -213,10 +359,10 @@ model TripFaq {
 
 // Global FAQ shown on /faq (independent of any single trip).
 model Faq {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   question String
   answer   String
-  order    Int    @default(0)
+  order    Int     @default(0)
   active   Boolean @default(true)
 }
 
@@ -261,8 +407,8 @@ enum PaymentProviderKind {
 }
 
 model Booking {
-  id        String   @id @default(cuid())
-  reference String   @unique // human-friendly booking reference
+  id        String @id @default(cuid())
+  reference String @unique // human-friendly booking reference
 
   tripId String
   trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
@@ -275,7 +421,7 @@ model Booking {
   billingAddress String @default("")
 
   travelersCount Int
-  singleRooms    Int   @default(0)
+  singleRooms    Int @default(0)
 
   totalPrice Float
   currency   String @default("EUR")
@@ -297,6 +443,21 @@ model Booking {
   hasReceivedPassport Boolean @default(false)
   passportStatus      String  @default("pending") // pending | prepared | sent
 
+  // A_TU_AIRE only — null/0 on every legacy and GROUP_CDF booking, which
+  // keep using the trip-level bundled price as before.
+  packageType  PackageType?
+  partySize    Int?
+  ticketCount  Int?
+  hostSelected Boolean      @default(false)
+  hostCount    Int          @default(0)
+
+  // Frozen JSON snapshots of the hotel/flight offers and price breakdown
+  // actually purchased, captured at final revalidation — so a later change
+  // in mock provider data never rewrites what the customer already bought.
+  hotelSelectionSnapshot  String @default("")
+  flightSelectionSnapshot String @default("")
+  priceBreakdownSnapshot  String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -312,7 +473,7 @@ enum RoomPreference {
 }
 
 model Traveler {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   bookingId String
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -324,22 +485,27 @@ model Traveler {
   // mix travelers departing from different cities (see checkout §15).
   originCity String @default("")
 
-  roomPreference RoomPreference @default(share_with_group)
-  roomPartnerName String @default("")
+  roomPreference  RoomPreference @default(share_with_group)
+  roomPartnerName String         @default("")
 
   // Data captured during checkout when the trip requires it (see
   // Trip.requiredTravelerFields) — no longer a post-purchase "Mi Viaje"
   // checklist for a new booking, though the fields remain editable there
   // for corrections.
-  nationality       String    @default("")
-  sex               String    @default("")
-  docType            String   @default("") // dni | passport
-  docNumber          String   @default("")
-  docExpiry          DateTime?
-  docCountry          String  @default("")
-  phone               String  @default("")
-  emergencyContactName  String @default("")
-  emergencyContactPhone String @default("")
+  nationality           String    @default("")
+  sex                   String    @default("")
+  docType               String    @default("") // dni | passport
+  docNumber             String    @default("")
+  docExpiry             DateTime?
+  docCountry            String    @default("")
+  phone                 String    @default("")
+  emergencyContactName  String    @default("")
+  emergencyContactPhone String    @default("")
+
+  // A_TU_AIRE only — tickets can be fewer than travelers (§161), so each
+  // traveler tracks whether they're one of the assigned ticket-holders.
+  hasTicket     Boolean @default(true)
+  originAirport String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -360,15 +526,15 @@ enum ChangeRequestStatus {
 }
 
 model ChangeRequest {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   bookingId String
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  type        ChangeRequestType
-  description String
-  status      ChangeRequestStatus @default(requested)
-  resolutionNotes String @default("")
-  cost        Float? // real cost if applicable — never invented automatically
+  type            ChangeRequestType
+  description     String
+  status          ChangeRequestStatus @default(requested)
+  resolutionNotes String              @default("")
+  cost            Float? // real cost if applicable — never invented automatically
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -379,17 +545,17 @@ model ChangeRequest {
 // needed to update copy, timing or on/off state.
 // ---------------------------------------------------------------------
 model EmailTemplate {
-  id          String  @id @default(cuid())
-  key         String  @unique // e.g. "booking_confirmed"
-  name        String
-  description String  @default("")
-  subject     String
-  body        String // supports {{variable}} placeholders, see docs/EMAILS.md
-  active      Boolean @default(false)
+  id               String  @id @default(cuid())
+  key              String  @unique // e.g. "booking_confirmed"
+  name             String
+  description      String  @default("")
+  subject          String
+  body             String // supports {{variable}} placeholders, see docs/EMAILS.md
+  active           Boolean @default(false)
   // Offset in days relative to the trip's departure/return date, or null
   // for "immediate" (sent right after the triggering event, e.g. booking).
   timingDaysOffset Int?
-  timingReference  String @default("immediate") // immediate | booking_plus_1 | before_departure | after_return
+  timingReference  String  @default("immediate") // immediate | booking_plus_1 | before_departure | after_return
 
   updatedAt DateTime @updatedAt
 }
@@ -400,13 +566,13 @@ enum EmailMode {
 }
 
 model EmailLog {
-  id           String    @id @default(cuid())
-  templateKey  String
-  to           String
-  subject      String
-  body         String
-  mode         EmailMode @default(demo)
-  sentAt       DateTime  @default(now())
+  id          String    @id @default(cuid())
+  templateKey String
+  to          String
+  subject     String
+  body        String
+  mode        EmailMode @default(demo)
+  sentAt      DateTime  @default(now())
 
   bookingId String?
   booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
