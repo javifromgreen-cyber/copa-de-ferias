@@ -9,9 +9,9 @@ export function CommunitySection() {
         <div>
           <p className="font-display mb-3 text-xs tracking-[0.25em] text-cement uppercase">Comunidad</p>
           <h2 className="font-display mb-6 text-3xl leading-tight uppercase sm:text-4xl">
-            No es un viaje para gente que va sola.
+            Gente que entiende por qué
             <br />
-            Es un viaje para gente que entiende por qué merece la pena ir.
+            merece la pena coger un avión por esto.
           </h2>
           <p className="mb-6 max-w-lg text-base text-carbon/80 sm:text-lg">
             Puedes venir solo, con un amigo, con tu pareja o con cinco colegas. Lo importante no es eso: es

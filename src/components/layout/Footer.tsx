@@ -15,7 +15,7 @@ export function Footer({ brand }: { brand: Brand }) {
       <Container className="grid gap-10 py-14 sm:grid-cols-2 md:grid-cols-4">
         <div className="sm:col-span-2 md:col-span-1">
           <div className="mb-3 flex items-center gap-2">
-            <Logo className="h-7 w-7" />
+            <Logo className="h-9 w-9" />
             <span className="font-display text-sm tracking-[0.2em] uppercase">{brand.name}</span>
           </div>
           <p className="text-sm text-ivory/70">{brand.claim}</p>
@@ -63,8 +63,7 @@ export function Footer({ brand }: { brand: Brand }) {
       <div className="border-t border-ivory/10 py-6">
         <Container>
           <p className="text-xs text-ivory/50">
-            © {new Date().getFullYear()} {brand.name}. {brand.shortName} no está afiliado ni tiene relación con
-            UEFA, FIFA ni con ningún club mencionado.
+            © {new Date().getFullYear()} {brand.name}.
           </p>
         </Container>
       </div>

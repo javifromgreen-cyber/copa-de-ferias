@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LegalPageLayout, Placeholder } from "@/components/legal/LegalPageLayout";
+import { LegalPageLayout } from "@/components/legal/LegalPageLayout";
 import { getBrand } from "@/lib/brand";
 
 export const revalidate = 60;
@@ -14,7 +14,7 @@ export default async function PrivacidadPage() {
       <section>
         <h2 className="font-display text-lg text-carbon uppercase">1. Responsable del tratamiento</h2>
         <p>
-          <Placeholder value={brand.legalName} /> ({brand.name}), con contacto en {brand.contactEmail}.
+          {brand.legalName ? `${brand.legalName} (${brand.name})` : brand.name}, con contacto en {brand.contactEmail}.
         </p>
       </section>
 

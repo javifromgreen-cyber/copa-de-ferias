@@ -32,10 +32,15 @@ function toneFor(status: TripStatus): PhotoTone {
   return "color";
 }
 
+function isKnownTeam(name: string) {
+  return Boolean(name) && name.trim().toLowerCase() !== "por confirmar";
+}
+
 export function TripCard({ trip, showOrigins = false }: { trip: TripCardData; showOrigins?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const status = effectiveStatus(trip);
   const tone = toneFor(status);
+  const hasMatchup = isKnownTeam(trip.homeTeam) && isKnownTeam(trip.awayTeam);
 
   const canLinkToTrip = trip.published;
   const modalType: "notify" | "waitlist" = status === "sold_out" ? "waitlist" : "notify";
@@ -64,9 +69,11 @@ export function TripCard({ trip, showOrigins = false }: { trip: TripCardData; sh
           <h3 className="font-display text-xl uppercase">{trip.name}</h3>
           <p className="text-sm text-carbon/70">{trip.subtitle}</p>
         </div>
-        <p className="text-sm text-carbon/60">
-          {trip.homeTeam} – {trip.awayTeam}
-        </p>
+        {hasMatchup ? (
+          <p className="text-sm text-carbon/60">
+            {trip.homeTeam} – {trip.awayTeam}
+          </p>
+        ) : null}
 
         {showOrigins && trip.origins && trip.origins.length > 0 ? (
           <p className="text-xs text-carbon/50">Salidas desde: {trip.origins.join(" · ")}</p>

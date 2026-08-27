@@ -17,16 +17,29 @@ export type GeneralLeadInput = z.infer<typeof generalLeadSchema>;
 
 export const travelerRoomPreference = z.enum(["share_with_group", "share_same_sex", "single"]);
 
+// Core traveler data is captured during checkout, not deferred to "Mi
+// Viaje" — see checkout §14/§15. Most fields are optional at the schema
+// level because requiredness is per-trip (Trip.requiredTravelerFields);
+// createBooking() enforces that server-side after loading the trip, so it
+// can't be bypassed even with JS disabled in the client form.
 export const checkoutTravelerSchema = z.object({
   firstName: z.string().trim().min(1, "Nombre requerido").max(80),
   lastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
+  originCity: z.string().trim().max(80).optional().default(""),
+  birthDate: z.string().trim().max(10).optional().default(""), // yyyy-mm-dd or ""
+  nationality: z.string().trim().max(80).optional().default(""),
+  docType: z.enum(["dni", "passport", ""]).optional().default(""),
+  docNumber: z.string().trim().max(60).optional().default(""),
+  docExpiry: z.string().trim().max(10).optional().default(""), // yyyy-mm-dd or ""
+  docCountry: z.string().trim().max(80).optional().default(""),
+  // Only ever needed to match a same-sex roommate — never a blanket requirement.
+  sex: z.string().trim().max(40).optional().default(""),
   roomPreference: travelerRoomPreference,
   roomPartnerName: z.string().trim().max(160).optional().default(""),
 });
 
 export const checkoutSchema = z.object({
   tripId: z.string().min(1),
-  originCity: z.string().trim().min(1, "Elige la ciudad de salida"),
   buyerFirstName: z.string().trim().min(1, "Nombre requerido").max(80),
   buyerLastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
   buyerEmail: z.string().trim().email("Email no válido"),

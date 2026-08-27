@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Container } from "@/components/ui/Container";
 import { ButtonLink } from "@/components/ui/Button";
-import { StadiumIcon, TicketIcon, ClipboardIcon, ChatIcon, PlaneIcon } from "@/components/icons";
+import { StadiumIcon, TicketIcon, ClipboardIcon, ChatIcon, PlaneIcon, CalendarIcon, DocumentIcon } from "@/components/icons";
 import type { ComponentType, SVGProps } from "react";
 
 export const metadata: Metadata = {
@@ -12,26 +12,28 @@ export const metadata: Metadata = {
 const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVGElement>> }[] = [
   {
     title: "1. Copa de Ferias selecciona un viaje",
-    body: "Elegimos previamente el partido, la ciudad y el estadio. No es un configurador: el producto ya viene montado.",
+    body: "Elegimos previamente el partido, la ciudad y el plan. Cuando publicamos un viaje, ya sabemos dónde vamos y qué vamos a vivir.",
     icon: StadiumIcon,
   },
   {
     title: "2. Publicamos fechas, precio y plazas",
     body: "Cada viaje muestra sus fechas, el precio por persona y el número de plazas disponibles.",
+    icon: CalendarIcon,
   },
   {
     title: "3. Reservas y pagas",
-    body: "El viaje se paga íntegro en el momento de reservar, incluyendo los datos y la habitación de cada viajero. Sin depósitos ni pagos aplazados por nuestra parte, aunque puedes financiarlo con Klarna o PayPal si te interesa.",
+    body: "El viaje se paga íntegro en el momento de reservar, con los datos y la habitación de cada viajero ya resueltos. Sin depósitos ni pagos aplazados por nuestra parte; durante el pago podrán aparecer opciones de pago aplazado de PayPal o Klarna cuando estén disponibles para tu compra.",
     icon: TicketIcon,
   },
   {
-    title: "4. Completas datos adicionales",
-    body: "Ya con la reserva cerrada, vas completando en \"Mi Viaje\" la documentación adicional que haga falta (DNI/pasaporte, contacto de emergencia…).",
-    icon: ClipboardIcon,
+    title: "4. Organizáis viajeros y habitaciones",
+    body: "Antes de pagar completáis los datos necesarios de cada viajero y organizáis las habitaciones. Si más adelante necesitamos algún dato adicional, te lo pediremos desde \"Mi Viaje\".",
+    icon: DocumentIcon,
   },
   {
     title: "5. Recibes información poco a poco",
     body: "Documentación, información práctica y planning definitivo, según se acerca la fecha del viaje.",
+    icon: ClipboardIcon,
   },
   {
     title: "6. Te unes al grupo de WhatsApp",
@@ -47,12 +49,12 @@ const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVG
 
 const DETAILS = [
   { title: "Habitaciones", body: "Doble compartida por defecto. Durante la reserva eliges quién comparte con quién; si te quedas sin pareja, puedes compartir con otro participante de tu mismo sexo o pagar el suplemento de individual." },
-  { title: "Venir solo o acompañado", body: "La mayoría de gente viaja sola. También puedes venir en pareja o en grupo — el precio es por persona." },
+  { title: "Venir solo o acompañado", body: "Puedes apuntarte por tu cuenta, venir en pareja o reservar varias plazas con amigos. Al llegar formaréis parte del mismo grupo. El precio es por persona." },
   { title: "Origen", body: "Cada viaje tiene unas ciudades de salida configuradas. En esta primera versión no es posible incorporarse directamente en destino." },
-  { title: "Pago", body: "Tarjeta, wallets, Bizum y Klarna vía Stripe, o PayPal (incluyendo Pay Later cuando esté disponible)." },
+  { title: "Pago", body: "Tarjeta, wallets y Bizum vía Stripe. Durante el pago pueden aparecer opciones de pago aplazado de Klarna o PayPal, según disponibilidad." },
   { title: "Mínimo de viajeros", body: "Cada viaje necesita un número mínimo de participantes para operar. Si no se alcanza, se cancela con reembolso íntegro." },
   { title: "Cambios", body: "Un cambio de horario dentro de las mismas fechas se actualiza en el planning. Un cambio importante se te comunica con las opciones disponibles." },
-  { title: "Documentación", body: "La vas completando progresivamente en \"Mi Viaje\": DNI o pasaporte, contacto de emergencia y el resto de datos que pida el viaje." },
+  { title: "Documentación", body: "Los datos que tu viaje necesita (DNI o pasaporte, entre otros) se piden en el checkout, antes de pagar. Si hace falta algo más, te lo pedimos desde \"Mi Viaje\"." },
 ];
 
 export default function ComoFuncionaPage() {

@@ -5,12 +5,11 @@ import { prisma } from "@/lib/db";
 import { formatCurrency, formatDate, daysUntil } from "@/lib/utils";
 import { getBrand } from "@/lib/brand";
 import { TravelerDetailsForm } from "@/components/mi-viaje/TravelerDetailsForm";
-import { isTravelerComplete } from "@/lib/mi-viaje/completeness";
 import { ChangeRequestButton } from "@/components/mi-viaje/ChangeRequestButton";
 import { WhatsAppLink } from "@/components/mi-viaje/WhatsAppLink";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
-import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon } from "@/components/icons";
-import { summarizeBookedRooms } from "@/lib/checkout/rooms";
+import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon, PassportIcon } from "@/components/icons";
+import { groupBookedRooms } from "@/lib/checkout/rooms";
 
 // Must always reflect the traveler's live booking state (data just saved,
 // change requests, passport status) — never cache this per-token page.
@@ -37,9 +36,12 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
   const returnDate = new Date(booking.trip.matchDate);
   returnDate.setDate(returnDate.getDate() + 1);
 
-  const pendingTravelers = booking.travelers.filter((t) => !isTravelerComplete(t));
+  const rooms = groupBookedRooms(booking.travelers);
   const whatsappReady = booking.trip.whatsappAvailableAt ? booking.trip.whatsappAvailableAt <= new Date() : false;
   const daysToWhatsapp = booking.trip.whatsappAvailableAt ? daysUntil(booking.trip.whatsappAvailableAt) : null;
+  // Only show a countdown once it's genuinely close — otherwise the static
+  // "se abre 15 días antes" line reads better than "disponible en 143 días".
+  const whatsappSoon = daysToWhatsapp !== null && daysToWhatsapp > 0 && daysToWhatsapp <= 20;
 
   const statusLabel: Record<string, string> = {
     pending_payment: "Pago pendiente",
@@ -61,11 +63,9 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       </h1>
       <p className="mb-10 text-carbon/70">{statusLabel[booking.bookingStatus] ?? booking.bookingStatus}</p>
 
-      {pendingTravelers.length > 0 ? (
+      {booking.additionalDataRequestNote ? (
         <div className="mb-8 rounded-sm border border-stamp/40 bg-stamp/10 p-4 text-sm text-stamp">
-          Nos falta documentación adicional de {pendingTravelers.length} viajero
-          {pendingTravelers.length === 1 ? "" : "s"} (documento de identidad, contacto de emergencia…). No es nada
-          de tu reserva: son datos que se piden más adelante, con tiempo antes del viaje.
+          {booking.additionalDataRequestNote}
         </div>
       ) : null}
 
@@ -117,13 +117,26 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
           Habitaciones
         </h2>
         <p className="mb-3 text-sm text-carbon/60">Así queda organizado el grupo, tal y como se eligió al reservar.</p>
-        <ul className="space-y-2 text-sm text-carbon/80">
-          {summarizeBookedRooms(booking.travelers).map((row, i) => (
-            <li key={i} className="rounded-sm border border-carbon/10 px-3 py-2">
-              {row}
-            </li>
+        <div className="space-y-3">
+          {rooms.rooms.map((names, i) => (
+            <div key={i} className="rounded-sm border border-carbon/10 px-4 py-3 text-sm">
+              <p className="mb-1 text-xs tracking-wide text-carbon/50 uppercase">Habitación {i + 1}</p>
+              <p className="text-carbon/85">{names.join(" + ")}</p>
+            </div>
           ))}
-        </ul>
+          {rooms.individual.map((name) => (
+            <div key={name} className="rounded-sm border border-carbon/10 px-4 py-3 text-sm">
+              <p className="text-carbon/85">{name}</p>
+              <p className="text-xs text-carbon/50 uppercase">Habitación individual</p>
+            </div>
+          ))}
+          {rooms.needsRoommate.map((name) => (
+            <div key={name} className="rounded-sm border border-carbon/10 px-4 py-3 text-sm">
+              <p className="text-carbon/85">{name}</p>
+              <p className="text-xs text-carbon/50 uppercase">Compartirá con otro participante del grupo · asignación pendiente</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       {booking.trip.planningDays.length > 0 ? (
@@ -143,8 +156,8 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       <section className="mb-12">
         <h2 className="font-display mb-1 text-lg uppercase">Documentación de los viajeros</h2>
         <p className="mb-4 text-sm text-carbon/60">
-          Datos adicionales que necesitaremos antes de viajar (documento, contacto de emergencia…). Se pueden
-          completar más adelante, cuando os venga bien.
+          Revisa o completa aquí algún dato adicional de cada viajero (contacto de emergencia, dirección postal…).
+          Nada de esto bloquea tu reserva, ya confirmada.
         </p>
         <div className="space-y-3">
           {booking.travelers.map((t) => (
@@ -194,25 +207,27 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
         </h2>
         {whatsappReady && booking.trip.whatsappUrl ? (
           <WhatsAppLink url={booking.trip.whatsappUrl} />
+        ) : whatsappSoon ? (
+          <p className="text-sm text-carbon/70">Grupo de WhatsApp disponible en {daysToWhatsapp} días.</p>
         ) : (
-          <p className="text-sm text-carbon/70">
-            Grupo de WhatsApp disponible
-            {daysToWhatsapp && daysToWhatsapp > 0 ? ` en ${daysToWhatsapp} días.` : " próximamente."}
-          </p>
+          <p className="text-sm text-carbon/70">El grupo de WhatsApp del viaje se abre 15 días antes de salir.</p>
         )}
       </section>
 
-      <section className="mb-12">
-        <h2 className="font-display mb-4 text-lg uppercase">Pasaporte CDF</h2>
-        <p className="text-sm text-carbon/70">
-          Estado:{" "}
-          {booking.passportStatus === "sent"
-            ? "Enviado"
-            : booking.passportStatus === "prepared"
-              ? "Preparado"
-              : "Pendiente"}
-          . Tu pasaporte de viajero y la pegatina de este viaje se preparan una vez confirmados tus datos.
-        </p>
+      <section className="mb-12 flex items-start gap-3">
+        <PassportIcon className="mt-1 h-6 w-6 shrink-0 text-carbon" />
+        <div>
+          <h2 className="font-display mb-1 text-lg uppercase">Pasaporte CDF</h2>
+          <p className="text-sm text-carbon/70">
+            Este viaje incluye tu Pasaporte CDF #{String(booking.trip.number).padStart(3, "0")} y la pegatina de{" "}
+            {booking.trip.name}.{" "}
+            {booking.passportStatus === "sent"
+              ? "Ya te lo hemos enviado."
+              : booking.passportStatus === "prepared"
+                ? "Está preparado, listo para enviarte."
+                : "Lo estamos preparando."}
+          </p>
+        </div>
       </section>
 
       <section className="mb-12 space-y-4">

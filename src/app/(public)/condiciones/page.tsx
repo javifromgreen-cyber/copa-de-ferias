@@ -63,13 +63,6 @@ export default async function CondicionesPage() {
         </p>
       </section>
 
-      <section>
-        <h2 className="font-display text-lg text-carbon uppercase">7. Revisión pendiente</h2>
-        <p>
-          Este documento es un borrador de trabajo. Debe revisarse legalmente, en particular en relación con la
-          normativa de viajes combinados aplicable, antes de operar comercialmente.
-        </p>
-      </section>
     </LegalPageLayout>
   );
 }

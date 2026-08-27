@@ -23,12 +23,14 @@ export default async function ConfirmationPage({
 
   const booking = await prisma.booking.findUnique({
     where: { reference },
-    include: { trip: true },
+    include: { trip: true, travelers: true },
   });
 
   if (!booking || !token || booking.accessToken !== token) notFound();
 
   const isSimulation = isDemoMode() || booking.trip.isDemo;
+  const origins = [...new Set(booking.travelers.map((t) => t.originCity).filter(Boolean))];
+  const originLabel = origins.length > 0 ? origins.join(" · ") : booking.originCity;
 
   return (
     <Container className="max-w-2xl py-16 text-center sm:py-24">
@@ -52,8 +54,8 @@ export default async function ConfirmationPage({
             <dd>{booking.travelersCount}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-carbon/50">Origen</dt>
-            <dd>{booking.originCity}</dd>
+            <dt className="text-carbon/50">{origins.length > 1 ? "Orígenes" : "Origen"}</dt>
+            <dd>{originLabel}</dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-carbon/50">Fecha del partido</dt>
@@ -66,9 +68,12 @@ export default async function ConfirmationPage({
         </dl>
       </div>
 
-      <p className="mb-4 text-sm text-carbon/60">
+      <p className="mb-2 text-sm text-carbon/60">
         Hemos enviado la confirmación a {booking.buyerEmail}
         {isSimulation ? " (simulado — en modo demo no se envían emails reales, consulta el log en Admin)." : "."}
+      </p>
+      <p className="mb-8 text-sm text-carbon/60">
+        Te iremos enviando la información del viaje a medida que se acerque la fecha.
       </p>
 
       <ButtonLink href={`/mi-viaje/${booking.accessToken}`}>Ir a Mi Viaje</ButtonLink>

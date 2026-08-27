@@ -30,6 +30,7 @@ export type TripFormInput = {
   minSpots: number;
   minDeadlineDate: string;
   singleSupplement: number;
+  requiredTravelerFields: string;
   scheduleStatus: ScheduleStatus;
   heroImageKey: string;
   description: string;
@@ -86,6 +87,7 @@ function baseData(input: TripFormInput) {
     minSpots: input.minSpots,
     minDeadlineDate: input.minDeadlineDate ? new Date(input.minDeadlineDate) : null,
     singleSupplement: input.singleSupplement,
+    requiredTravelerFields: input.requiredTravelerFields,
     scheduleStatus: input.scheduleStatus,
     heroImageKey: input.heroImageKey,
     description: input.description,
@@ -202,6 +204,7 @@ export async function duplicateTrip(id: string) {
         minSpots: trip.minSpots,
         minDeadlineDate: trip.minDeadlineDate,
         singleSupplement: trip.singleSupplement,
+        requiredTravelerFields: trip.requiredTravelerFields,
         scheduleStatus: trip.scheduleStatus,
         heroImageKey: trip.heroImageKey,
         description: trip.description,

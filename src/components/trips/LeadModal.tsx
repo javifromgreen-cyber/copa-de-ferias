@@ -64,11 +64,8 @@ export function LeadModal({ open, onClose, tripId, tripName, type }: Props) {
       >
         {status === "done" ? (
           <div className="py-4 text-center">
-            <p className="font-display mb-2 text-lg">¡Apuntado!</p>
-            <p className="mb-6 text-sm text-carbon/70">
-              {type === "waitlist"
-                ? "Te avisaremos en cuanto se libere una plaza."
-                : "Te avisaremos en cuanto abramos plazas para este viaje."}
+            <p className="font-display mb-2 text-lg">
+              {type === "waitlist" ? "Hecho. Estás en la lista de espera." : "Hecho. Estás en la lista."}
             </p>
             <Button variant="secondary" onClick={onClose} className="w-full">
               Cerrar
@@ -143,7 +140,7 @@ export function LeadModal({ open, onClose, tripId, tripName, type }: Props) {
             {error ? <p className="mt-3 text-sm text-stamp">{error}</p> : null}
 
             <Button type="submit" disabled={status === "submitting"} className="mt-5 w-full">
-              {status === "submitting" ? "Enviando…" : "Avisadme"}
+              {status === "submitting" ? "Enviando…" : "Avísame"}
             </Button>
           </form>
         )}

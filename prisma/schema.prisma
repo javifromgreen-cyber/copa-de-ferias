@@ -96,6 +96,13 @@ model Trip {
   minDeadlineDate   DateTime?
   singleSupplement  Float   @default(0)
 
+  // Comma-separated Traveler field keys (birthDate,nationality,docType,
+  // docNumber,docExpiry,docCountry) this trip requires from every traveler
+  // during checkout, before payment — configurable per trip/provider so we
+  // never force fields a given trip doesn't actually need. `sex` is asked
+  // separately, only when a traveler needs a same-sex roommate match.
+  requiredTravelerFields String @default("nationality,docType,docNumber,docExpiry,docCountry")
+
   scheduleStatus ScheduleStatus @default(provisional)
 
   heroImageKey String @default("default") // maps to a generated placeholder photo treatment
@@ -276,6 +283,12 @@ model Booking {
 
   internalNotes String @default("")
 
+  // Set by Admin only, when a specific service on this booking genuinely
+  // needs one more piece of information that wasn't known/required at
+  // checkout time. Empty by default — a brand-new booking must never show
+  // a "missing data" banner in Mi Viaje just because it's new.
+  additionalDataRequestNote String @default("")
+
   hasReceivedPassport Boolean @default(false)
   passportStatus      String  @default("pending") // pending | prepared | sent
 
@@ -301,6 +314,10 @@ model Traveler {
   firstName String
   lastName  String
   birthDate DateTime?
+
+  // Origin belongs to each traveler, not the buyer — a single booking can
+  // mix travelers departing from different cities (see checkout §15).
+  originCity String @default("")
 
   roomPreference RoomPreference @default(share_with_group)
   roomPartnerName String @default("")

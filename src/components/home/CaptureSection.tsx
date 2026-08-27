@@ -55,7 +55,7 @@ export function CaptureSection() {
                 className="w-full flex-1 rounded-sm border border-ivory/30 bg-transparent px-4 py-3 text-sm text-ivory placeholder:text-ivory/40 focus:border-ivory focus:outline-none"
               />
               <Button type="submit" variant="inverse" disabled={status === "submitting"}>
-                {status === "submitting" ? "Enviando…" : "Avisadme"}
+                {status === "submitting" ? "Enviando…" : "Avísame"}
               </Button>
             </div>
             <div className="mt-3 flex items-center justify-center gap-2 text-left">

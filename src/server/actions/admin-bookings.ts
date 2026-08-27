@@ -9,6 +9,16 @@ export async function updateBookingNotes(bookingId: string, notes: string) {
 }
 
 /**
+ * The only way "Mi Viaje" ever shows a pending-data banner — set explicitly
+ * by Admin when a specific service genuinely needs one more piece of
+ * information that wasn't known/required at checkout. Empty by default.
+ */
+export async function updateAdditionalDataNote(bookingId: string, note: string) {
+  await prisma.booking.update({ where: { id: bookingId }, data: { additionalDataRequestNote: note } });
+  revalidatePath(`/admin/reservas/${bookingId}`);
+}
+
+/**
  * Cancels a booking and releases its spots back to the trip. Marks the
  * payment as refunded — in production this would trigger a real refund via
  * the original payment provider before this status change.

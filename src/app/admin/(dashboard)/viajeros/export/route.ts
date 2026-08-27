@@ -43,7 +43,7 @@ export async function GET() {
     t.phone,
     t.emergencyContact,
     t.address,
-    t.booking.originCity,
+    t.originCity,
     t.roomPreference,
     t.roomPartnerName,
     t.booking.passportStatus,

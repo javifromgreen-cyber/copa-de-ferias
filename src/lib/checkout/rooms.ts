@@ -81,14 +81,19 @@ export function countSingleRooms(roomOf: RoomChoice[]): number {
 }
 
 /**
- * Human-readable one-line-per-room summary from already-persisted
- * travelers (Mi Viaje / Admin), deduping each pair to a single row.
+ * Groups already-persisted travelers (Mi Viaje / Admin) into rooms —
+ * "Habitación N" pairs, travelers still needing a same-sex/group roommate
+ * match, and travelers with an individual room — deduping each pair to a
+ * single entry. Never leaks the internal `share_same_sex` enum value to
+ * the UI; callers render `needsRoommate` with their own human copy.
  */
-export function summarizeBookedRooms<
+export function groupBookedRooms<
   T extends { firstName: string; lastName: string; roomPreference: string; roomPartnerName: string },
->(travelers: T[]): string[] {
+>(travelers: T[]): { rooms: string[][]; needsRoommate: string[]; individual: string[] } {
   const shown = new Set<string>();
-  const rows: string[] = [];
+  const rooms: string[][] = [];
+  const needsRoommate: string[] = [];
+  const individual: string[] = [];
 
   for (const t of travelers) {
     const fullName = `${t.firstName} ${t.lastName}`.trim();
@@ -97,15 +102,35 @@ export function summarizeBookedRooms<
 
     if (t.roomPreference === "share_with_group" && t.roomPartnerName) {
       shown.add(t.roomPartnerName);
-      rows.push(`${fullName} + ${t.roomPartnerName} — habitación compartida`);
+      rooms.push([fullName, t.roomPartnerName]);
     } else if (t.roomPreference === "single") {
-      rows.push(`${fullName} — habitación individual`);
+      individual.push(fullName);
     } else {
-      rows.push(`${fullName} — comparte con otro participante`);
+      needsRoommate.push(fullName);
     }
   }
 
-  return rows;
+  return { rooms, needsRoommate, individual };
+}
+
+/** Unique room pairs and still-unpaired traveler indices, for the checkout room-card UI. */
+export function computeRooms(roomOf: RoomChoice[]): { pairs: [number, number][]; unpaired: number[] } {
+  const seen = new Set<number>();
+  const pairs: [number, number][] = [];
+  const unpaired: number[] = [];
+
+  roomOf.forEach((r, i) => {
+    if (seen.has(i)) return;
+    seen.add(i);
+    if (typeof r === "number") {
+      seen.add(r);
+      pairs.push(i < r ? [i, r] : [r, i]);
+    } else {
+      unpaired.push(i);
+    }
+  });
+
+  return { pairs, unpaired };
 }
 
 export function resolveTravelerRooms<T extends { firstName: string; lastName: string }>(

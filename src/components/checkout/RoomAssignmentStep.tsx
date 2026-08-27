@@ -1,36 +1,33 @@
 import { formatCurrency } from "@/lib/utils";
-import { pairTravelers, setSoloChoice, type RoomChoice } from "@/lib/checkout/rooms";
+import { pairTravelers, setSoloChoice, computeRooms, type RoomChoice } from "@/lib/checkout/rooms";
 import { BedIcon } from "@/components/icons";
 
-type Traveler = { firstName: string; lastName: string };
+type Traveler = { firstName: string; lastName: string; sex: string };
 
+/**
+ * Room-card UI: one "Habitación N" card per pair (two editable slots), plus
+ * one "Viajero sin emparejar" card per still-solo traveler with the two
+ * explicit choices (share with the group / individual + supplement). The
+ * underlying roomOf[] pairing engine (mutual, exclusive, no duplicates) is
+ * unchanged — this only changes how it's presented, so nobody has to
+ * answer "who do you want to share with" once per traveler.
+ */
 export function RoomAssignmentStep({
   travelers,
   roomOf,
   onChange,
+  onSexChange,
   singleSupplement,
   currency,
 }: {
   travelers: Traveler[];
   roomOf: RoomChoice[];
   onChange: (next: RoomChoice[]) => void;
+  onSexChange: (index: number, sex: string) => void;
   singleSupplement: number;
   currency: string;
 }) {
-  function selectValue(i: number): string {
-    const r = roomOf[i];
-    if (typeof r === "number") return `pair:${r}`;
-    return r ?? "";
-  }
-
-  function handleChange(i: number, value: string) {
-    if (value === "") return;
-    if (value.startsWith("pair:")) {
-      onChange(pairTravelers(roomOf, i, Number(value.slice(5))));
-    } else {
-      onChange(setSoloChoice(roomOf, i, value as "single" | "share_same_sex"));
-    }
-  }
+  const { pairs, unpaired } = computeRooms(roomOf);
 
   function name(i: number) {
     const t = travelers[i];
@@ -42,85 +39,108 @@ export function RoomAssignmentStep({
       <div>
         <h2 className="font-display text-xl uppercase">Habitaciones</h2>
         <p className="mt-1 text-sm text-carbon/60">
-          Habitación doble compartida por defecto. Decide quién comparte con quién antes de continuar.
+          Habitación doble compartida por defecto. Así queda organizado el grupo — cambia cualquier nombre si
+          preferís otra combinación.
         </p>
       </div>
 
-      <div className="space-y-3">
-        {travelers.map((t, i) => {
-          const paired = typeof roomOf[i] === "number";
+      <div className="space-y-4">
+        {pairs.map(([a, b], i) => (
+          <div key={`${a}-${b}`} className="rounded-sm border border-carbon/15 p-4">
+            <p className="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide uppercase text-carbon/60">
+              <BedIcon className="h-4 w-4 shrink-0" />
+              Habitación {i + 1}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <RoomSlotSelect occupant={a} partner={b} travelers={travelers} roomOf={roomOf} onChange={onChange} />
+              <RoomSlotSelect occupant={b} partner={a} travelers={travelers} roomOf={roomOf} onChange={onChange} />
+            </div>
+          </div>
+        ))}
+
+        {unpaired.map((i) => {
+          const choice = roomOf[i];
           return (
-            <div key={i} className="flex flex-col gap-2 rounded-sm border border-carbon/15 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium">{name(i)}</span>
-              <label className="sm:w-72">
-                <span className="sr-only">Habitación de {name(i)}</span>
-                <select
-                  value={selectValue(i)}
-                  onChange={(e) => handleChange(i, e.target.value)}
-                  className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                >
-                  <option value="" disabled>
-                    Selecciona…
-                  </option>
-                  {travelers.map((_, j) =>
-                    j === i ? null : (
-                      <option key={j} value={`pair:${j}`}>
-                        Comparte con {name(j)}
-                      </option>
-                    )
-                  )}
-                  <option value="share_same_sex">Comparte con otro participante (lo asignamos nosotros)</option>
-                  <option value="single">Habitación individual (+{formatCurrency(singleSupplement, currency)})</option>
-                </select>
-              </label>
-              {paired ? (
-                <span className="text-xs text-carbon/50 sm:hidden">Comparte con {name(roomOf[i] as number)}</span>
-              ) : null}
+            <div key={i} className="rounded-sm border border-carbon/15 p-4">
+              <p className="mb-1 text-xs font-medium tracking-wide uppercase text-carbon/60">Viajero sin emparejar</p>
+              <p className="mb-3 text-sm font-medium">{name(i)}</p>
+              <p className="mb-2 text-sm text-carbon/70">¿Cómo prefieres alojarte?</p>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={`solo-${i}`}
+                    checked={choice === "share_same_sex"}
+                    onChange={() => onChange(setSoloChoice(roomOf, i, "share_same_sex"))}
+                    className="mt-1"
+                  />
+                  Compartir habitación con otro viajero del grupo, compatible / de mi mismo sexo
+                </label>
+                {choice === "share_same_sex" ? (
+                  <label className="ml-6 block max-w-xs">
+                    <span className="mb-1 block text-xs tracking-wide uppercase text-carbon/50">
+                      Sexo (para poder buscarte compañero)
+                    </span>
+                    <input
+                      value={travelers[i].sex}
+                      onChange={(e) => onSexChange(i, e.target.value)}
+                      className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+                    />
+                  </label>
+                ) : null}
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={`solo-${i}`}
+                    checked={choice === "single"}
+                    onChange={() => onChange(setSoloChoice(roomOf, i, "single"))}
+                    className="mt-1"
+                  />
+                  Habitación individual (+{formatCurrency(singleSupplement, currency)})
+                </label>
+              </div>
             </div>
           );
         })}
-      </div>
-
-      <div className="rounded-sm border border-carbon/10 bg-ivory-dark/40 p-4">
-        <p className="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
-          <BedIcon className="h-4 w-4 shrink-0" />
-          Resumen de habitaciones
-        </p>
-        <RoomSummaryList travelers={travelers} roomOf={roomOf} />
       </div>
     </section>
   );
 }
 
-function RoomSummaryList({ travelers, roomOf }: { travelers: Traveler[]; roomOf: RoomChoice[] }) {
-  const name = (i: number) => `${travelers[i].firstName} ${travelers[i].lastName}`.trim() || `Viajero ${i + 1}`;
-  const seen = new Set<number>();
-  const rows: string[] = [];
-
-  travelers.forEach((_, i) => {
-    if (seen.has(i)) return;
-    const r = roomOf[i];
-    if (typeof r === "number") {
-      seen.add(i);
-      seen.add(r);
-      rows.push(`${name(i)} + ${name(r)} — habitación compartida`);
-    } else if (r === "single") {
-      seen.add(i);
-      rows.push(`${name(i)} — habitación individual`);
-    } else if (r === "share_same_sex") {
-      seen.add(i);
-      rows.push(`${name(i)} — comparte con otro participante (por asignar)`);
-    } else {
-      seen.add(i);
-      rows.push(`${name(i)} — pendiente de elegir`);
-    }
-  });
+function RoomSlotSelect({
+  occupant,
+  partner,
+  travelers,
+  roomOf,
+  onChange,
+}: {
+  occupant: number;
+  partner: number;
+  travelers: Traveler[];
+  roomOf: RoomChoice[];
+  onChange: (next: RoomChoice[]) => void;
+}) {
+  function name(i: number) {
+    const t = travelers[i];
+    return `${t.firstName} ${t.lastName}`.trim() || `Viajero ${i + 1}`;
+  }
 
   return (
-    <ul className="space-y-1 text-sm text-carbon/70">
-      {rows.map((row, i) => (
-        <li key={i}>{row}</li>
-      ))}
-    </ul>
+    <label className="block">
+      <span className="sr-only">Persona en esta plaza de la habitación</span>
+      <select
+        value={occupant}
+        onChange={(e) => onChange(pairTravelers(roomOf, Number(e.target.value), partner))}
+        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+      >
+        {travelers.map((_, j) =>
+          j === partner ? null : (
+            <option key={j} value={j}>
+              {name(j)}
+            </option>
+          )
+        )}
+      </select>
+    </label>
   );
 }

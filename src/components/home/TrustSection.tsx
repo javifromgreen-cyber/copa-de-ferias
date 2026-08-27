@@ -9,12 +9,17 @@ import type { Brand } from "@/lib/brand";
  * See docs/LEGAL_CHECKLIST.md.
  */
 export function TrustSection({ brand }: { brand: Brand }) {
+  // Only show fields that are actually filled in — an unset legal field
+  // reads as broken/unfinished if shown as a placeholder, so we simply
+  // don't render that row until Admin > Configuración has real data.
   const items = [
     { label: "Razón social", value: brand.legalName },
     { label: "Registro / licencia", value: brand.legalLicense },
     { label: "Seguro de responsabilidad civil", value: brand.insuranceInfo },
     { label: "Contacto", value: brand.contactEmail },
-  ];
+  ].filter((item) => item.value);
+
+  if (items.length === 0) return null;
 
   return (
     <section className="border-t border-carbon/10 py-16">
@@ -24,9 +29,7 @@ export function TrustSection({ brand }: { brand: Brand }) {
           {items.map((item) => (
             <div key={item.label}>
               <p className="mb-1 text-xs tracking-wide text-carbon/50 uppercase">{item.label}</p>
-              <p className="text-carbon/80">
-                {item.value || <span className="text-carbon/40 italic">Pendiente de completar</span>}
-              </p>
+              <p className="text-carbon/80">{item.value}</p>
             </div>
           ))}
         </div>

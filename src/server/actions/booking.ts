@@ -7,6 +7,28 @@ import { getPaymentProvider } from "@/lib/payments";
 import { sendTemplatedEmail } from "@/lib/email";
 import { generateAccessToken, generateBookingReference, formatDate } from "@/lib/utils";
 import { isDemoMode } from "@/lib/env";
+import { parseRequiredFields } from "@/lib/checkout/travelerFields";
+
+type CheckoutTraveler = CheckoutInput["travelers"][number];
+
+function travelerFieldValue(t: CheckoutTraveler, key: string): string {
+  switch (key) {
+    case "birthDate":
+      return t.birthDate;
+    case "nationality":
+      return t.nationality;
+    case "docType":
+      return t.docType;
+    case "docNumber":
+      return t.docNumber;
+    case "docExpiry":
+      return t.docExpiry;
+    case "docCountry":
+      return t.docCountry;
+    default:
+      return "";
+  }
+}
 
 export type CreateBookingResult =
   | { ok: true; reference: string; accessToken: string; isSimulated: boolean }
@@ -25,6 +47,23 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
   if (!trip) return { ok: false, error: "Viaje no encontrado" };
   if (trip.status !== "open") return { ok: false, error: "Este viaje ya no admite nuevas reservas" };
 
+  // Server-side enforcement of this trip's required traveler fields — the
+  // checkout UI already asks for these, but re-check here so it can't be
+  // bypassed (see checkout §14/§56.J).
+  const requiredFields = parseRequiredFields(trip.requiredTravelerFields);
+  for (const t of data.travelers) {
+    const name = `${t.firstName} ${t.lastName}`.trim();
+    for (const key of requiredFields) {
+      if (!travelerFieldValue(t, key)) {
+        return { ok: false, error: `Falta un dato obligatorio de ${name} para este viaje` };
+      }
+    }
+    if (t.roomPreference === "share_same_sex" && !t.sex) {
+      return { ok: false, error: `Indica el sexo de ${name} para poder buscarle compañero de habitación` };
+    }
+  }
+
+  const originCity = data.travelers[0]?.originCity || "";
   const travelersCount = data.travelers.length;
   const singleRooms = data.travelers.filter((t) => t.roomPreference === "single").length;
   const price = calculateBookingPrice(trip, travelersCount, singleRooms);
@@ -51,7 +90,7 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
           buyerLastName: data.buyerLastName,
           buyerEmail: data.buyerEmail,
           buyerPhone: data.buyerPhone,
-          originCity: data.originCity,
+          originCity,
           billingAddress: data.billingAddress || "",
           travelersCount,
           singleRooms,
@@ -69,6 +108,14 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
           bookingId: booking.id,
           firstName: t.firstName,
           lastName: t.lastName,
+          originCity: t.originCity || "",
+          birthDate: t.birthDate ? new Date(t.birthDate) : null,
+          nationality: t.nationality || "",
+          sex: t.sex || "",
+          docType: t.docType || "",
+          docNumber: t.docNumber || "",
+          docExpiry: t.docExpiry ? new Date(t.docExpiry) : null,
+          docCountry: t.docCountry || "",
           roomPreference: t.roomPreference,
           roomPartnerName: t.roomPartnerName || "",
         })),
@@ -136,7 +183,7 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
       firstName: data.buyerFirstName,
       tripName: trip.name,
       tripNumber: `#${String(trip.number).padStart(3, "0")}`,
-      departureCity: data.originCity,
+      departureCity: originCity,
       departureDate: formatDate(departureDate),
       returnDate: formatDate(returnDate),
       whatsappUrl: trip.whatsappUrl || "",

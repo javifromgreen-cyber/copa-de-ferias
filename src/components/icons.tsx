@@ -141,3 +141,89 @@ export function ChatIcon(props: IconProps) {
     </IconBase>
   );
 }
+
+/** Fechas / planning */
+export function CalendarIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="5" y="2" width="2" height="4" />
+      <rect x="17" y="2" width="2" height="4" />
+      <rect x="3" y="5" width="18" height="3" />
+      <rect x="3" y="10" width="4" height="4" />
+      <rect x="10" y="10" width="4" height="4" />
+      <rect x="17" y="10" width="4" height="4" />
+      <rect x="3" y="16" width="4" height="4" />
+      <rect x="10" y="16" width="4" height="4" />
+    </IconBase>
+  );
+}
+
+/** Documentación — a page with cut-out text lines (same evenodd technique as the logo) */
+export function DocumentIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path
+        fillRule="evenodd"
+        d="M5,2 L19,2 L19,22 L5,22 Z
+           M7,6 L15,6 L15,7.5 L7,7.5 Z
+           M7,10.5 L17,10.5 L17,12 L7,12 Z
+           M7,15 L17,15 L17,16.5 L7,16.5 Z"
+      />
+    </IconBase>
+  );
+}
+
+/** Pasaporte CDF — booklet with a cut-out stripe and emblem */
+export function PassportIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path
+        fillRule="evenodd"
+        d="M4,2 L20,2 L20,22 L4,22 Z
+           M8,8.5 L16,8.5 L16,10 L8,10 Z
+           M10,12 L14,12 L14,16 L10,16 Z"
+      />
+    </IconBase>
+  );
+}
+
+/** Equipaje */
+export function SuitcaseIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="10" y="2" width="4" height="3" />
+      <rect x="3" y="6" width="18" height="15" />
+    </IconBase>
+  );
+}
+
+/** Coordinador / host */
+export function PersonIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="9" y="2" width="6" height="6" />
+      <polygon points="4,22 4,16 8,12 16,12 20,16 20,22" />
+    </IconBase>
+  );
+}
+
+/** Comunidad */
+export function GroupIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="4" y="3" width="5" height="5" />
+      <polygon points="1,20 1,15 3,12 10,12 12,15 12,20" />
+      <rect x="15" y="3" width="5" height="5" />
+      <polygon points="12,20 12,15 14,12 21,12 23,15 23,20" />
+    </IconBase>
+  );
+}
+
+/** Ruta / experiencia — stepped marker with a cut-out center, evenodd */
+export function MapPinIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path fillRule="evenodd" d="M12,2 L20,10 L12,22 L4,10 Z M10,8 L14,8 L14,12 L10,12 Z" />
+    </IconBase>
+  );
+}

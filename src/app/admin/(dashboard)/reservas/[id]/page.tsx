@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { BookingNotesEditor, CancelBookingButton, PassportStatusSelect, ChangeRequestAdminRow } from "@/components/admin/BookingAdminControls";
-import { summarizeBookedRooms } from "@/lib/checkout/rooms";
+import { BookingNotesEditor, CancelBookingButton, PassportStatusSelect, ChangeRequestAdminRow, AdditionalDataNoteEditor } from "@/components/admin/BookingAdminControls";
+import { groupBookedRooms } from "@/lib/checkout/rooms";
 
 export const metadata: Metadata = { title: "Admin — Reserva" };
 
@@ -16,6 +16,7 @@ export default async function AdminBookingDetailPage({ params }: { params: Promi
   if (!booking) notFound();
 
   const cancelled = booking.bookingStatus === "cancelled";
+  const rooms = groupBookedRooms(booking.travelers);
 
   return (
     <div className="max-w-3xl">
@@ -54,12 +55,7 @@ export default async function AdminBookingDetailPage({ params }: { params: Promi
                 {t.firstName} {t.lastName}
               </p>
               <p className="text-carbon/60">
-                Documento: {t.docType || "—"} {t.docNumber}
-                {t.roomPreference === "share_with_group" && t.roomPartnerName
-                  ? ` · Comparte con: ${t.roomPartnerName}`
-                  : t.roomPreference === "single"
-                    ? " · Habitación individual"
-                    : " · Comparte con otro participante (por asignar)"}
+                Origen: {t.originCity || "—"} · Documento: {t.docType || "—"} {t.docNumber}
               </p>
             </div>
           ))}
@@ -68,11 +64,35 @@ export default async function AdminBookingDetailPage({ params }: { params: Promi
 
       <section className="mb-8">
         <h2 className="font-display mb-3 text-lg uppercase">Habitaciones</h2>
-        <ul className="space-y-1 text-sm text-carbon/70">
-          {summarizeBookedRooms(booking.travelers).map((row, i) => (
-            <li key={i}>{row}</li>
+        <div className="space-y-3">
+          {rooms.rooms.map((names, i) => (
+            <div key={i} className="rounded-sm border border-carbon/10 bg-white p-3 text-sm">
+              <p className="text-xs text-carbon/50 uppercase">Habitación {i + 1}</p>
+              <p>{names.join(" + ")}</p>
+            </div>
           ))}
-        </ul>
+          {rooms.needsRoommate.length > 0 ? (
+            <div className="rounded-sm border border-carbon/10 bg-white p-3 text-sm">
+              <p className="text-xs text-carbon/50 uppercase">Necesita compañero</p>
+              <p>{rooms.needsRoommate.join(", ")}</p>
+            </div>
+          ) : null}
+          {rooms.individual.length > 0 ? (
+            <div className="rounded-sm border border-carbon/10 bg-white p-3 text-sm">
+              <p className="text-xs text-carbon/50 uppercase">Individual</p>
+              <p>{rooms.individual.join(", ")}</p>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="font-display mb-3 text-lg uppercase">Solicitar dato adicional</h2>
+        <p className="mb-3 text-sm text-carbon/60">
+          Solo rellena esto si necesitas pedir explícitamente un dato que no se conocía en el checkout — se mostrará
+          como aviso al cliente en &ldquo;Mi Viaje&rdquo;. Déjalo vacío para no mostrar ningún aviso.
+        </p>
+        <AdditionalDataNoteEditor bookingId={booking.id} initialNote={booking.additionalDataRequestNote} />
       </section>
 
       <section className="mb-8">

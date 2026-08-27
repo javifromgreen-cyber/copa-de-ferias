@@ -12,7 +12,7 @@ test("submitting the Avísame form shows a confirmation message", async ({ page 
   await dialog.getByLabel("Email").fill(`test-${Date.now()}@example.com`);
   await dialog.getByLabel("Ciudad de salida").fill("Barcelona");
   await dialog.getByRole("checkbox").check();
-  await dialog.getByRole("button", { name: /avisadme/i }).click();
+  await dialog.getByRole("button", { name: /avísame/i }).click();
 
-  await expect(dialog.getByText("¡Apuntado!")).toBeVisible();
+  await expect(dialog.getByText("Hecho. Estás en la lista.")).toBeVisible();
 });

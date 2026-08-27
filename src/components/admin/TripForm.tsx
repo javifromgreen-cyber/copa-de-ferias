@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/admin/FormField";
 import { saveTrip, type TripFormInput } from "@/server/actions/admin-trips";
+import { TRAVELER_FIELD_KEYS, TRAVELER_FIELD_LABELS, parseRequiredFields } from "@/lib/checkout/travelerFields";
 
 const STATUS_OPTIONS = ["draft", "upcoming", "open", "sold_out", "completed", "archived"] as const;
 const SCHEDULE_OPTIONS = ["provisional", "confirmed"] as const;
@@ -183,6 +184,32 @@ export function TripForm({ initial }: { initial: TripFormInput }) {
           <Field label="Fecha límite del mínimo">
             <input type="date" value={toDateInput(form.minDeadlineDate)} onChange={(e) => set("minDeadlineDate", e.target.value)} className={inputClass} />
           </Field>
+        </div>
+      </Section>
+
+      <Section title="Datos de viajero requeridos en checkout">
+        <p className="text-xs text-carbon/60">
+          Se piden a cada viajero antes de pagar, no después en &ldquo;Mi Viaje&rdquo;. Marca solo los que este viaje
+          realmente necesita.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {TRAVELER_FIELD_KEYS.map((key) => {
+            const selected = parseRequiredFields(form.requiredTravelerFields).includes(key);
+            return (
+              <label key={key} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(e) => {
+                    const current = parseRequiredFields(form.requiredTravelerFields);
+                    const next = e.target.checked ? [...current, key] : current.filter((k) => k !== key);
+                    set("requiredTravelerFields", next.join(","));
+                  }}
+                />
+                {TRAVELER_FIELD_LABELS[key]}
+              </label>
+            );
+          })}
         </div>
       </Section>
 

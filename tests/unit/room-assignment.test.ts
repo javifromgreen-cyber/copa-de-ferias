@@ -7,6 +7,8 @@ import {
   isRoomAssignmentComplete,
   countSingleRooms,
   resolveTravelerRooms,
+  computeRooms,
+  groupBookedRooms,
 } from "@/lib/checkout/rooms";
 
 describe("defaultRoomAssignment", () => {
@@ -95,5 +97,89 @@ describe("resolveTravelerRooms", () => {
   it("maps single/share_same_sex with no partner name", () => {
     const resolved = resolveTravelerRooms(travelers, [1, 0, "single"]);
     expect(resolved[2]).toMatchObject({ roomPreference: "single", roomPartnerName: "" });
+  });
+});
+
+// Room-card UI grouping — covers the group sizes explicitly requested for
+// this pass: 1, 2, 3, 4, 5, 6 travelers (checkout §55).
+describe("computeRooms", () => {
+  it("1 traveler: no rooms, one unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(1))).toEqual({ pairs: [], unpaired: [0] });
+  });
+
+  it("2 travelers: one room, no unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(2))).toEqual({ pairs: [[0, 1]], unpaired: [] });
+  });
+
+  it("3 travelers: one room + one unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(3))).toEqual({ pairs: [[0, 1]], unpaired: [2] });
+  });
+
+  it("4 travelers: two rooms, no unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(4))).toEqual({
+      pairs: [
+        [0, 1],
+        [2, 3],
+      ],
+      unpaired: [],
+    });
+  });
+
+  it("5 travelers: two rooms + one unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(5))).toEqual({
+      pairs: [
+        [0, 1],
+        [2, 3],
+      ],
+      unpaired: [4],
+    });
+  });
+
+  it("6 travelers: three rooms, no unpaired", () => {
+    expect(computeRooms(defaultRoomAssignment(6))).toEqual({
+      pairs: [
+        [0, 1],
+        [2, 3],
+        [4, 5],
+      ],
+      unpaired: [],
+    });
+  });
+
+  it("groups single/share_same_sex choices as unpaired, never duplicated across pairs", () => {
+    const roomOf = pairTravelers([null, null, null, null], 0, 1);
+    const withSolo = setSoloChoice(setSoloChoice(roomOf, 2, "single"), 3, "share_same_sex");
+    const { pairs, unpaired } = computeRooms(withSolo);
+    expect(pairs).toEqual([[0, 1]]);
+    expect(unpaired.sort()).toEqual([2, 3]);
+    // every index appears exactly once across pairs+unpaired
+    const seen = [...pairs.flat(), ...unpaired].sort((a, b) => a - b);
+    expect(seen).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe("groupBookedRooms", () => {
+  it("groups a mutual pair into one room, dedupes the second traveler", () => {
+    const travelers = [
+      { firstName: "Ana", lastName: "García", roomPreference: "share_with_group", roomPartnerName: "Berto Ruiz" },
+      { firstName: "Berto", lastName: "Ruiz", roomPreference: "share_with_group", roomPartnerName: "Ana García" },
+    ];
+    expect(groupBookedRooms(travelers)).toEqual({
+      rooms: [["Ana García", "Berto Ruiz"]],
+      needsRoommate: [],
+      individual: [],
+    });
+  });
+
+  it("buckets single and share_same_sex travelers correctly", () => {
+    const travelers = [
+      { firstName: "Ana", lastName: "García", roomPreference: "single", roomPartnerName: "" },
+      { firstName: "Berto", lastName: "Ruiz", roomPreference: "share_same_sex", roomPartnerName: "" },
+    ];
+    expect(groupBookedRooms(travelers)).toEqual({
+      rooms: [],
+      needsRoommate: ["Berto Ruiz"],
+      individual: ["Ana García"],
+    });
   });
 });

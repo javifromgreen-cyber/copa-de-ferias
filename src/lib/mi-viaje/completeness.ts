@@ -9,11 +9,16 @@ export type TravelerCompletenessCheck = {
   docNumber: string;
   docExpiry: string | Date | null;
   nationality: string;
-  phone: string;
-  emergencyContact: string;
-  address: string;
 };
 
+/**
+ * Whether a traveler's document data is filled in — used only for the
+ * small per-row "Completo" badge in Mi Viaje. Deliberately does NOT
+ * include phone/emergencyContact/address: those are genuinely optional
+ * extras, not requirements, so they never make a traveler read as
+ * "incomplete". Document fields are normally already filled at checkout
+ * for trips that require them; this just reflects that state honestly.
+ */
 export function isTravelerComplete(t: TravelerCompletenessCheck) {
-  return Boolean(t.docType && t.docNumber && t.docExpiry && t.nationality && t.phone && t.emergencyContact && t.address);
+  return Boolean(t.docType && t.docNumber && t.docExpiry && t.nationality);
 }

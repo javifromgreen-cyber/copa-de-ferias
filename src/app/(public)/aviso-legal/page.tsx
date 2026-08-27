@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LegalPageLayout, Placeholder } from "@/components/legal/LegalPageLayout";
+import { LegalPageLayout } from "@/components/legal/LegalPageLayout";
 import { getBrand } from "@/lib/brand";
 
 export const revalidate = 60;
@@ -17,10 +17,10 @@ export default async function AvisoLegalPage() {
           Este sitio web es operado, provisionalmente, bajo el nombre comercial <strong>{brand.name}</strong>.
         </p>
         <ul className="list-inside list-disc space-y-1">
-          <li>Razón social: <Placeholder value={brand.legalName} /></li>
-          <li>NIF/CIF: <Placeholder value={brand.legalTaxId} /></li>
-          <li>Domicilio social: <Placeholder value={brand.legalAddress} /></li>
-          <li>Registro / licencia de agencia de viajes: <Placeholder value={brand.legalLicense} /></li>
+          {brand.legalName ? <li>Razón social: {brand.legalName}</li> : null}
+          {brand.legalTaxId ? <li>NIF/CIF: {brand.legalTaxId}</li> : null}
+          {brand.legalAddress ? <li>Domicilio social: {brand.legalAddress}</li> : null}
+          {brand.legalLicense ? <li>Registro / licencia de agencia de viajes: {brand.legalLicense}</li> : null}
           <li>Contacto: {brand.contactEmail}</li>
         </ul>
       </section>
@@ -45,7 +45,7 @@ export default async function AvisoLegalPage() {
 
       <section>
         <h2 className="font-display text-lg text-carbon uppercase">4. Legislación aplicable</h2>
-        <p>Pendiente de definición junto con asesoría legal antes de operar comercialmente.</p>
+        <p>Este sitio se rige por la legislación española y, en lo que corresponda, la normativa europea de viajes combinados.</p>
       </section>
     </LegalPageLayout>
   );

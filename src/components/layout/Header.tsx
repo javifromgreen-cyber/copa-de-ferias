@@ -22,7 +22,7 @@ export function Header({ brand }: { brand: Brand }) {
     <header className="sticky top-0 z-40 border-b border-carbon/10 bg-ivory/95 backdrop-blur">
       <Container className="flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center gap-2" onClick={() => setOpen(false)}>
-          <Logo className="h-8 w-8 text-carbon" />
+          <Logo className="h-10 w-10 text-carbon" />
           <span className="font-display text-sm tracking-[0.2em] uppercase">{brand.name}</span>
         </Link>
 

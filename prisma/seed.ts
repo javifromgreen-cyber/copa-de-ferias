@@ -75,7 +75,7 @@ async function main() {
   const faqs: Array<[string, string]> = [
     [
       "¿Puedo viajar solo?",
-      "Sí. La mayoría de gente que viaja con Copa de Ferias llega sola. Es exactamente para eso: encontrarte allí con gente que entiende por qué merece la pena coger un avión por un partido.",
+      "Sí. Puedes apuntarte por tu cuenta, venir en pareja o reservar varias plazas con amigos. Al llegar formaréis parte del mismo grupo.",
     ],
     [
       "¿Puedo ir con amigos?",
@@ -192,6 +192,7 @@ async function main() {
       minSpots: 8,
       minDeadlineDate: addDays(belgradoMatchDate, -30),
       singleSupplement: 90,
+      requiredTravelerFields: "nationality,docType,docNumber,docExpiry,docCountry",
       scheduleStatus: "confirmed",
       heroImageKey: "belgrado",
       description:
@@ -206,7 +207,7 @@ async function main() {
       hotelZone: "Centro de Belgrado",
       hotelCentric: true,
       hotelDescription:
-        "Hotel céntrico de 3/4 estrellas, a distancia caminable de las zonas con más ambiente y bien comunicado con el estadio.",
+        "Hotel céntrico de 4 estrellas, a distancia caminable de las zonas con más ambiente y bien comunicado con el estadio.",
       ticketCategory: "Categoría 2",
       ticketSector: "Grada lateral",
       ticketSeating: "El grupo se sienta junto siempre que la organización del estadio lo permite.",
@@ -215,7 +216,7 @@ async function main() {
       coordinatorName: "Coordinador de Copa de Ferias (viaja desde Barcelona)",
       hostName: "Host local en Belgrado",
       cancellationPolicy:
-        "Política de cancelación pendiente de revisión legal definitiva antes de producción. Placeholder editorial: cancelaciones con más de 30 días de antelación, reembolso íntegro salvo gastos ya comprometidos con proveedores; entre 30 y 15 días, reembolso parcial; menos de 15 días, sin reembolso salvo causa mayor. Editable desde Admin.",
+        "Cancelaciones con más de 30 días de antelación: reembolso íntegro salvo gastos ya comprometidos con proveedores. Entre 30 y 15 días: reembolso parcial. Menos de 15 días: sin reembolso salvo causa mayor.",
       importantConditions:
         "Viaje pensado para mayores de 18 años. La entrada, el sector y el planning pueden sufrir pequeños ajustes por causas ajenas a Copa de Ferias (organización del club, seguridad, autoridades locales); en ese caso te avisamos en cuanto lo sepamos.",
       whatsappUrl: "https://chat.whatsapp.com/demo-belgrado",
@@ -246,7 +247,7 @@ async function main() {
         tripId: belgrado.id,
         title: "Sábado",
         description:
-          "Ruta futbolística por la ciudad y el barrio del estadio. Encuentro con el host local. Previa con aficionados. Estrella Roja - Partizan. Regreso al hotel.",
+          "Ruta futbolística por la ciudad y el barrio del estadio. Encuentro con el host local. Tiempo de previa en la zona del estadio. Estrella Roja - Partizan. Regreso al hotel.",
         order: 1,
       },
       {
@@ -274,7 +275,7 @@ async function main() {
       },
       {
         tripId: belgrado.id,
-        title: "Previa con aficionados locales",
+        title: "Tiempo de previa en la zona del estadio",
         description: "El ambiente antes del derbi, en las calles del centro.",
         order: 2,
       },
@@ -307,9 +308,8 @@ async function main() {
   await prisma.tripRequirement.createMany({
     data: [
       { tripId: belgrado.id, text: "DNI o pasaporte en vigor durante todo el viaje", order: 0 },
-      { tripId: belgrado.id, text: "No se permite acceder al estadio con camisetas de otros equipos", order: 1 },
-      { tripId: belgrado.id, text: "Clima habitual de noviembre en Belgrado: lleva ropa de abrigo", order: 2 },
-      { tripId: belgrado.id, text: "Punto de encuentro: recepción del hotel, se confirma por WhatsApp", order: 3 },
+      { tripId: belgrado.id, text: "Clima habitual de noviembre en Belgrado: lleva ropa de abrigo", order: 1 },
+      { tripId: belgrado.id, text: "Punto de encuentro: recepción del hotel, se confirma por WhatsApp", order: 2 },
     ],
   });
 
@@ -323,8 +323,8 @@ async function main() {
       },
       {
         tripId: belgrado.id,
-        question: "¿Hace falta ropa neutra en el estadio?",
-        answer: "Sí: por seguridad y por las condiciones del club anfitrión, no se permite acudir con camisetas de otros equipos. Te lo recordamos también antes de viajar.",
+        question: "¿Hay un punto de encuentro antes del partido?",
+        answer: "Sí, quedamos en el hotel con el coordinador y el host local; el horario exacto se confirma por WhatsApp más cerca de la fecha.",
         order: 1,
       },
     ],
@@ -508,6 +508,7 @@ async function main() {
           bookingId: booking.id,
           firstName: t.firstName,
           lastName: t.lastName,
+          originCity: b.originCity,
           roomPreference: t.roomPreference,
         },
       });

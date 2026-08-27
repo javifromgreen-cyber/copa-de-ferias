@@ -58,9 +58,9 @@ export default async function ComunidadPage() {
               del fútbol.
             </p>
             <p>
-              Nos gusta esa idea — ciudades conectadas por el fútbol — y por eso tomamos prestado el nombre. Décadas
-              después, {brand.name} selecciona ciudades, estadios y partidos por los que, seguimos pensando, merece
-              la pena viajar.
+              Nos gusta esa idea — ciudades conectadas por el fútbol. De ahí nace nuestro nombre. Décadas después,{" "}
+              {brand.name} selecciona ciudades, estadios y partidos por los que, seguimos pensando, merece la pena
+              viajar.
             </p>
             <p className="text-sm text-carbon/50">
               {brand.name} no es continuadora de aquella competición, ni tiene relación con UEFA, FIFA ni con

@@ -5,6 +5,7 @@ import { getTripBySlug } from "@/lib/trips/queries";
 import { effectiveStatus, spotsLeft } from "@/lib/trips/status";
 import { CheckoutFlow } from "@/components/checkout/CheckoutFlow";
 import { isDemoMode } from "@/lib/env";
+import { parseRequiredFields } from "@/lib/checkout/travelerFields";
 
 // Must reflect live spots-left at the moment checkout starts.
 export const dynamic = "force-dynamic";
@@ -42,12 +43,17 @@ export default async function ReservarPage({ params }: { params: Promise<{ slug:
           id: trip.id,
           slug: trip.slug,
           name: trip.name,
+          subtitle: trip.subtitle,
           price: trip.price,
           currency: trip.currency,
           singleSupplement: trip.singleSupplement,
           spotsLeft: left,
           isDemo: trip.isDemo,
           origins: trip.origins.map((o) => o.city),
+          requiredTravelerFields: parseRequiredFields(trip.requiredTravelerFields),
+          hotelStars: trip.hotelStars,
+          ticketCategory: trip.ticketCategory,
+          hasInsurance: Boolean(trip.insuranceDescription),
         }}
         isSimulation={isDemoMode() || trip.isDemo}
       />

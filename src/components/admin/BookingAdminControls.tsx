@@ -3,7 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import { updateBookingNotes, cancelAndRefundBooking, updatePassportStatus, resolveChangeRequest } from "@/server/actions/admin-bookings";
+import {
+  updateBookingNotes,
+  cancelAndRefundBooking,
+  updatePassportStatus,
+  resolveChangeRequest,
+  updateAdditionalDataNote,
+} from "@/server/actions/admin-bookings";
 
 export function BookingNotesEditor({ bookingId, initialNotes }: { bookingId: string; initialNotes: string }) {
   const [notes, setNotes] = useState(initialNotes);
@@ -34,6 +40,42 @@ export function BookingNotesEditor({ bookingId, initialNotes }: { bookingId: str
         }
       >
         {pending ? "Guardando…" : "Guardar notas"}
+      </Button>
+      {saved ? <span className="ml-2 text-xs text-carbon/50">Guardado.</span> : null}
+    </div>
+  );
+}
+
+export function AdditionalDataNoteEditor({ bookingId, initialNote }: { bookingId: string; initialNote: string }) {
+  const [note, setNote] = useState(initialNote);
+  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <div>
+      <textarea
+        value={note}
+        onChange={(e) => {
+          setNote(e.target.value);
+          setSaved(false);
+        }}
+        rows={2}
+        placeholder="Ej. Necesitamos el número de vuelo para gestionar tu transfer."
+        className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
+      />
+      <Button
+        type="button"
+        variant="secondary"
+        className="mt-2 text-xs"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            await updateAdditionalDataNote(bookingId, note);
+            setSaved(true);
+          })
+        }
+      >
+        {pending ? "Guardando…" : "Guardar aviso"}
       </Button>
       {saved ? <span className="ml-2 text-xs text-carbon/50">Guardado.</span> : null}
     </div>
