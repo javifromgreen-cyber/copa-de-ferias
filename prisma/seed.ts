@@ -408,7 +408,7 @@ async function main() {
       soldSpots: 0,
       minSpots: 8,
       singleSupplement: 90,
-      scheduleStatus: "provisional",
+      scheduleStatus: "time_provisional",
       heroImageKey: "futbol-ingles",
       description: "Todavía en preparación. Déjanos tu email y te avisamos en cuanto abramos plazas.",
       seoTitle: "Fútbol Inglés | Copa de Ferias",
@@ -457,7 +457,7 @@ async function main() {
       soldSpots: 0,
       minSpots: 8,
       singleSupplement: 90,
-      scheduleStatus: "provisional",
+      scheduleStatus: "time_provisional",
       heroImageKey: "lisboa",
       description: "Todavía en preparación. Déjanos tu email y te avisamos en cuanto abramos plazas.",
       seoTitle: "Lisboa — Derbi de Lisboa | Copa de Ferias",
@@ -697,7 +697,7 @@ async function main() {
       timezone: "Europe/London",
       matchDate: demoCMatch2Date,
       kickoff: null, // provisional — Premier League hasn't fixed the exact kickoff yet
-      scheduleStatus: "provisional",
+      scheduleStatus: "time_provisional",
       status: "published",
       primaryEvent: false,
       order: 1,
@@ -709,6 +709,76 @@ async function main() {
       { eventId: demoCEvent1.id, provider: "manual", category: "Members", sector: "Club Level", costNet: 120, currency: "EUR", stock: 20, deliveryType: "digital", active: true },
       { eventId: demoCEvent2.id, provider: "manual", category: "General", sector: "Away end", costNet: 70, currency: "EUR", stock: 50, deliveryType: "digital", active: true },
       { eventId: demoCEvent2.id, provider: "manual", category: "Members", sector: "Away end premium", costNet: 110, currency: "EUR", stock: 15, deliveryType: "digital", active: true },
+    ],
+  });
+
+  // --- DEMO D — Manchester derby — QA/testing product with a fully
+  // CONFIRMED schedule (day AND kickoff both fixed), so the entire
+  // checkout — country -> 3 modalities -> travelers -> entradas -> noches
+  // -> hotel -> aeropuerto -> preferencias -> vuelo -> revalidación -> pago
+  // — can be walked end to end without touching Londres/Admin first. Same
+  // architecture as every other A_TU_AIRE product, no special-casing (§28)
+  // — its only particularity is deterministic, fully-testable data:
+  //   - MAD/BCN/AGP: genuinely round-trip-direct (ida Y vuelta) to
+  //     Manchester (MAN) — MAD additionally has NO afternoon return slot,
+  //     giving a real "Tarde — No disponible" case on the return leg.
+  //   - SVQ: direct Friday outbound but no direct Manchester -> Sevilla
+  //     return — excluded entirely, proving round-trip eligibility (§22).
+  //   - OVD: no route at all — excluded (§7/§29).
+  await prisma.trip.deleteMany({ where: { slug: "manchester-a-tu-aire" } });
+  const demoDMatchDate = nextSaturday(95);
+  const demoD = await prisma.trip.create({
+    data: {
+      number: 7,
+      slug: "manchester-a-tu-aire",
+      name: "Manchester",
+      subtitle: "Derbi de Manchester — producto de prueba A_TU_AIRE",
+      city: "Manchester",
+      country: "Inglaterra",
+      homeTeam: "Manchester City",
+      awayTeam: "Manchester United",
+      stadium: "Etihad Stadium",
+      matchDate: demoDMatchDate,
+      durationDays: 3,
+      durationNights: 2,
+      status: "open",
+      published: true,
+      homeFeatured: false,
+      order: 6,
+      isDemo: true,
+      price: fromPrice(55),
+      scheduleStatus: "confirmed",
+      travelMode: "A_TU_AIRE",
+      maxPartySize: 10,
+      availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
+      heroImageKey: "manchester",
+      description: "Producto de prueba A_TU_AIRE — horario confirmado, pensado para recorrer todo el checkout de principio a fin.",
+      seoTitle: "Manchester — Derbi de Manchester | Copa de Ferias",
+      seoDescription: "Manchester City - Manchester United, a tu aire.",
+    },
+  });
+  const demoDEvent = await prisma.event.create({
+    data: {
+      tripId: demoD.id,
+      competitionId: competitionByName.get("Premier League") ?? null,
+      homeTeam: "Manchester City",
+      awayTeam: "Manchester United",
+      stadium: "Etihad Stadium",
+      city: "Manchester",
+      country: "Inglaterra",
+      timezone: "Europe/London",
+      matchDate: demoDMatchDate,
+      kickoff: new Date(new Date(demoDMatchDate).setHours(17, 30, 0, 0)),
+      scheduleStatus: "confirmed",
+      status: "published",
+      primaryEvent: true,
+      order: 0,
+    },
+  });
+  await prisma.ticketOffer.createMany({
+    data: [
+      { eventId: demoDEvent.id, provider: "manual", category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
+      { eventId: demoDEvent.id, provider: "manual", category: "Members", sector: "Tier 1", costNet: 105, currency: "EUR", stock: 25, deliveryType: "digital", active: true },
     ],
   });
 

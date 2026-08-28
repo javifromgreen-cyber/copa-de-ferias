@@ -62,13 +62,16 @@ export type OriginOption = { iata: string; city: string; airportName: string };
 export interface FlightProvider {
   readonly kind: string;
   /**
-   * Spanish origin airports with at least one DIRECT route to this
-   * destination — the only thing the UI's airport selector is allowed to
-   * offer (§6/§7/§9). Never hardcoded in the UI; always derived from
+   * Spanish origin airports that can build a full round trip for THIS
+   * trip's dates: a DIRECT outbound leg to the destination AND a DIRECT
+   * return leg back, both required (§22) — an airport with only one
+   * direct direction (e.g. direct outbound but connecting-only return)
+   * never appears. The only thing the UI's airport selector is allowed to
+   * offer (§6/§7/§9/§23) — never hardcoded in the UI, always derived from
    * what the provider actually has. Returns [] (never throws) when
    * unavailable.
    */
-  listDirectOrigins(params: { destinationAirport: string }): Promise<OriginOption[]>;
+  listEligibleDirectOriginsForTrip(params: { destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<OriginOption[]>;
   /**
    * Returns every real candidate round-trip for the given route and
    * calendar days, direct and connecting alike — daypart/preference

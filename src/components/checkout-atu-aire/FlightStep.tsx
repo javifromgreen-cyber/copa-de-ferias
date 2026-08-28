@@ -9,7 +9,7 @@ function PreferenceGroup({
   onSelect,
 }: {
   legend: string;
-  options: { value: FlightDaypartPreference; label: string; priceFromPerPerson: number | null }[];
+  options: { value: FlightDaypartPreference; label: string; priceFromPerPerson: number | null; available: boolean }[];
   selected: FlightDaypartPreference;
   onSelect: (value: FlightDaypartPreference) => void;
 }) {
@@ -24,14 +24,19 @@ function PreferenceGroup({
               key={option.value}
               type="button"
               aria-pressed={isSelected}
-              onClick={() => onSelect(option.value)}
+              disabled={!option.available}
+              onClick={() => option.available && onSelect(option.value)}
               className={`rounded-sm border px-4 py-2 text-left text-sm transition-colors ${
-                isSelected ? "border-carbon bg-carbon text-ivory" : "border-carbon/20 hover:border-carbon/50"
+                !option.available
+                  ? "cursor-not-allowed border-carbon/10 bg-ivory-dark/50 text-carbon/40"
+                  : isSelected
+                    ? "border-carbon bg-carbon text-ivory"
+                    : "border-carbon/20 hover:border-carbon/50"
               }`}
             >
               <span className="block font-medium">{option.label}</span>
-              <span className={`block text-xs ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>
-                {option.priceFromPerPerson !== null ? `Desde ${formatCurrency(option.priceFromPerPerson)}` : "Sin vuelos"}
+              <span className={`block text-xs ${!option.available ? "text-carbon/40" : isSelected ? "text-ivory/70" : "text-carbon/50"}`}>
+                {option.available && option.priceFromPerPerson !== null ? `Desde ${formatCurrency(option.priceFromPerPerson)}` : "No disponible"}
               </span>
             </button>
           );
@@ -119,7 +124,10 @@ export function FlightStep({
                       {formatDate(offer.returnDeparture, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                     </span>
                   </span>
-                  <span className="font-display text-lg">{formatCurrency(offer.pricePerPerson)} / persona</span>
+                  <span className="text-right">
+                    <span className="block font-display text-lg">{formatCurrency(offer.resultantTotalPerPerson)} / persona</span>
+                    <span className={`block text-xs ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>Vuelo: {formatCurrency(offer.pricePerPerson)} / persona</span>
+                  </span>
                 </button>
               );
             })}

@@ -36,22 +36,17 @@ describe("validateEventPublishable", () => {
 
 describe("validateTripPublishable", () => {
   it("never blocks a GROUP_CDF trip — unchanged legacy behavior", () => {
-    const result = validateTripPublishable({ travelMode: "GROUP_CDF", eventsCount: 0, availablePackageTypes: "" });
+    const result = validateTripPublishable({ travelMode: "GROUP_CDF", eventsCount: 0 });
     expect(result).toEqual({ ok: true });
   });
 
   it("blocks an A_TU_AIRE product with no events", () => {
-    const result = validateTripPublishable({ travelMode: "A_TU_AIRE", eventsCount: 0, availablePackageTypes: "TICKET_ONLY" });
+    const result = validateTripPublishable({ travelMode: "A_TU_AIRE", eventsCount: 0 });
     expect(result.ok).toBe(false);
   });
 
-  it("blocks an A_TU_AIRE product with no available package types", () => {
-    const result = validateTripPublishable({ travelMode: "A_TU_AIRE", eventsCount: 1, availablePackageTypes: "" });
-    expect(result.ok).toBe(false);
-  });
-
-  it("accepts a fully configured A_TU_AIRE product", () => {
-    const result = validateTripPublishable({ travelMode: "A_TU_AIRE", eventsCount: 1, availablePackageTypes: "TICKET_ONLY" });
+  it("accepts an A_TU_AIRE product with at least one event — it always conceptually supports all three modalities (§1/§5)", () => {
+    const result = validateTripPublishable({ travelMode: "A_TU_AIRE", eventsCount: 1 });
     expect(result).toEqual({ ok: true });
   });
 });

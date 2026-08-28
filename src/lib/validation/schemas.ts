@@ -15,6 +15,17 @@ export const generalLeadSchema = z.object({
 });
 export type GeneralLeadInput = z.infer<typeof generalLeadSchema>;
 
+// A_TU_AIRE's own checkout already knows party size, tickets, hotel and
+// flight from the quote itself — the only thing still missing before it
+// can create a real booking is who's paying (§6).
+export const atuAireBuyerSchema = z.object({
+  buyerFirstName: z.string().trim().min(1, "Nombre requerido").max(80),
+  buyerLastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
+  buyerEmail: z.string().trim().email("Email no válido"),
+  buyerPhone: z.string().trim().min(1, "Teléfono requerido").max(30),
+});
+export type AtuAireBuyerInput = z.infer<typeof atuAireBuyerSchema>;
+
 export const travelerRoomPreference = z.enum(["share_with_group", "share_same_sex", "single"]);
 
 // Core traveler data is captured during checkout, not deferred to "Mi

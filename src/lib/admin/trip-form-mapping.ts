@@ -26,7 +26,7 @@ export const BLANK_TRIP_FORM: TripFormInput = {
   singleSupplement: 0,
   requiredTravelerFields: "nationality,docType,docNumber,docExpiry,docCountry",
   requiresShippingAddress: false,
-  scheduleStatus: "provisional",
+  scheduleStatus: "time_provisional",
   travelMode: "GROUP_CDF",
   maxPartySize: 10,
   availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",

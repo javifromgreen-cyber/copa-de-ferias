@@ -35,23 +35,22 @@ test.describe("A_TU_AIRE demo seed coherence", () => {
     await expect(page.getByText("Tribuna preferente")).toBeVisible();
   });
 
-  test("Demo B (Milán) offers TICKET_ONLY and TICKET_HOTEL on its product", async ({ page }) => {
+  test("Demo B (Milán) — Admin no longer configures per-product modalities; it always supports all three (§1/§5)", async ({ page }) => {
     await page.goto("/admin/viajes");
     await page.getByRole("link", { name: /Milán/i }).click();
-    await page.getByText("Producto A TU AIRE").click();
-    await expect(page.getByLabel("Solo entrada", { exact: true })).toBeChecked();
-    await expect(page.getByLabel("Entrada + hotel", { exact: true })).toBeChecked();
-    await expect(page.getByLabel("Entrada + hotel + vuelo", { exact: true })).not.toBeChecked();
+    await page.getByText("Producto A TU AIRE", { exact: true }).click();
+    await expect(page.getByText(/siempre las tres modalidades/i)).toBeVisible();
+    await expect(page.getByLabel("Solo entrada", { exact: true })).toHaveCount(0);
   });
 
-  test("Demo C (Londres) has two Events, one confirmed and one provisional", async ({ page }) => {
+  test("Demo C (Londres) has two Events, one confirmed and one time_provisional (day known, hour pending)", async ({ page }) => {
     await page.goto("/admin/eventos");
     const confirmedRow = page.getByRole("row", { name: /Arsenal vs Tottenham/ });
     const provisionalRow = page.getByRole("row", { name: /Chelsea vs Arsenal/ });
     await expect(confirmedRow).toBeVisible();
     await expect(provisionalRow).toBeVisible();
     await expect(confirmedRow.getByText("Confirmado")).toBeVisible();
-    await expect(provisionalRow.getByText("Provisional")).toBeVisible();
+    await expect(provisionalRow.getByText("Hora provisional")).toBeVisible();
 
     await page.goto("/admin/viajes");
     await page.getByRole("link", { name: /Londres/i }).click();

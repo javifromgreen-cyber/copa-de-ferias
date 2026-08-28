@@ -48,9 +48,15 @@ export function PackageTypeStep({
               <span className="font-display text-lg uppercase">{option.label}</span>
               <span className={`text-sm ${isSelected ? "text-ivory/80" : "text-carbon/60"}`}>{option.description}</span>
               <span className="mt-auto pt-2 text-base">
-                <span className={`mr-1 text-xs font-medium tracking-wide uppercase ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>Desde</span>
-                <span className="font-display">{formatCurrency(option.fromPricePerPerson)}</span>
-                <span className={`ml-1 text-xs ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>/ persona</span>
+                {option.fromPricePerPerson !== null ? (
+                  <>
+                    <span className={`mr-1 text-xs font-medium tracking-wide uppercase ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>Desde</span>
+                    <span className="font-display">{formatCurrency(option.fromPricePerPerson)}</span>
+                    <span className={`ml-1 text-xs ${isSelected ? "text-ivory/70" : "text-carbon/50"}`}>/ persona</span>
+                  </>
+                ) : (
+                  <span className={`text-sm ${isSelected ? "text-ivory/80" : "text-carbon/60"}`}>Configura tu viaje</span>
+                )}
               </span>
             </button>
           );

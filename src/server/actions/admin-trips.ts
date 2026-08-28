@@ -138,11 +138,7 @@ export async function saveTrip(input: TripFormInput): Promise<{ ok: true; id: st
 
   if (input.published) {
     const eventsCount = input.id ? await prisma.event.count({ where: { tripId: input.id } }) : 0;
-    const publishable = validateTripPublishable({
-      travelMode: input.travelMode,
-      eventsCount,
-      availablePackageTypes: input.availablePackageTypes,
-    });
+    const publishable = validateTripPublishable({ travelMode: input.travelMode, eventsCount });
     if (!publishable.ok) return { ok: false, error: publishable.error };
   }
 

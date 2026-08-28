@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getAtuAireCheckoutQuote } from "@/server/actions/atu-aire-checkout";
+import { createAtuAireBooking } from "@/server/actions/atu-aire-booking";
 import { packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
 import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { reconcileSelection } from "@/lib/checkout-atu-aire/reconcile";
@@ -15,18 +17,23 @@ import { NightsStep } from "./NightsStep";
 import { HotelStep } from "./HotelStep";
 import { AirportStep } from "./AirportStep";
 import { FlightStep } from "./FlightStep";
+import { BuyerStep, EMPTY_BUYER, isBuyerFormComplete, type AtuAireBuyerFormState } from "./BuyerStep";
 import { SummarySidebar } from "./SummarySidebar";
 import { MobileSummaryBar } from "./MobileSummaryBar";
 import { Button } from "@/components/ui/Button";
 import type { PackageType } from "@prisma/client";
 
 export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
+  const router = useRouter();
   const [selection, setSelection] = useState<AtuAireSelection>(DEFAULT_SELECTION);
   const [quote, setQuote] = useState<AtuAireQuote | null>(null);
   const [error, setError] = useState("");
   const [revalidating, setRevalidating] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [priceChangedNotice, setPriceChangedNotice] = useState<string | null>(null);
+  const [buyer, setBuyer] = useState<AtuAireBuyerFormState>(EMPTY_BUYER);
+  const [paying, setPaying] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +112,18 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
     setConfirmed(true);
   }
 
+  async function handlePay() {
+    setPaying(true);
+    setPaymentError("");
+    const result = await createAtuAireBooking(tripSlug, selection, buyer);
+    setPaying(false);
+    if (!result.ok) {
+      setPaymentError(result.error);
+      return;
+    }
+    router.push(`/confirmacion/${result.reference}?token=${result.accessToken}`);
+  }
+
   if (error) {
     return <p className="rounded-sm bg-stamp/10 p-4 text-sm text-stamp">{error}</p>;
   }
@@ -180,8 +199,12 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
             {confirmed ? (
               <>
                 <p className="mb-3 text-sm text-carbon/70">Hemos revalidado precio y disponibilidad. Todo listo.</p>
-                <Button disabled title="El pago se habilitará en el siguiente bloque">
-                  Continuar al pago
+                <div className="mb-4">
+                  <BuyerStep value={buyer} onChange={setBuyer} />
+                </div>
+                {paymentError ? <p className="mb-3 rounded-sm bg-stamp/10 p-3 text-sm text-stamp">{paymentError}</p> : null}
+                <Button onClick={handlePay} disabled={paying || !isBuyerFormComplete(buyer)}>
+                  {paying ? "Procesando pago…" : "Continuar al pago"}
                 </Button>
               </>
             ) : (

@@ -61,9 +61,18 @@ enum TripStatus {
   archived
 }
 
+// confirmed: day and kickoff both known. time_provisional: the day itself
+// is certain (matchDate) but the exact kickoff hasn't been fixed yet (e.g.
+// waiting on TV scheduling) — flights can still be sold using a
+// conservative kickoff-hour window (see src/lib/pricing/flightWindow.ts).
+// date_provisional: not even the day is certain — no safe flight window
+// can be derived, so A_TU_AIRE flight selection stays blocked until the
+// date itself is confirmed. Only Event uses date_provisional in practice;
+// Trip keeps using confirmed/time_provisional for its own display badge.
 enum ScheduleStatus {
   confirmed
-  provisional
+  time_provisional
+  date_provisional
 }
 
 // A_TU_AIRE: self-serve, ticket(+hotel/flight) product with no coordinator,
@@ -149,7 +158,7 @@ model Trip {
   // booking/buyer, never one per traveler (see checkout §4).
   requiresShippingAddress Boolean @default(false)
 
-  scheduleStatus ScheduleStatus @default(provisional)
+  scheduleStatus ScheduleStatus @default(time_provisional)
 
   travelMode TravelMode @default(GROUP_CDF)
 
@@ -290,7 +299,7 @@ model Event {
   matchDate DateTime
   kickoff   DateTime?
 
-  scheduleStatus ScheduleStatus @default(provisional)
+  scheduleStatus ScheduleStatus @default(time_provisional)
 
   // Publication state — independent of scheduleStatus (which is only
   // about kickoff-timing certainty). A draft Event is never shown or

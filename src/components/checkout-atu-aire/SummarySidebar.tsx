@@ -2,6 +2,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { PriceTag } from "./PriceTag";
 import type { AtuAireQuote, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
 import { packageRequiresFlight, packageRequiresHotel } from "@/lib/checkout-atu-aire/packageRequirements";
+import { scheduleStatusBadgeLabel } from "@/lib/checkout-atu-aire/scheduleStatusLabel";
 
 const PREFERENCE_LABELS: Record<string, string> = { ANY: "Cualquier horario", MORNING: "Mañana", AFTERNOON: "Tarde" };
 
@@ -27,7 +28,9 @@ export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; sele
             <li key={event.id}>
               <span>
                 {event.homeTeam} – {event.awayTeam}
-                {event.scheduleStatus === "provisional" ? <span className="ml-1 text-xs text-stamp">(provisional)</span> : null}
+                {scheduleStatusBadgeLabel(event.scheduleStatus) ? (
+                  <span className="ml-1 text-xs text-stamp">({scheduleStatusBadgeLabel(event.scheduleStatus)})</span>
+                ) : null}
               </span>
               {chosenCategory ? <span className="block text-xs text-carbon/60">Entrada: {chosenCategory}</span> : null}
             </li>

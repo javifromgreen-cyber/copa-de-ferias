@@ -50,7 +50,9 @@ export default async function AdminEventsPage() {
                 <td className="px-4 py-3">{event.competition?.name ?? "— sin clasificar —"}</td>
                 <td className="px-4 py-3">{event.competition ? REGION_LABELS[event.competition.region] : "—"}</td>
                 <td className="px-4 py-3">{event.matchDate.toLocaleDateString("es-ES")}</td>
-                <td className="px-4 py-3">{event.scheduleStatus === "provisional" ? "Provisional" : "Confirmado"}</td>
+                <td className="px-4 py-3">
+                  {event.scheduleStatus === "confirmed" ? "Confirmado" : event.scheduleStatus === "time_provisional" ? "Hora provisional" : "Fecha provisional"}
+                </td>
                 <td className="px-4 py-3">{event.status}</td>
                 <td className="px-4 py-3">{event.ticketOffers.length}</td>
               </tr>

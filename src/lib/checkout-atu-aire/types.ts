@@ -13,6 +13,7 @@ export type EventSummary = {
   stadium: string;
   city: string;
   matchDate: Date;
+  kickoff: Date | null;
   scheduleStatus: ScheduleStatus;
   primaryEvent: boolean;
 };
@@ -59,6 +60,12 @@ export type HotelOptionView = {
   offer: NormalizedHotelOffer;
   totalPrice: number;
   perPersonPrice: number;
+  // The whole trip's total per person if this hotel were the one chosen
+  // (current ticket selections + this hotel + current/cheapest flight, all
+  // held fixed) — what the card actually shows, never the hotel's own
+  // cost line in isolation (§11/§12): a customer should never have to add
+  // a displayed figure to some earlier number in their head.
+  resultantTotalPerPerson: number;
   valid: boolean;
   invalidReason?: string;
 };
@@ -67,6 +74,10 @@ export type FlightPreferenceOption = {
   value: FlightDaypartPreference;
   label: string;
   priceFromPerPerson: number | null;
+  // false when no real offer satisfies this daypart for the current
+  // origin/dates — the UI must show it as "No disponible" and refuse to
+  // select it, never silently allow narrowing to zero results (§25/§26).
+  available: boolean;
 };
 
 export type FlightOfferView = {
@@ -79,6 +90,9 @@ export type FlightOfferView = {
   returnDeparture: Date;
   returnArrival: Date;
   pricePerPerson: number;
+  // The whole trip's total per person if this exact flight were chosen —
+  // same "resultant, not incremental" principle as hotel cards (§14).
+  resultantTotalPerPerson: number;
 };
 
 export type PriceLabel = "from" | "estimated" | "total";
@@ -87,7 +101,11 @@ export type PackageTypeOption = {
   packageType: PackageType;
   label: string;
   description: string;
-  fromPricePerPerson: number;
+  // null when this modality's price genuinely can't be computed yet from
+  // real offers (e.g. TICKET_HOTEL_FLIGHT with no eligible direct route
+  // found at all) — the card still appears (§1-3), the UI just shows a
+  // "Configura tu viaje" state instead of ever inventing a figure (§10).
+  fromPricePerPerson: number | null;
 };
 
 export type FlightAvailability = { blocked: true; reason: string } | { blocked: false };
@@ -126,7 +144,6 @@ export type AtuAireQuoteData = {
     subtitle: string;
     city: string;
     maxPartySize: number;
-    availablePackageTypes: PackageType[];
     minimumArrivalBufferBeforeKickoffMinutes: number;
     minimumReturnBufferAfterEventMinutes: number;
     orgFeeTicketOnlyOverride: number | null;

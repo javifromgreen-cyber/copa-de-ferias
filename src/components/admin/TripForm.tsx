@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/admin/FormField";
 import { saveTrip, type TripFormInput } from "@/server/actions/admin-trips";
 import { TRAVELER_FIELD_KEYS, TRAVELER_FIELD_LABELS, parseRequiredFields } from "@/lib/checkout/travelerFields";
-import { ALL_PACKAGE_TYPES, PACKAGE_TYPE_LABELS, parseAvailablePackageTypes } from "@/lib/pricing/packageTypes";
+import { ALL_PACKAGE_TYPES, PACKAGE_TYPE_LABELS } from "@/lib/pricing/packageTypes";
 import { computeOrganizationFee, type OrganizationFeeGlobalConfig } from "@/lib/pricing/organizationFee";
 import { formatCurrency } from "@/lib/utils";
 
 const STATUS_OPTIONS = ["draft", "upcoming", "open", "sold_out", "completed", "archived"] as const;
-const SCHEDULE_OPTIONS = ["provisional", "confirmed"] as const;
+const SCHEDULE_OPTIONS = ["time_provisional", "confirmed"] as const;
 const TRAVEL_MODE_OPTIONS = ["GROUP_CDF", "A_TU_AIRE"] as const;
 const PREVIEW_PARTY_SIZES = [1, 4, 8] as const;
 
@@ -59,8 +59,9 @@ function TextListEditor({ items, onChange, placeholder }: { items: string[]; onC
  * the admin edits overrides — never a second pricing algorithm.
  */
 function FeePreview({ form, globalFeeConfig }: { form: TripFormInput; globalFeeConfig: OrganizationFeeGlobalConfig }) {
-  const packageTypes = parseAvailablePackageTypes(form.availablePackageTypes);
-  if (packageTypes.length === 0) return null;
+  // A_TU_AIRE always supports the three modalities (§1) — this preview no
+  // longer reads the vestigial per-trip availablePackageTypes field.
+  const packageTypes = ALL_PACKAGE_TYPES;
 
   const overrides = {
     orgFeeTicketOnlyOverride: form.orgFeeTicketOnlyOverride,
@@ -289,26 +290,12 @@ export function TripForm({ initial, globalFeeConfig }: { initial: TripFormInput;
         {form.travelMode === "A_TU_AIRE" ? (
           <>
             <div>
-              <p className="mb-2 text-xs tracking-wide text-carbon/60 uppercase">Modalidades disponibles</p>
-              <div className="flex flex-wrap gap-4">
-                {ALL_PACKAGE_TYPES.map((pt) => {
-                  const selected = parseAvailablePackageTypes(form.availablePackageTypes).includes(pt);
-                  return (
-                    <label key={pt} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={(e) => {
-                          const current = parseAvailablePackageTypes(form.availablePackageTypes);
-                          const next = e.target.checked ? [...current, pt] : current.filter((k) => k !== pt);
-                          set("availablePackageTypes", next.join(","));
-                        }}
-                      />
-                      {PACKAGE_TYPE_LABELS[pt]}
-                    </label>
-                  );
-                })}
-              </div>
+              <p className="mb-2 text-xs tracking-wide text-carbon/60 uppercase">Modalidades</p>
+              <p className="text-sm text-carbon/70">
+                Todo producto A TU AIRE ofrece siempre las tres modalidades (Entrada, Entrada + Hotel, Entrada + Hotel
+                + Vuelo) — ya no se configuran por viaje. La disponibilidad real de hotel/vuelo depende del
+                inventario y de las fechas del partido, nunca de una lista fija por producto.
+              </p>
             </div>
 
             <div className="border-t border-carbon/10 pt-4">

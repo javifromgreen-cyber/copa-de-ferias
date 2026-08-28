@@ -8,7 +8,12 @@ import { Field } from "@/components/admin/FormField";
 import { saveEvent, type EventFormInput } from "@/server/actions/admin-events";
 import { REGION_LABELS, COMPETITION_TYPE_LABELS } from "@/lib/catalog/labels";
 
-const SCHEDULE_OPTIONS = ["provisional", "confirmed"] as const;
+const SCHEDULE_OPTIONS = ["confirmed", "time_provisional", "date_provisional"] as const;
+const SCHEDULE_LABELS: Record<(typeof SCHEDULE_OPTIONS)[number], string> = {
+  confirmed: "Confirmado",
+  time_provisional: "Fecha confirmada, hora provisional",
+  date_provisional: "Fecha provisional",
+};
 const STATUS_OPTIONS = ["draft", "published", "cancelled"] as const;
 
 const inputClass = "w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm";
@@ -138,7 +143,7 @@ export function EventForm({
             <select value={form.scheduleStatus} onChange={(e) => set("scheduleStatus", e.target.value as EventFormInput["scheduleStatus"])} className={inputClass}>
               {SCHEDULE_OPTIONS.map((s) => (
                 <option key={s} value={s}>
-                  {s === "confirmed" ? "Confirmado" : "Provisional"}
+                  {SCHEDULE_LABELS[s]}
                 </option>
               ))}
             </select>
@@ -159,10 +164,16 @@ export function EventForm({
             <input value={form.imageKey} onChange={(e) => set("imageKey", e.target.value)} className={inputClass} />
           </Field>
         </div>
-        {form.scheduleStatus === "provisional" ? (
+        {form.scheduleStatus === "time_provisional" ? (
           <p className="mt-3 rounded-sm bg-stamp/10 px-3 py-2 text-xs text-stamp">
-            Horario provisional: el motor de vuelos bloquea por defecto la compra de vuelos para este evento hasta que
-            se confirme, salvo que el producto lo permita explícitamente.
+            Fecha confirmada, hora provisional: el motor de vuelos sigue vendiendo vuelo para A_TU_AIRE, pero solo
+            ofertas suficientemente seguras para cualquier horario razonable de ese día (ventana conservadora).
+          </p>
+        ) : null}
+        {form.scheduleStatus === "date_provisional" ? (
+          <p className="mt-3 rounded-sm bg-stamp/10 px-3 py-2 text-xs text-stamp">
+            Fecha provisional: ni siquiera el día es seguro todavía. El motor de vuelos bloquea la selección de vuelo
+            para A_TU_AIRE hasta que se confirme la fecha — no se ofrecerá ningún vuelo inseguro.
           </p>
         ) : null}
         <label className="mt-3 flex items-center gap-2 text-sm">

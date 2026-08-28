@@ -11,6 +11,8 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { WaitlistCta } from "@/components/trips/WaitlistCta";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 import { PlaneIcon, BuildingIcon, TicketIcon, StadiumIcon, CheckIcon, CrossIcon, ShieldIcon, BedIcon } from "@/components/icons";
+import { prisma } from "@/lib/db";
+import { computeTicketOnlyFromPricePerPerson } from "@/lib/checkout-atu-aire/publicPrice";
 
 // Trip content and spots-left are admin/booking-driven — revalidate
 // instead of a permanent build-time snapshot. Actual oversell prevention
@@ -37,6 +39,38 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
   const left = spotsLeft(trip);
   const included = trip.inclusions.filter((i) => i.included);
   const excluded = trip.inclusions.filter((i) => !i.included);
+
+  // A_TU_AIRE has no fixed group-capacity pool and no single bundled price
+  // — its public "Desde X €/persona" is always the cheapest TICKET_ONLY
+  // combination, computed through the same commercial engine the checkout
+  // uses (§8), never trip.price / maxSpots-soldSpots (§7).
+  const isAtuAire = trip.travelMode === "A_TU_AIRE";
+  let atuAireFromPrice: number | null = null;
+  if (isAtuAire) {
+    const [events, feeConfig] = await Promise.all([
+      prisma.event.findMany({
+        where: { tripId: trip.id, status: "published" },
+        include: { ticketOffers: { where: { active: true } } },
+      }),
+      prisma.organizationFeeConfig.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} }),
+    ]);
+    atuAireFromPrice = computeTicketOnlyFromPricePerPerson({
+      events: events.map((e) => ({ id: e.id })),
+      ticketOffersByEventId: Object.fromEntries(events.map((e) => [e.id, e.ticketOffers.map((o) => ({ costNet: o.costNet }))])),
+      feeConfig: {
+        feeTicketOnly: feeConfig.feeTicketOnly,
+        feeHotelTiers: feeConfig.feeHotelTiers,
+        feeHotelFlightTiers: feeConfig.feeHotelFlightTiers,
+        additionalMatchFee: feeConfig.additionalMatchFee,
+      },
+      tripOverrides: {
+        orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
+        orgFeeHotelTiersOverride: trip.orgFeeHotelTiersOverride,
+        orgFeeHotelFlightTiersOverride: trip.orgFeeHotelFlightTiersOverride,
+        additionalMatchFeeOverride: trip.additionalMatchFeeOverride,
+      },
+    });
+  }
 
   return (
     <div>
@@ -72,16 +106,20 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </section>
           ) : null}
 
-          {/* El grupo / comunidad */}
-          <section>
-            <h2 className="font-display mb-4 text-2xl uppercase">El grupo</h2>
-            <p className="text-carbon/80">
-              Grupo pequeño, máximo {trip.maxSpots} viajeros. Puedes venir solo, con un amigo o en grupo: lo normal es
-              encontrarse allí con gente que va exactamente por lo mismo que tú.
-              {trip.coordinatorName ? ` Coordina el grupo: ${trip.coordinatorName}.` : ""}
-              {trip.hostName ? ` En destino, ${trip.hostName}.` : ""}
-            </p>
-          </section>
+          {/* El grupo / comunidad — a GROUP_CDF concept (fixed shared
+              capacity, a coordinator); A_TU_AIRE never shows a group
+              headcount or capacity publicly (§7). */}
+          {!isAtuAire ? (
+            <section>
+              <h2 className="font-display mb-4 text-2xl uppercase">El grupo</h2>
+              <p className="text-carbon/80">
+                Grupo pequeño, máximo {trip.maxSpots} viajeros. Puedes venir solo, con un amigo o en grupo: lo normal
+                es encontrarse allí con gente que va exactamente por lo mismo que tú.
+                {trip.coordinatorName ? ` Coordina el grupo: ${trip.coordinatorName}.` : ""}
+                {trip.hostName ? ` En destino, ${trip.hostName}.` : ""}
+              </p>
+            </section>
+          ) : null}
 
           {/* Planning */}
           {trip.planningDays.length > 0 ? (
@@ -265,10 +303,27 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
         {/* Price / booking sidebar */}
         <aside className="lg:sticky lg:top-24 lg:h-fit">
           <div className="rounded-sm border border-carbon/15 p-6">
-            <p className="font-display text-3xl">{formatCurrency(trip.price, trip.currency)}</p>
-            <p className="mb-4 text-sm text-carbon/50">por persona</p>
+            {isAtuAire ? (
+              atuAireFromPrice !== null ? (
+                <>
+                  <p className="text-xs font-medium tracking-wide text-carbon/50 uppercase">Desde</p>
+                  <p className="font-display text-3xl">{formatCurrency(atuAireFromPrice, trip.currency)}</p>
+                  <p className="mb-4 text-sm text-carbon/50">/ persona</p>
+                </>
+              ) : (
+                <p className="mb-4 text-sm text-carbon/60">Precio disponible próximamente.</p>
+              )
+            ) : (
+              <>
+                <p className="font-display text-3xl">{formatCurrency(trip.price, trip.currency)}</p>
+                <p className="mb-4 text-sm text-carbon/50">por persona</p>
+              </>
+            )}
 
-            {status === "open" ? (
+            {/* A_TU_AIRE has no fixed group-capacity pool to show publicly
+                (§7) — the checkout itself resolves real ticket/hotel/flight
+                availability once the customer starts configuring the trip. */}
+            {!isAtuAire && status === "open" ? (
               <p className="mb-4 text-sm text-carbon/70">
                 {left} plaza{left === 1 ? "" : "s"} disponible{left === 1 ? "" : "s"} de {trip.maxSpots}
                 {trip.soldSpots > 0 ? ` · ${trip.soldSpots} aficionados ya se han apuntado` : ""}
@@ -277,7 +332,7 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
 
             {status === "open" ? (
               <ButtonLink href={`/viajes/${trip.slug}/reservar`} className="w-full justify-center">
-                Reservar plaza
+                {isAtuAire ? "Reservar" : "Reservar plaza"}
               </ButtonLink>
             ) : status === "sold_out" ? (
               <WaitlistCta tripId={trip.id} tripName={trip.name} />
@@ -296,7 +351,11 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
       {status === "open" ? (
         <div className="sticky-cta-safe-area fixed inset-x-0 bottom-0 z-30 border-t border-carbon/10 bg-ivory p-3 lg:hidden">
           <ButtonLink href={`/viajes/${trip.slug}/reservar`} className="w-full justify-center">
-            Reservar plaza · {formatCurrency(trip.price, trip.currency)}
+            {isAtuAire
+              ? atuAireFromPrice !== null
+                ? `Reservar · Desde ${formatCurrency(atuAireFromPrice, trip.currency)}`
+                : "Reservar"
+              : `Reservar plaza · ${formatCurrency(trip.price, trip.currency)}`}
           </ButtonLink>
         </div>
       ) : null}

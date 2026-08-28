@@ -24,7 +24,7 @@ export default async function NewEventPage({ searchParams }: { searchParams: Pro
     timezone: "Europe/Madrid",
     matchDate: "",
     kickoff: "",
-    scheduleStatus: "provisional",
+    scheduleStatus: "time_provisional",
     status: "draft",
     imageKey: "default",
     primaryEvent: true,

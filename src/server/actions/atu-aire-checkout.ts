@@ -3,8 +3,6 @@
 import { prisma } from "@/lib/db";
 import { getHotelProviders } from "@/lib/providers/hotels";
 import { getFlightProvider } from "@/lib/providers/flights";
-import { parseAvailablePackageTypes } from "@/lib/pricing/packageTypes";
-import { packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
 import { buildAtuAireQuote } from "@/lib/checkout-atu-aire/quoteBuilder";
 import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
@@ -41,36 +39,35 @@ export async function getAtuAireCheckoutQuote(
 
   const feeConfig = await prisma.organizationFeeConfig.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
 
-  const availablePackageTypes = parseAvailablePackageTypes(trip.availablePackageTypes);
-  const needsHotel = availablePackageTypes.some(packageRequiresHotel);
-  const needsFlightPackage = availablePackageTypes.some(packageRequiresFlight);
+  // Every A_TU_AIRE product always conceptually supports all three
+  // modalities (§1) — hotel and flight data are always fetched; whether
+  // TICKET_HOTEL_FLIGHT is actually offered/available comes entirely from
+  // buyer eligibility and real route/date feasibility, never from a
+  // per-trip configuration flag.
   const flightPackageEligible = isFlightPackageEligible(selection.buyerCountry);
 
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
   const earliestMatch = sortedEvents[0].matchDate;
   const latestMatch = sortedEvents[sortedEvents.length - 1].matchDate;
 
-  let hotelOffers: NormalizedHotelOffer[] = [];
-  if (needsHotel) {
-    const checkIn = addDays(earliestMatch, -1);
-    const checkOut = addDays(latestMatch, 1);
-    const perProvider = await Promise.all(getHotelProviders().map((p) => p.getOffers({ tripId: trip.id, city: trip.city, checkIn, checkOut })));
-    hotelOffers = perProvider.flat();
-  }
+  const checkIn = addDays(earliestMatch, -1);
+  const checkOut = addDays(latestMatch, 1);
+  const perProvider = await Promise.all(getHotelProviders().map((p) => p.getOffers({ tripId: trip.id, city: trip.city, checkIn, checkOut })));
+  const hotelOffers: NormalizedHotelOffer[] = perProvider.flat();
 
-  // Flight data is only ever fetched when the product actually offers a
-  // flight-inclusive package AND the buyer is eligible for it (§2/§3) —
-  // a LATAM buyer's request never even queries the flight provider.
+  // Flight data is only ever fetched when the buyer is eligible for the
+  // flight-inclusive package (§2/§3) — a LATAM buyer's request never even
+  // queries the flight provider.
   let eligibleOrigins: OriginOption[] = [];
   let flightOffers: NormalizedFlightOffer[] = [];
-  if (needsFlightPackage && flightPackageEligible) {
+  if (flightPackageEligible) {
     const destinationAirport = airportForCity(trip.city);
     const provider = getFlightProvider({ tripIsDemo: trip.isDemo });
-    eligibleOrigins = await provider.listDirectOrigins({ destinationAirport });
+    const outboundDate = addDays(earliestMatch, -1);
+    const returnDate = addDays(latestMatch, 1);
+    eligibleOrigins = await provider.listEligibleDirectOriginsForTrip({ destinationAirport, outboundDate, returnDate });
 
     if (eligibleOrigins.length > 0) {
-      const outboundDate = addDays(earliestMatch, -1);
-      const returnDate = addDays(latestMatch, 1);
       const perOrigin = await Promise.all(
         eligibleOrigins.map((origin) => provider.getOffers({ originAirport: origin.iata, destinationAirport, outboundDate, returnDate })),
       );
@@ -91,7 +88,6 @@ export async function getAtuAireCheckoutQuote(
       subtitle: trip.subtitle,
       city: trip.city,
       maxPartySize: trip.maxPartySize,
-      availablePackageTypes,
       minimumArrivalBufferBeforeKickoffMinutes: trip.minimumArrivalBufferBeforeKickoffMinutes,
       minimumReturnBufferAfterEventMinutes: trip.minimumReturnBufferAfterEventMinutes,
       orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
@@ -106,6 +102,7 @@ export async function getAtuAireCheckoutQuote(
       stadium: e.stadium,
       city: e.city,
       matchDate: e.matchDate,
+      kickoff: e.kickoff,
       scheduleStatus: e.scheduleStatus,
       primaryEvent: e.primaryEvent,
     })),

@@ -1,5 +1,6 @@
 import { formatCurrency } from "@/lib/utils";
 import type { AtuAireQuote } from "@/lib/checkout-atu-aire/types";
+import { scheduleStatusBadgeLabel } from "@/lib/checkout-atu-aire/scheduleStatusLabel";
 
 const LABEL_TEXT = { from: "Desde", estimated: "Total estimado", total: "Total" } as const;
 
@@ -25,7 +26,9 @@ export function MobileSummaryBar({ quote }: { quote: AtuAireQuote }) {
         {quote.events.map((event) => (
           <p key={event.id}>
             {event.homeTeam} – {event.awayTeam}
-            {event.scheduleStatus === "provisional" ? <span className="ml-1 text-xs text-stamp">(provisional)</span> : null}
+            {scheduleStatusBadgeLabel(event.scheduleStatus) ? (
+              <span className="ml-1 text-xs text-stamp">({scheduleStatusBadgeLabel(event.scheduleStatus)})</span>
+            ) : null}
           </p>
         ))}
         {quote.price.missing.length > 0 ? <p className="text-xs text-carbon/50">Falta por elegir: {quote.price.missing.join(", ")}.</p> : null}

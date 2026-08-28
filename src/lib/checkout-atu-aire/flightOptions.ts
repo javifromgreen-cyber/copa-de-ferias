@@ -56,11 +56,10 @@ export function buildOutboundPreferenceOptions(
   bounds: StayWindowBounds,
   currentReturnPreference: FlightDaypartPreference,
 ): FlightPreferenceOption[] {
-  return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => ({
-    value,
-    label: PREFERENCE_LABELS[value],
-    priceFromPerPerson: cheapestPrice(filterFlightOffersForSelection(offers, bounds, value, currentReturnPreference)),
-  }));
+  return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => {
+    const priceFromPerPerson = cheapestPrice(filterFlightOffersForSelection(offers, bounds, value, currentReturnPreference));
+    return { value, label: PREFERENCE_LABELS[value], priceFromPerPerson, available: priceFromPerPerson !== null };
+  });
 }
 
 export function buildReturnPreferenceOptions(
@@ -68,14 +67,15 @@ export function buildReturnPreferenceOptions(
   bounds: StayWindowBounds,
   currentOutboundPreference: FlightDaypartPreference,
 ): FlightPreferenceOption[] {
-  return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => ({
-    value,
-    label: PREFERENCE_LABELS[value],
-    priceFromPerPerson: cheapestPrice(filterFlightOffersForSelection(offers, bounds, currentOutboundPreference, value)),
-  }));
+  return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => {
+    const priceFromPerPerson = cheapestPrice(filterFlightOffersForSelection(offers, bounds, currentOutboundPreference, value));
+    return { value, label: PREFERENCE_LABELS[value], priceFromPerPerson, available: priceFromPerPerson !== null };
+  });
 }
 
-export function toFlightOfferView(offer: NormalizedFlightOffer): FlightOfferView {
+// resultantTotalPerPerson depends on ticket/hotel/fee context this pure
+// mapping doesn't have — the caller (quoteBuilder) adds it.
+export function toFlightOfferView(offer: NormalizedFlightOffer): Omit<FlightOfferView, "resultantTotalPerPerson"> {
   return {
     id: offer.id,
     provider: offer.provider,

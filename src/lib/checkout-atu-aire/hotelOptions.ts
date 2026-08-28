@@ -9,16 +9,31 @@ import type { HotelOptionView } from "./types";
  * are marked non-selectable and always sorted after valid ones, so a
  * cheap-but-invalid offer can never look like the front-running choice
  * (§11: valid-but-pricier must never lose to invalid-though-cheaper).
+ *
+ * `otherComponentsPerPerson` is everything else already fixed in the
+ * current selection (tickets + the applicable organization fee, and the
+ * flight component when the package requires one) — added to each hotel's
+ * own per-person cost so the card can show the *resultant* trip total per
+ * person with that hotel chosen, never the hotel's cost in isolation
+ * (§11/§12).
  */
-export function buildHotelOptions(offers: NormalizedHotelOffer[], mix: RoomMixEntry[], nights: number, partySize: number): HotelOptionView[] {
+export function buildHotelOptions(
+  offers: NormalizedHotelOffer[],
+  mix: RoomMixEntry[],
+  nights: number,
+  partySize: number,
+  otherComponentsPerPerson: number,
+): HotelOptionView[] {
   return offers
     .map((offer) => {
       const valid = isHotelOfferValidForMix(offer, mix);
       const totalPrice = computeHotelOfferTotalPrice(offer, mix, nights);
+      const perPersonPrice = totalPrice / partySize;
       return {
         offer,
         totalPrice,
-        perPersonPrice: totalPrice / partySize,
+        perPersonPrice,
+        resultantTotalPerPerson: otherComponentsPerPerson + perPersonPrice,
         valid,
         invalidReason: valid ? undefined : "No tiene habitaciones suficientes para alojar a todo el grupo en las fechas elegidas.",
       };

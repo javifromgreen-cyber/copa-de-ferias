@@ -1,6 +1,7 @@
 import { formatDate } from "@/lib/utils";
 import { StadiumIcon, CalendarIcon } from "@/components/icons";
 import type { EventSummary } from "@/lib/checkout-atu-aire/types";
+import { scheduleStatusBadgeLabel } from "@/lib/checkout-atu-aire/scheduleStatusLabel";
 
 /**
  * Multi-match products (e.g. Londres) must never read as if they only
@@ -24,8 +25,8 @@ export function EventsHeader({ events }: { events: EventSummary[] }) {
               </p>
             </div>
           </div>
-          {event.scheduleStatus === "provisional" ? (
-            <span className="rounded-sm bg-stamp/10 px-2 py-1 text-xs font-medium text-stamp">Horario provisional</span>
+          {scheduleStatusBadgeLabel(event.scheduleStatus) ? (
+            <span className="rounded-sm bg-stamp/10 px-2 py-1 text-xs font-medium text-stamp">{scheduleStatusBadgeLabel(event.scheduleStatus)}</span>
           ) : (
             <span className="rounded-sm bg-carbon/5 px-2 py-1 text-xs font-medium text-carbon/60">Confirmado</span>
           )}

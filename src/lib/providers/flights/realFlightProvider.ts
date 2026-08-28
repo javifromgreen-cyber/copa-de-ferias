@@ -11,7 +11,7 @@ import type { FlightProvider, NormalizedFlightOffer, OriginOption } from "../typ
 export class RealFlightProvider implements FlightProvider {
   readonly kind = "real";
 
-  async listDirectOrigins(): Promise<OriginOption[]> {
+  async listEligibleDirectOriginsForTrip(): Promise<OriginOption[]> {
     if (!flightApiConfig.isConfigured) {
       return [];
     }

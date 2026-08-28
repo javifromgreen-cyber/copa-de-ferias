@@ -75,12 +75,20 @@ describe("buildHotelOptions", () => {
     const mix = computeRequiredRoomMix(3); // needs 1 triple
     const cheapInvalid = hotel({ id: "a", roomsAvailable: { single: 5, double: 5, triple: 0 }, pricePerNight: { single: 50, double: 30, triple: 20 } });
     const pricierValid = hotel({ id: "b", roomsAvailable: { single: 5, double: 5, triple: 2 }, pricePerNight: { single: 90, double: 60, triple: 50 } });
-    const options = buildHotelOptions([cheapInvalid, pricierValid], mix, 1, 3);
+    const options = buildHotelOptions([cheapInvalid, pricierValid], mix, 1, 3, 0);
     expect(options[0].offer.id).toBe("b");
     expect(options[0].valid).toBe(true);
     expect(options[1].offer.id).toBe("a");
     expect(options[1].valid).toBe(false);
     expect(options[1].invalidReason).toBeTruthy();
+  });
+
+  it("resultantTotalPerPerson adds the hotel's own per-person cost to the other fixed components — never shown as a bare '+X' delta (§11/§12)", () => {
+    const mix = computeRequiredRoomMix(2);
+    const offer = hotel({ id: "h", roomsAvailable: { single: 5, double: 5, triple: 5 }, pricePerNight: { single: 80, double: 50, triple: 40 } });
+    const options = buildHotelOptions([offer], mix, 1, 2, 109); // 109 = ticket + fee, e.g.
+    expect(options[0].perPersonPrice).toBe(25); // one double room (50) split across 2 travelers
+    expect(options[0].resultantTotalPerPerson).toBe(109 + 25);
   });
 });
 
@@ -100,13 +108,14 @@ function flightOffer(overrides: Partial<NormalizedFlightOffer>): NormalizedFligh
   };
 }
 
+const confirmedWindow = { earliestPossibleKickoff: new Date(2026, 5, 11, 20), latestPossibleKickoff: new Date(2026, 5, 11, 20) };
 const bounds = computeStayWindowBounds({
-  eventDates: [new Date(2026, 5, 11, 20)],
+  eventWindows: [confirmedWindow],
   minimumArrivalBufferBeforeKickoffMinutes: 180,
   minimumReturnBufferAfterEventMinutes: 120,
 });
 
-describe("direct-only filtering — a connecting flight can never win (§8/§24)", () => {
+describe("direct-only filtering — a connecting flight can never win (§8/§21/§24)", () => {
   it("excludes a stops>0 offer from filterFlightOffersForSelection even if it would be cheapest", () => {
     const direct = flightOffer({ id: "direct", pricePerPerson: 120, stops: 0 });
     const connecting = flightOffer({ id: "cheap-connecting", pricePerPerson: 30, stops: 1 });
@@ -114,10 +123,11 @@ describe("direct-only filtering — a connecting flight can never win (§8/§24)
     expect(result.map((o) => o.id)).toEqual(["direct"]);
   });
 
-  it("excludes stops>0 offers from ANY/MORNING/AFTERNOON preference pricing", () => {
+  it("excludes stops>0 offers from ANY/MORNING/AFTERNOON preference pricing, and marks them unavailable", () => {
     const connecting = flightOffer({ id: "cheap-connecting", pricePerPerson: 10, stops: 1, outboundDeparture: new Date(2026, 5, 10, 8) });
     const options = buildOutboundPreferenceOptions([connecting], bounds, "ANY");
     expect(options.every((o) => o.priceFromPerPerson === null)).toBe(true);
+    expect(options.every((o) => o.available === false)).toBe(true);
   });
 });
 
@@ -135,6 +145,18 @@ describe("daypart preference filtering", () => {
   });
   it("AFTERNOON excludes the morning offer", () => {
     expect(filterFlightOffersForSelection(offers, bounds, "AFTERNOON", "ANY").map((o) => o.id)).toEqual(["afternoon"]);
+  });
+});
+
+describe("daypart availability — 'No disponible' when nothing matches (§25/§26)", () => {
+  it("a preference with zero matching offers is marked unavailable, not just priced null", () => {
+    const onlyMorning = flightOffer({ id: "morning", outboundDeparture: new Date(2026, 5, 10, 8), pricePerPerson: 100 });
+    const options = buildOutboundPreferenceOptions([onlyMorning], bounds, "ANY");
+    const afternoon = options.find((o) => o.value === "AFTERNOON")!;
+    expect(afternoon.available).toBe(false);
+    expect(afternoon.priceFromPerPerson).toBeNull();
+    const morning = options.find((o) => o.value === "MORNING")!;
+    expect(morning.available).toBe(true);
   });
 });
 
@@ -201,7 +223,7 @@ describe("reconcileSelection (§15/§21/§24)", () => {
 // Full-quote integration through buildAtuAireQuote
 // ---------------------------------------------------------------------
 function baseData(overrides: Partial<AtuAireQuoteData> = {}): AtuAireQuoteData {
-  const primary = { id: "ev1", homeTeam: "Home", awayTeam: "Away", stadium: "Stadium", city: "City", matchDate: new Date(2026, 5, 11, 20), scheduleStatus: "confirmed" as const, primaryEvent: true };
+  const primary = { id: "ev1", homeTeam: "Home", awayTeam: "Away", stadium: "Stadium", city: "City", matchDate: new Date(2026, 5, 11, 20), kickoff: new Date(2026, 5, 11, 20), scheduleStatus: "confirmed" as const, primaryEvent: true };
   return {
     trip: {
       id: "trip1",
@@ -210,7 +232,6 @@ function baseData(overrides: Partial<AtuAireQuoteData> = {}): AtuAireQuoteData {
       subtitle: "",
       city: "City",
       maxPartySize: 10,
-      availablePackageTypes: ["TICKET_ONLY", "TICKET_HOTEL", "TICKET_HOTEL_FLIGHT"],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
       orgFeeTicketOnlyOverride: null,
@@ -248,7 +269,7 @@ function baseData(overrides: Partial<AtuAireQuoteData> = {}): AtuAireQuoteData {
   };
 }
 
-describe("buildAtuAireQuote — geographic eligibility (§5/§24)", () => {
+describe("buildAtuAireQuote — every A_TU_AIRE product always supports all three modalities (§1-3/§40/§42)", () => {
   it("Spain: all three package types are offered, including the flight one", () => {
     const data = baseData();
     const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
@@ -268,10 +289,38 @@ describe("buildAtuAireQuote — geographic eligibility (§5/§24)", () => {
     expect(spain.price.totalCommercial).toBe(mexico.price.totalCommercial);
   });
 
-  it("hides the flight modality entirely when eligible but no direct Spanish route exists at all", () => {
+  it("TICKET_HOTEL_FLIGHT is still listed for Spain even when no direct Spanish route exists at all — never removed, just unpriced (§3/§10)", () => {
     const data = baseData({ eligibleOrigins: [], flightOffers: [] });
     const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
-    expect(quote.packageTypeOptions.map((o) => o.packageType)).not.toContain("TICKET_HOTEL_FLIGHT");
+    const flightOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_HOTEL_FLIGHT");
+    expect(flightOption).toBeDefined();
+    expect(flightOption!.fromPricePerPerson).toBeNull();
+  });
+
+  it("no Event can make a modality disappear for an eligible buyer — an Event with zero ticket offers still keeps all three listed", () => {
+    const data = baseData({ ticketOffersByEventId: { ev1: [] } });
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
+    expect(quote.packageTypeOptions.map((o) => o.packageType).sort()).toEqual(["TICKET_HOTEL", "TICKET_HOTEL_FLIGHT", "TICKET_ONLY"]);
+  });
+});
+
+describe("buildAtuAireQuote — flight unavailable state never fakes availability (§3/§10/§14)", () => {
+  it("blocks flight selection with an explicit 'no direct route' reason, without hiding the modality", () => {
+    const data = baseData({ eligibleOrigins: [], flightOffers: [] });
+    const quote = buildAtuAireQuote(data, {
+      ...DEFAULT_SELECTION,
+      buyerCountry: "ES",
+      packageType: "TICKET_HOTEL_FLIGHT",
+      partySize: 1,
+      ticketSelections: { ev1: "General" },
+      nights: 1,
+      hotelOfferId: "hB",
+    });
+    expect(quote.flightAvailability.blocked).toBe(true);
+    if (quote.flightAvailability.blocked) {
+      expect(quote.flightAvailability.reason.toLowerCase()).toContain("vuelos directos");
+    }
+    expect(quote.eligibleOrigins).toEqual([]);
   });
 });
 
@@ -304,11 +353,52 @@ describe("buildAtuAireQuote — 'desde' price never assumes MAD (§13/§24)", ()
     const flightOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_HOTEL_FLIGHT")!;
     const ticketOnlyOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_ONLY")!;
     // The 20€ connecting offer must never be used — the flight component must reflect 150, not 20.
-    expect(flightOption.fromPricePerPerson - ticketOnlyOption.fromPricePerPerson).toBeGreaterThan(100);
+    expect(flightOption.fromPricePerPerson! - ticketOnlyOption.fromPricePerPerson!).toBeGreaterThan(100);
   });
 });
 
-describe("buildAtuAireQuote — origin selection (§6/§7/§9/§24)", () => {
+describe("buildAtuAireQuote — resultant pricing on hotel/flight cards, not raw deltas (§11/§12/§14)", () => {
+  it("each hotel option's resultantTotalPerPerson is the whole trip's per-person total with that hotel chosen", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1 };
+    const quote = buildAtuAireQuote(data, sel);
+    const hB = quote.hotelOptions.find((h) => h.offer.id === "hB")!;
+    // Selecting hB should make price.totalCommercial/partySize match its resultantTotalPerPerson.
+    const withHb = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hB" });
+    expect(withHb.price.perPerson).toBeCloseTo(hB.resultantTotalPerPerson, 5);
+  });
+
+  it("changing hotel updates both per-person and total immediately, no mental addition required (§12)", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1 };
+    const withHa = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hA" });
+    const withHb = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hB" });
+    expect(withHa.price.totalCommercial).not.toBe(withHb.price.totalCommercial);
+    expect(withHa.price.perPerson).not.toBe(withHb.price.perPerson);
+  });
+
+  it("each flight offer's resultantTotalPerPerson includes ticket + hotel + fee + that flight's own price (§14)", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = {
+      ...DEFAULT_SELECTION,
+      buyerCountry: "ES",
+      packageType: "TICKET_HOTEL_FLIGHT",
+      partySize: 1,
+      ticketSelections: { ev1: "General" },
+      nights: 1,
+      hotelOfferId: "hB",
+      originAirport: "MAD",
+    };
+    const quote = buildAtuAireQuote(data, sel);
+    const offer = quote.flightOffers[0];
+    expect(offer.resultantTotalPerPerson).toBeGreaterThan(offer.pricePerPerson);
+    // Selecting that exact offer must make the price block match its resultant total.
+    const withOffer = buildAtuAireQuote(data, { ...sel, flightOfferId: offer.id });
+    expect(withOffer.price.perPerson).toBeCloseTo(offer.resultantTotalPerPerson, 5);
+  });
+});
+
+describe("buildAtuAireQuote — origin selection (§6/§7/§9/§22/§24)", () => {
   const flightSelection: AtuAireSelection = {
     ...DEFAULT_SELECTION,
     buyerCountry: "ES",
@@ -340,6 +430,21 @@ describe("buildAtuAireQuote — origin selection (§6/§7/§9/§24)", () => {
     expect(withMad.price.totalCommercial).not.toBe(withBcn.price.totalCommercial);
   });
 
+  it("switching origin clears only the flight offer — travelers/tickets/hotel/nights stay put (§15, via reconcileSelection)", () => {
+    const data = baseData();
+    // A fresh quote fetched for the NEW origin (BCN) naturally has no offer
+    // with the old MAD-specific id — reconcileSelection compares the stale
+    // selection against exactly this kind of fresh quote.
+    const freshQuoteForBcn = buildAtuAireQuote(data, { ...flightSelection, originAirport: "BCN" });
+    const staleSelection: AtuAireSelection = { ...flightSelection, originAirport: "BCN", flightOfferId: "mad-1" };
+    const reconciled = reconcileSelection(staleSelection, freshQuoteForBcn);
+    expect(reconciled.flightOfferId).toBeNull();
+    expect(reconciled.originAirport).toBe("BCN");
+    expect(reconciled.hotelOfferId).toBe("hB");
+    expect(reconciled.nights).toBe(1);
+    expect(reconciled.partySize).toBe(1);
+  });
+
   it("no origin chosen yet -> no preference options or flight offers are computed", () => {
     const data = baseData();
     const quote = buildAtuAireQuote(data, flightSelection);
@@ -361,21 +466,57 @@ describe("buildAtuAireQuote — origin selection (§6/§7/§9/§24)", () => {
   });
 });
 
-describe("buildAtuAireQuote — provisional priority over origin choice (§16/§24)", () => {
-  it("stays blocked even once an origin would otherwise be selectable", () => {
-    const data = baseData({ events: [{ ...baseData().events[0], scheduleStatus: "provisional" }] });
-    const quote = buildAtuAireQuote(data, {
-      ...DEFAULT_SELECTION,
-      buyerCountry: "ES",
-      packageType: "TICKET_HOTEL_FLIGHT",
-      partySize: 1,
-      ticketSelections: { ev1: "General" },
-      nights: 1,
-      hotelOfferId: "hB",
-      originAirport: "MAD",
-    });
+describe("buildAtuAireQuote — date_provisional blocks flights; time_provisional uses a conservative window instead (§15-19)", () => {
+  function eventWith(scheduleStatus: "confirmed" | "time_provisional" | "date_provisional") {
+    return { id: "ev1", homeTeam: "Home", awayTeam: "Away", stadium: "Stadium", city: "City", matchDate: new Date(2026, 5, 13, 0, 0), kickoff: null, scheduleStatus, primaryEvent: true };
+  }
+
+  const flightSelection = (): AtuAireSelection => ({
+    ...DEFAULT_SELECTION,
+    buyerCountry: "ES",
+    packageType: "TICKET_HOTEL_FLIGHT",
+    partySize: 1,
+    ticketSelections: { ev1: "General" },
+    nights: 1,
+    hotelOfferId: "hB",
+    originAirport: "MAD",
+  });
+
+  it("date_provisional: flight selection stays blocked even with an origin chosen, with a fecha-specific reason", () => {
+    const data = baseData({ events: [eventWith("date_provisional")] });
+    const quote = buildAtuAireQuote(data, flightSelection());
     expect(quote.flightAvailability.blocked).toBe(true);
+    if (quote.flightAvailability.blocked) {
+      expect(quote.flightAvailability.reason.toLowerCase()).toContain("fecha");
+    }
     expect(quote.flightOffers).toEqual([]);
+  });
+
+  it("time_provisional: never blocks by itself — only genuinely safe offers survive the conservative window", () => {
+    // Conservative window for an all-day-unknown-hour match: earliest kickoff
+    // 12:00, latest 21:00 -> latestArrival = 12:00-180min = 09:00,
+    // earliestReturn = 21:00+120min = 23:00 (same day).
+    const day = new Date(2026, 5, 13);
+    const safeOffer = flightOffer({
+      id: "safe",
+      originAirport: "MAD",
+      outboundArrival: new Date(2026, 5, 13, 8, 30), // before 09:00 cutoff
+      returnDeparture: new Date(2026, 5, 13, 23, 30), // after 23:00 cutoff
+      pricePerPerson: 90,
+    });
+    const unsafeOffer = flightOffer({
+      id: "unsafe-arrival",
+      originAirport: "MAD",
+      outboundArrival: new Date(2026, 5, 13, 11, 0), // after 09:00 cutoff — unsafe if kickoff turns out early
+      returnDeparture: new Date(2026, 5, 13, 23, 30),
+      pricePerPerson: 50,
+    });
+    const data = baseData({ events: [eventWith("time_provisional")], flightOffers: [safeOffer, unsafeOffer] });
+    void day;
+    const quote = buildAtuAireQuote(data, flightSelection());
+    expect(quote.flightAvailability.blocked).toBe(false);
+    expect(quote.flightOffers.map((f) => f.id)).toEqual(["safe"]);
+    expect(quote.flightOffers.map((f) => f.id)).not.toContain("unsafe-arrival");
   });
 });
 
@@ -386,7 +527,7 @@ describe("buildAtuAireQuote — multi-match tickets (§17-21/§24)", () => {
       ...data,
       events: [
         data.events[0],
-        { id: "ev2", homeTeam: "H2", awayTeam: "A2", stadium: "S2", city: "City", matchDate: new Date(2026, 5, 12, 20), scheduleStatus: "confirmed", primaryEvent: false },
+        { id: "ev2", homeTeam: "H2", awayTeam: "A2", stadium: "S2", city: "City", matchDate: new Date(2026, 5, 12, 20), kickoff: new Date(2026, 5, 12, 20), scheduleStatus: "confirmed", primaryEvent: false },
       ],
       ticketOffersByEventId: {
         ...data.ticketOffersByEventId,

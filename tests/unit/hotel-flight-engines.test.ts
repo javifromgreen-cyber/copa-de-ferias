@@ -6,6 +6,9 @@ import {
   computeStayWindowBounds,
   isFlightOfferWithinWindow,
   areFlightsBlockedByProvisionalSchedule,
+  deriveEventKickoffWindow,
+  CONSERVATIVE_EARLIEST_KICKOFF_HOUR,
+  CONSERVATIVE_LATEST_KICKOFF_HOUR,
 } from "@/lib/pricing/flightWindow";
 import type { NormalizedHotelOffer, NormalizedFlightOffer } from "@/lib/providers/types";
 
@@ -95,7 +98,10 @@ describe("flight window (§48-56/§171-172)", () => {
 
   it("multi-match bounds span the earliest to latest Event, buffered on both sides", () => {
     const bounds = computeStayWindowBounds({
-      eventDates: [new Date(2026, 5, 10, 20), new Date(2026, 5, 15, 21)],
+      eventWindows: [
+        { earliestPossibleKickoff: new Date(2026, 5, 10, 20), latestPossibleKickoff: new Date(2026, 5, 10, 20) },
+        { earliestPossibleKickoff: new Date(2026, 5, 15, 21), latestPossibleKickoff: new Date(2026, 5, 15, 21) },
+      ],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
     });
@@ -104,13 +110,14 @@ describe("flight window (§48-56/§171-172)", () => {
   });
 
   it("Host CDF selection tightens the arrival buffer further (§63/§171)", () => {
+    const window = { earliestPossibleKickoff: new Date(2026, 5, 10, 20), latestPossibleKickoff: new Date(2026, 5, 10, 20) };
     const withoutHost = computeStayWindowBounds({
-      eventDates: [new Date(2026, 5, 10, 20)],
+      eventWindows: [window],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
     });
     const withHost = computeStayWindowBounds({
-      eventDates: [new Date(2026, 5, 10, 20)],
+      eventWindows: [window],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
       extraArrivalBufferMinutes: 60,
@@ -120,7 +127,7 @@ describe("flight window (§48-56/§171-172)", () => {
 
   it("filters out a flight offer that arrives after the latest allowed arrival", () => {
     const bounds = computeStayWindowBounds({
-      eventDates: [new Date(2026, 5, 10, 20)],
+      eventWindows: [{ earliestPossibleKickoff: new Date(2026, 5, 10, 20), latestPossibleKickoff: new Date(2026, 5, 10, 20) }],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
     });
@@ -139,9 +146,47 @@ describe("flight window (§48-56/§171-172)", () => {
     expect(isFlightOfferWithinWindow(tooLate, bounds)).toBe(false);
   });
 
-  it("blocks flights by default when any Event is still provisional, unless Admin overrides", () => {
-    expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "provisional"], false)).toBe(true);
-    expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "provisional"], true)).toBe(false);
+  it("blocks flights by default only when a match DAY is still uncertain (date_provisional), unless Admin overrides", () => {
+    expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "date_provisional"], false)).toBe(true);
+    expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "date_provisional"], true)).toBe(false);
     expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "confirmed"], false)).toBe(false);
+  });
+
+  it("a known day with only the kickoff hour pending (time_provisional) never blocks by itself", () => {
+    expect(areFlightsBlockedByProvisionalSchedule(["confirmed", "time_provisional"], false)).toBe(false);
+    expect(areFlightsBlockedByProvisionalSchedule(["time_provisional"], false)).toBe(false);
+  });
+
+  describe("deriveEventKickoffWindow (§15-19)", () => {
+    it("confirmed: both bounds equal the exact kickoff", () => {
+      const kickoff = new Date(2026, 5, 10, 17, 30);
+      const w = deriveEventKickoffWindow({ matchDate: new Date(2026, 5, 10, 21), kickoff, scheduleStatus: "confirmed" });
+      expect(w).not.toBeNull();
+      expect(w!.earliestPossibleKickoff.getTime()).toBe(kickoff.getTime());
+      expect(w!.latestPossibleKickoff.getTime()).toBe(kickoff.getTime());
+    });
+
+    it("confirmed without an entered kickoff falls back to matchDate", () => {
+      const matchDate = new Date(2026, 5, 10, 21);
+      const w = deriveEventKickoffWindow({ matchDate, kickoff: null, scheduleStatus: "confirmed" });
+      expect(w!.earliestPossibleKickoff.getTime()).toBe(matchDate.getTime());
+      expect(w!.latestPossibleKickoff.getTime()).toBe(matchDate.getTime());
+    });
+
+    it("time_provisional: bounded to a conservative kickoff-hour range on the known day, never a single instant", () => {
+      const matchDate = new Date(2026, 5, 13, 0, 0);
+      const w = deriveEventKickoffWindow({ matchDate, kickoff: null, scheduleStatus: "time_provisional" });
+      expect(w).not.toBeNull();
+      expect(w!.earliestPossibleKickoff.getHours()).toBe(CONSERVATIVE_EARLIEST_KICKOFF_HOUR);
+      expect(w!.latestPossibleKickoff.getHours()).toBe(CONSERVATIVE_LATEST_KICKOFF_HOUR);
+      expect(w!.earliestPossibleKickoff.getDate()).toBe(matchDate.getDate());
+      expect(w!.latestPossibleKickoff.getDate()).toBe(matchDate.getDate());
+      expect(w!.earliestPossibleKickoff.getTime()).toBeLessThan(w!.latestPossibleKickoff.getTime());
+    });
+
+    it("date_provisional: no safe window can be derived at all", () => {
+      const w = deriveEventKickoffWindow({ matchDate: new Date(2026, 5, 13), kickoff: null, scheduleStatus: "date_provisional" });
+      expect(w).toBeNull();
+    });
   });
 });

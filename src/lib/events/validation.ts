@@ -1,5 +1,3 @@
-import { parseAvailablePackageTypes } from "@/lib/pricing/packageTypes";
-
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
 /**
@@ -29,22 +27,16 @@ export function validateEventPublishable(event: {
 /**
  * A_TU_AIRE-only publish gate — GROUP_CDF trips keep their existing,
  * unchanged publish behavior (this function returns ok for them
- * unconditionally). An A_TU_AIRE product can't go public without at
- * least one Event to sell and at least one package type it actually
- * offers.
+ * unconditionally). An A_TU_AIRE product can't go public without at least
+ * one Event to sell — it always conceptually offers all three modalities
+ * by definition (§1/§5), so there is no longer a separate "has at least
+ * one modality configured" gate to check here.
  */
-export function validateTripPublishable(trip: {
-  travelMode: "A_TU_AIRE" | "GROUP_CDF";
-  eventsCount: number;
-  availablePackageTypes: string;
-}): ValidationResult {
+export function validateTripPublishable(trip: { travelMode: "A_TU_AIRE" | "GROUP_CDF"; eventsCount: number }): ValidationResult {
   if (trip.travelMode !== "A_TU_AIRE") return { ok: true };
 
   if (trip.eventsCount < 1) {
     return { ok: false, error: "Un producto A TU AIRE necesita al menos un evento antes de publicarse" };
-  }
-  if (parseAvailablePackageTypes(trip.availablePackageTypes).length < 1) {
-    return { ok: false, error: "Un producto A TU AIRE necesita al menos una modalidad disponible (entrada / hotel / vuelo)" };
   }
   return { ok: true };
 }

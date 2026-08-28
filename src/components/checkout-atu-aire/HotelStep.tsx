@@ -40,7 +40,7 @@ export function HotelStep({
                 {option.offer.stars}★ · {option.offer.zone}
               </span>
               {option.valid ? (
-                <span className="mt-1 font-display text-lg">+ {formatCurrency(option.perPersonPrice)} / persona</span>
+                <span className="mt-1 font-display text-lg">{formatCurrency(option.resultantTotalPerPerson)} / persona</span>
               ) : (
                 <span className="mt-1 text-xs text-stamp">{option.invalidReason}</span>
               )}

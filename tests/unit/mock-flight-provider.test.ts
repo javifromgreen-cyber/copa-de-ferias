@@ -37,3 +37,49 @@ describe("MockFlightProvider (§17/§26 — several concrete deterministic offer
     expect(first).toEqual(second);
   });
 });
+
+describe("MockFlightProvider.listEligibleDirectOriginsForTrip — round-trip eligibility (§21-23/§29)", () => {
+  const params = { destinationAirport: "MAN", outboundDate: new Date(2026, 5, 10), returnDate: new Date(2026, 5, 12) };
+
+  it("returns only Spanish airports with genuinely round-trip-direct service", async () => {
+    const provider = new MockFlightProvider();
+    const origins = await provider.listEligibleDirectOriginsForTrip(params);
+    expect(origins.map((o) => o.iata).sort()).toEqual(["AGP", "BCN", "MAD"]);
+  });
+
+  it("excludes Sevilla (SVQ) — direct outbound only, no direct return — entirely", async () => {
+    const provider = new MockFlightProvider();
+    const origins = await provider.listEligibleDirectOriginsForTrip(params);
+    expect(origins.map((o) => o.iata)).not.toContain("SVQ");
+  });
+
+  it("excludes Asturias (OVD) — no route at all for this destination", async () => {
+    const provider = new MockFlightProvider();
+    const origins = await provider.listEligibleDirectOriginsForTrip(params);
+    expect(origins.map((o) => o.iata)).not.toContain("OVD");
+  });
+
+  it("SVQ's offers for this destination always carry stops > 0 — never a usable direct round trip", async () => {
+    const provider = new MockFlightProvider();
+    const offers = await provider.getOffers({ originAirport: "SVQ", destinationAirport: "MAN", outboundDate: params.outboundDate, returnDate: params.returnDate });
+    expect(offers.length).toBeGreaterThan(0);
+    expect(offers.every((o) => o.stops > 0)).toBe(true);
+  });
+
+  it("a destination with only one eligible Spanish origin (e.g. AMS/MXP) still returns just that one, not a hardcoded list", async () => {
+    const provider = new MockFlightProvider();
+    const origins = await provider.listEligibleDirectOriginsForTrip({ destinationAirport: "AMS", outboundDate: params.outboundDate, returnDate: params.returnDate });
+    expect(origins.map((o) => o.iata)).toEqual(["MAD"]);
+  });
+});
+
+describe("MockFlightProvider — Manchester daypart-unavailable fixture (§25/§30)", () => {
+  it("MAD -> MAN has no afternoon return slot at all — a real 'unavailable' case", async () => {
+    const provider = new MockFlightProvider();
+    const offers = await provider.getOffers({ originAirport: "MAD", destinationAirport: "MAN", outboundDate: new Date(2026, 5, 10), returnDate: new Date(2026, 5, 12) });
+    const returnHours = new Set(offers.map((o) => o.returnDeparture.getHours()));
+    for (const h of returnHours) {
+      expect(h).toBeLessThan(15); // every MAD return slot is before the afternoon window (15-20)
+    }
+  });
+});

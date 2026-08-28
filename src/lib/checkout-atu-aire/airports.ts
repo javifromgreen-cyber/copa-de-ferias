@@ -7,6 +7,7 @@ const CITY_TO_AIRPORT: Record<string, string> = {
   Milán: "MXP",
   Londres: "LHR",
   Belgrado: "BEG",
+  Manchester: "MAN",
 };
 
 export function airportForCity(city: string): string {
