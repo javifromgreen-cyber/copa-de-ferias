@@ -3,12 +3,14 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Container } from "@/components/ui/Container";
 import { ButtonLink } from "@/components/ui/Button";
-import { StatusBadge } from "@/components/trips/StatusBadge";
-import { TripPhoto } from "@/components/trips/TripPhoto";
+import { TripGallery } from "@/components/trips/TripGallery";
+import { CommercialPanel } from "@/components/trips/CommercialPanel";
+import { ScheduleStatusNote } from "@/components/trips/ScheduleStatusNote";
+import { FaqAccordion } from "@/components/faq/FaqAccordion";
+import { getAtuAireFaqItems } from "@/lib/faq/tripFaq";
 import { getTripBySlug } from "@/lib/trips/queries";
 import { effectiveStatus } from "@/lib/trips/status";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { WaitlistCta } from "@/components/trips/WaitlistCta";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 import { PlaneIcon, BuildingIcon, TicketIcon, StadiumIcon, CheckIcon, CrossIcon, ShieldIcon, BedIcon } from "@/components/icons";
 import { prisma } from "@/lib/db";
@@ -71,29 +73,26 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
     });
   }
 
+  const competitionName = trip.events[0]?.competition?.name ?? null;
+
   return (
     <div>
       <TrackOnMount event="trip_view" payload={{ tripId: trip.id }} />
-      {/* Hero */}
-      <section className="relative">
-        <TripPhoto heroImageKey={trip.heroImageKey} tone={status === "completed" ? "sepia" : "color"} className="h-[60vh] min-h-[420px] w-full">
-          <div className="absolute inset-0 flex items-end">
-            <Container className="pb-10 text-ivory">
-              <div className="mb-3 flex items-center gap-3">
-                <StatusBadge status={status} />
-              </div>
-              <h1 className="font-display mb-2 text-4xl uppercase sm:text-5xl">{trip.name}</h1>
-              <p className="font-display mb-4 text-xl text-ivory/90 uppercase">{trip.subtitle}</p>
-              <p className="text-ivory/80">
-                {trip.homeTeam} – {trip.awayTeam} · {trip.stadium}
-              </p>
-            </Container>
-          </div>
-        </TripPhoto>
-      </section>
 
-      <Container className="grid gap-16 py-14 sm:py-16 lg:grid-cols-[1fr_340px]">
-        <div className="space-y-16">
+      <Container className="pt-8 sm:pt-10">
+        <TripGallery heroImageKey={trip.heroImageKey} tone={status === "completed" ? "sepia" : "color"} />
+      </Container>
+
+      <Container className="pt-8">
+        <ScheduleStatusNote matchDate={trip.matchDate} scheduleStatus={trip.scheduleStatus} />
+      </Container>
+
+      {/* Commercial panel + main content share one grid: a single
+          CommercialPanel instance, positioned first on mobile/tablet
+          (order-1, right under the schedule note) and as the sticky right
+          column on desktop (order-2) — never duplicated in the DOM. */}
+      <Container className="grid gap-16 py-8 sm:py-10 lg:grid-cols-[1fr_380px]">
+        <div className="order-2 space-y-16 lg:order-1">
           {/* Por qué vamos */}
           {trip.whyWeGo ? (
             <section>
@@ -236,22 +235,27 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </section>
           ) : null}
 
-          {/* Habitaciones */}
-          <section>
-            <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
-              <BedIcon className="h-6 w-6 shrink-0" />
-              Habitaciones
-            </h2>
-            <ul className="space-y-2 text-carbon/80">
-              <li>· Habitación doble compartida, incluida por defecto.</li>
-              <li>· Durante la reserva eliges quién comparte habitación con quién.</li>
-              <li>· Si vienes solo, te asignamos con otro participante de tu mismo sexo.</li>
-              <li>
-                · Habitación individual: suplemento de {formatCurrency(trip.singleSupplement, trip.currency)}.
-              </li>
-            </ul>
-            <p className="mt-3 text-sm text-carbon/50">Viaje para mayores de 18 años.</p>
-          </section>
+          {/* Habitaciones — a GROUP_CDF concept (one fixed default room mix
+              + a fixed single-supplement). A_TU_AIRE resolves the room mix
+              per traveler inside checkout instead, so this static block
+              would be wrong there — never shown for it. */}
+          {!isAtuAire ? (
+            <section>
+              <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
+                <BedIcon className="h-6 w-6 shrink-0" />
+                Habitaciones
+              </h2>
+              <ul className="space-y-2 text-carbon/80">
+                <li>· Habitación doble compartida, incluida por defecto.</li>
+                <li>· Durante la reserva eliges quién comparte habitación con quién.</li>
+                <li>· Si vienes solo, te asignamos con otro participante de tu mismo sexo.</li>
+                <li>
+                  · Habitación individual: suplemento de {formatCurrency(trip.singleSupplement, trip.currency)}.
+                </li>
+              </ul>
+              <p className="mt-3 text-sm text-carbon/50">Viaje para mayores de 18 años.</p>
+            </section>
+          ) : null}
 
           {/* Qué ocurre después */}
           <section>
@@ -262,8 +266,18 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </p>
           </section>
 
-          {/* FAQ específica */}
-          {trip.faqs.length > 0 ? (
+          {/* FAQ específica — A_TU_AIRE gets a generated, always-present set
+              (dynamic schedule Q&A + 4 universal Q&As, §22); GROUP_CDF
+              keeps its own admin-authored trip.faqs rows as before. */}
+          {isAtuAire ? (
+            <section>
+              <h2 className="font-display mb-6 text-2xl uppercase">Preguntas sobre este partido</h2>
+              <FaqAccordion items={getAtuAireFaqItems(trip)} />
+              <Link href="/faq" className="mt-4 inline-block text-sm underline">
+                Ver todas las preguntas frecuentes
+              </Link>
+            </section>
+          ) : trip.faqs.length > 0 ? (
             <section>
               <h2 className="font-display mb-6 text-2xl uppercase">Preguntas sobre este viaje</h2>
               <div className="space-y-6">
@@ -296,43 +310,11 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
           ) : null}
         </div>
 
-        {/* Price / booking sidebar */}
-        <aside className="lg:sticky lg:top-24 lg:h-fit">
-          <div className="rounded-sm border border-carbon/15 p-6">
-            {isAtuAire ? (
-              atuAireFromPrice !== null ? (
-                <>
-                  <p className="text-xs font-medium tracking-wide text-carbon/50 uppercase">Desde</p>
-                  <p className="font-display text-3xl">{formatCurrency(atuAireFromPrice, trip.currency)}</p>
-                  <p className="mb-4 text-sm text-carbon/50">/ persona</p>
-                </>
-              ) : (
-                <p className="mb-4 text-sm text-carbon/60">Precio disponible próximamente.</p>
-              )
-            ) : (
-              <>
-                <p className="font-display text-3xl">{formatCurrency(trip.price, trip.currency)}</p>
-                <p className="mb-4 text-sm text-carbon/50">por persona</p>
-              </>
-            )}
-
-            {/* Capacity/plazas is never shown publicly, for any travel mode
-                (§1/§20) — internal availability still gates the CTA below
-                via effectiveStatus, it's just never surfaced as a number. */}
-            {status === "open" ? (
-              <ButtonLink href={`/viajes/${trip.slug}/reservar`} className="w-full justify-center">
-                {isAtuAire ? "Reservar" : "Reservar plaza"}
-              </ButtonLink>
-            ) : status === "sold_out" ? (
-              <WaitlistCta tripId={trip.id} tripName={trip.name} />
-            ) : (
-              <p className="text-sm text-carbon/60">Este viaje ya se realizó.</p>
-            )}
-
-            {trip.origins.length > 0 ? (
-              <p className="mt-4 text-xs text-carbon/50">Salidas desde: {trip.origins.map((o) => o.city).join(" · ")}</p>
-            ) : null}
-          </div>
+        {/* Capacity/plazas is never shown publicly, for any travel mode
+            (§1/§20) — internal availability still gates the CTA via
+            effectiveStatus, it's just never surfaced as a number. */}
+        <aside className="order-1 lg:sticky lg:top-24 lg:order-2 lg:h-fit">
+          <CommercialPanel trip={trip} status={status} isAtuAire={isAtuAire} fromPrice={isAtuAire ? atuAireFromPrice : trip.price} competitionName={competitionName} />
         </aside>
       </Container>
 
@@ -342,8 +324,8 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
           <ButtonLink href={`/viajes/${trip.slug}/reservar`} className="w-full justify-center">
             {isAtuAire
               ? atuAireFromPrice !== null
-                ? `Reservar · Desde ${formatCurrency(atuAireFromPrice, trip.currency)}`
-                : "Reservar"
+                ? `Configurar mi viaje · Desde ${formatCurrency(atuAireFromPrice, trip.currency)}`
+                : "Configurar mi viaje"
               : `Reservar plaza · ${formatCurrency(trip.price, trip.currency)}`}
           </ButtonLink>
         </div>

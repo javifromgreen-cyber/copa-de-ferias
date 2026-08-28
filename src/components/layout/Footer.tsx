@@ -24,8 +24,8 @@ export function Footer({ brand }: { brand: Brand }) {
         <div>
           <h3 className="font-display mb-3 text-xs tracking-[0.2em] text-ivory/50 uppercase">Copa de Ferias</h3>
           <ul className="space-y-2 text-sm">
-            <li><Link href="/viajes" className="text-ivory/80 hover:text-ivory">Viajes</Link></li>
-            <li><Link href="/comunidad" className="text-ivory/80 hover:text-ivory">Comunidad</Link></li>
+            <li><Link href="/viajes" className="text-ivory/80 hover:text-ivory">Partidos</Link></li>
+            <li><Link href="/competiciones" className="text-ivory/80 hover:text-ivory">Competiciones</Link></li>
             <li><Link href="/como-funciona" className="text-ivory/80 hover:text-ivory">Cómo funciona</Link></li>
             <li><Link href="/faq" className="text-ivory/80 hover:text-ivory">FAQ</Link></li>
           </ul>

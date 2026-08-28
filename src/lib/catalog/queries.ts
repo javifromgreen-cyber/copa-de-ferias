@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
-import type { Region, CompetitionType } from "@prisma/client";
+import { isPubliclyListed } from "@/lib/trips/status";
+import { PUBLIC_LISTING_EXCLUDED_SLUGS } from "@/lib/trips/queries";
+import type { Competition, Region, CompetitionType } from "@prisma/client";
 
 // ---------------------------------------------------------------------
 // Catalog query helpers — the future public catalog ("all Europe events",
@@ -59,4 +61,42 @@ export function listEventsByCompetitionType(competitionType: CompetitionType, re
     include: { competition: true, trip: true },
     orderBy: { matchDate: "asc" },
   });
+}
+
+export type CompetitionWithTripCount = Competition & { tripCount: number };
+
+/**
+ * "Explora por Competición" (§10-11) — only competitions that actually have
+ * a real, publicly-listed match right now (same listability rule as
+ * /viajes: isPubliclyListed + not the retired Belgrado slug). Never shows
+ * an empty category. Grouped by region so the page can render a simple,
+ * scalable index without a mega-menu.
+ */
+export async function listCompetitionsWithPublicTrips(): Promise<Record<Region, CompetitionWithTripCount[]>> {
+  const competitions = await prisma.competition.findMany({
+    include: { events: { include: { trip: true } } },
+    orderBy: [{ region: "asc" }, { name: "asc" }],
+  });
+
+  const byRegion: Record<Region, CompetitionWithTripCount[]> = {
+    EUROPE: [],
+    SOUTH_AMERICA: [],
+    NORTH_AMERICA: [],
+    ASIA: [],
+    AFRICA: [],
+    OCEANIA: [],
+  };
+
+  for (const { events, ...competition } of competitions) {
+    const tripIds = new Set(
+      events
+        .map((e) => e.trip)
+        .filter((trip) => isPubliclyListed(trip) && !PUBLIC_LISTING_EXCLUDED_SLUGS.has(trip.slug))
+        .map((trip) => trip.id),
+    );
+    if (tripIds.size === 0) continue;
+    byRegion[competition.region].push({ ...competition, tripCount: tripIds.size });
+  }
+
+  return byRegion;
 }

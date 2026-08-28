@@ -9,7 +9,7 @@ test("home has no horizontal overflow on a mobile viewport", async ({ page }) =>
 test("mobile menu opens and navigates", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /abrir menú/i }).click();
-  await page.getByRole("banner").getByRole("link", { name: "Viajes", exact: true }).click();
+  await page.getByRole("banner").getByRole("link", { name: "Partidos", exact: true }).click();
   await expect(page).toHaveURL(/\/viajes$/);
 });
 

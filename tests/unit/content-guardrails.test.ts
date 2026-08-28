@@ -3,7 +3,18 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const SRC_DIR = path.resolve(__dirname, "../../src");
-const FORBIDDEN = ["salida garantizada", "nomad", "awayday", "duffel"];
+const FORBIDDEN = [
+  "salida garantizada",
+  "nomad",
+  "awayday",
+  "duffel",
+  // Match-first phase (§0): never communicate cupos, headcounts, or the
+  // retired GROUP_CDF "grupo cerrado" framing on any public surface.
+  "cupos",
+  "personas apuntadas",
+  "plazas disponibles",
+  "grupos cdf",
+];
 
 function walk(dir: string): string[] {
   const entries = readdirSync(dir);

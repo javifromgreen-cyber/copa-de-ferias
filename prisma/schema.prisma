@@ -447,6 +447,10 @@ model TripFaq {
 // Global FAQ shown on /faq (independent of any single trip).
 model Faq {
   id       String  @id @default(cuid())
+  // Groups the general FAQ page into scannable sections (e.g. "Antes de
+  // reservar", "Vuelos") — "" means uncategorized, rendered in its own
+  // catch-all group rather than hidden.
+  category String  @default("")
   question String
   answer   String
   order    Int     @default(0)

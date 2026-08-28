@@ -42,3 +42,8 @@ export function effectiveStatus(trip: Pick<Trip, "status" | "maxSpots" | "soldSp
   if (trip.status === "open" && isSoldOut(trip)) return "sold_out";
   return trip.status;
 }
+
+/** A homeTeam/awayTeam value counts as a real matchup only once it's set — "Por confirmar" is the seeded placeholder for an unannounced fixture. */
+export function isKnownTeamName(name: string): boolean {
+  return Boolean(name) && name.trim().toLowerCase() !== "por confirmar";
+}

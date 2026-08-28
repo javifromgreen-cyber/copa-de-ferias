@@ -7,10 +7,14 @@ import { ButtonLink } from "@/components/ui/Button";
 import { Container } from "@/components/ui/Container";
 import type { Brand } from "@/lib/brand";
 
+// This phase is match-first (§0/§2): the customer is looking for a
+// matchup, not a "trip" or a "community" — Comunidad is deliberately off
+// the primary nav (its route stays reachable directly, unlinked, same
+// pattern as the retired Belgrado trip) until that's back in scope.
 const NAV = [
   { href: "/", label: "Inicio" },
-  { href: "/viajes", label: "Viajes" },
-  { href: "/comunidad", label: "Comunidad" },
+  { href: "/viajes", label: "Partidos" },
+  { href: "/competiciones", label: "Competiciones" },
   { href: "/como-funciona", label: "Cómo funciona" },
   { href: "/faq", label: "FAQ" },
 ];
@@ -40,7 +44,7 @@ export function Header({ brand }: { brand: Brand }) {
 
         <div className="hidden md:block">
           <ButtonLink href="/viajes" className="px-5 py-2.5 text-xs">
-            Ver viajes
+            Ver partidos
           </ButtonLink>
         </div>
 
@@ -74,7 +78,7 @@ export function Header({ brand }: { brand: Brand }) {
               </Link>
             ))}
             <ButtonLink href="/viajes" className="mt-2 justify-center" onClick={() => setOpen(false)}>
-              Ver viajes
+              Ver partidos
             </ButtonLink>
           </Container>
         </div>

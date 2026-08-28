@@ -4,8 +4,8 @@ import { useState } from "react";
 
 export type FaqItem = { id: string; question: string; answer: string };
 
-export function FaqAccordion({ items }: { items: FaqItem[] }) {
-  const [openId, setOpenId] = useState<string | null>(items[0]?.id ?? null);
+export function FaqAccordion({ items, defaultOpenFirst = true }: { items: FaqItem[]; defaultOpenFirst?: boolean }) {
+  const [openId, setOpenId] = useState<string | null>(defaultOpenFirst ? (items[0]?.id ?? null) : null);
 
   return (
     <div className="divide-y divide-carbon/10 border-y border-carbon/10">

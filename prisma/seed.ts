@@ -97,94 +97,145 @@ async function main() {
   }
 
   // -----------------------------------------------------------------
-  // Global FAQ
+  // Global FAQ — grouped into 7 categories for the general FAQ page.
+  // This phase communicates exclusively about matches (§0): every answer
+  // here reflects the A_TU_AIRE model (entrada / entrada+hotel /
+  // entrada+hotel+vuelo, chosen per match), not the retired GROUP_CDF
+  // "viaje cerrado con coordinador" framing. Payment methods listed match
+  // exactly what src/lib/payments actually implements (Stripe: card,
+  // Bizum, Klarna; PayPal) — never invented.
   // -----------------------------------------------------------------
   await prisma.faq.deleteMany();
-  const faqs: Array<[string, string]> = [
+  const faqs: Array<[string, string, string]> = [
     [
+      "antes-de-reservar",
+      "¿Cómo elijo el partido?",
+      "Busca por equipo, ciudad o competición en el buscador o en el catálogo de partidos, y entra en la ficha del que te interese. Ahí verás el estadio, la fecha y las opciones disponibles.",
+    ],
+    [
+      "antes-de-reservar",
+      "¿Qué puedo reservar en cada partido?",
+      "Depende de cada partido: normalmente puedes elegir entre solo entrada, entrada + hotel, o entrada + hotel + vuelo. En la ficha del partido y en el checkout verás las opciones disponibles para ese partido en concreto.",
+    ],
+    [
+      "antes-de-reservar",
       "¿Puedo viajar solo?",
-      "Sí. Puedes apuntarte por tu cuenta, venir en pareja o reservar varias plazas con amigos. Al llegar formaréis parte del mismo grupo.",
+      "Sí. Puedes reservar solo, en pareja o con un grupo de amigos; el precio es por persona.",
     ],
     [
-      "¿Puedo ir con amigos?",
-      "Claro. Puedes venir con un amigo, tu pareja o un grupo. En la reserva indicas cuántos viajeros sois.",
-    ],
-    [
-      "¿Qué edad necesito para viajar?",
+      "antes-de-reservar",
+      "¿Qué edad necesito para reservar?",
       "La edad mínima para reservar y viajar es 18 años.",
     ],
     [
-      "¿Qué pasa si cambia el horario o el partido?",
-      "Si hay un cambio de horario dentro de las mismas fechas, actualizamos el planning y te avisamos. Si el cambio es importante (fecha, estadio, condiciones del viaje), te lo comunicamos con las opciones disponibles antes de tomar ninguna decisión por ti.",
+      "entradas",
+      "¿La entrada está siempre incluida?",
+      "Sí: la entrada al partido forma parte de las tres opciones de reserva (solo entrada, con hotel, o con hotel y vuelo).",
     ],
     [
-      "¿Qué ocurre si no se alcanza el mínimo de viajeros?",
-      "Cada viaje tiene un número mínimo de participantes para operar. Si no se alcanza antes de la fecha límite, cancelamos el viaje y se reembolsa el importe íntegro.",
+      "entradas",
+      "¿Puedo elegir mi asiento?",
+      "Depende del proveedor de ticketing y de la disponibilidad en el momento de la compra. Cuando es posible elegir zona o categoría, te lo mostramos durante la reserva.",
     ],
     [
-      "¿Qué documentación necesito?",
-      "Depende del destino. Te lo indicamos con tiempo suficiente y lo vas completando desde tu área \"Mi Viaje\" después de reservar.",
+      "entradas",
+      "¿Cuándo recibo la entrada?",
+      "Antes del partido, normalmente en formato digital. El plazo exacto depende del proveedor y de la antelación con la que compres; te lo indicamos desde \"Mi Viaje\".",
     ],
     [
-      "¿Puedo elegir habitación individual?",
-      "Sí, con un suplemento que se muestra en cada ficha antes de reservar.",
+      "entradas",
+      "Si reservamos varias entradas juntos, ¿nos sentamos juntos?",
+      "Hacemos lo posible por mantener juntas a las personas de una misma reserva dentro del mismo sector, aunque no siempre podemos garantizar asientos exactamente contiguos.",
     ],
     [
-      "¿Con quién comparto habitación si no voy con nadie?",
-      "Por defecto la habitación doble es compartida. Si vienes solo, te asignamos con otro participante de tu mismo sexo, salvo que prefieras pagar el suplemento de individual.",
+      "hotel",
+      "¿Cómo se reparten las habitaciones?",
+      "Según el número de viajeros de tu reserva armamos la combinación de habitaciones dobles y triples más ajustada. Por ejemplo: 4 personas → 2 habitaciones dobles; 5 personas → 1 doble + 1 triple; 6 personas → 3 dobles. Durante la reserva ves exactamente cómo queda repartido tu grupo.",
     ],
     [
-      "¿Puedo salir desde otra ciudad distinta a las ofertadas?",
-      "Cada viaje tiene unas ciudades de salida configuradas según viabilidad de vuelos. Si tu ciudad no aparece, escríbenos y lo valoramos para próximos viajes.",
+      "hotel",
+      "¿Puedo pedir habitación individual?",
+      "Depende del hotel y la disponibilidad de ese partido; cuando es posible, se muestra como opción con su suplemento correspondiente durante la reserva.",
     ],
     [
-      "¿Puedo incorporarme directamente en destino sin salir desde España?",
-      "De momento no. En esta primera versión los viajes salen desde los orígenes que aparecen en cada ficha.",
+      "hotel",
+      "¿Dónde está el hotel?",
+      "Buscamos hoteles bien situados respecto al estadio y al centro de la ciudad. La zona concreta se indica en la ficha del partido.",
     ],
     [
-      "¿Las entradas están incluidas?",
-      "Sí, siempre. La entrada al partido está incluida en todos nuestros viajes.",
+      "hotel",
+      "¿Qué pasa si viajo solo y elijo hotel?",
+      "Si tu reserva es de una sola persona, compartes habitación doble con otro viajero de tu mismo sexo, salvo que prefieras pagar el suplemento de individual cuando esté disponible.",
     ],
     [
-      "¿Dónde nos sentamos en el estadio?",
-      "El sector y la disposición dependen de cada partido y se detallan en la ficha del viaje. Cuando es posible, el grupo se sienta junto.",
+      "vuelos",
+      "¿Desde qué ciudades hay vuelo disponible?",
+      "Depende de cada partido: en el checkout verás los orígenes disponibles para esa ruta concreta. Si tu ciudad no aparece, de momento no podemos ofrecerte esa combinación.",
     ],
     [
-      "¿El viaje incluye seguro?",
-      "Sí, incluye un seguro de asistencia en viaje. Las condiciones concretas se detallan en cada ficha.",
+      "vuelos",
+      "¿Puedo elegir la franja horaria del vuelo?",
+      "Cuando hay varias opciones, te las mostramos en el checkout. Coordinamos los horarios pensando en el partido, así que en algunos casos solo hay una franja disponible.",
     ],
     [
+      "vuelos",
       "¿Qué pasa si pierdo mi vuelo?",
-      "Contacta con el coordinador del grupo en cuanto lo sepas. Te ayudamos a reorganizarte, aunque los gastos de un nuevo billete corren por tu cuenta salvo que el retraso sea nuestra responsabilidad.",
+      "Contacta con nosotros en cuanto lo sepas. Te ayudamos a reorganizarte, aunque los gastos de un nuevo billete corren por tu cuenta salvo que el retraso sea responsabilidad nuestra.",
     ],
     [
-      "¿Puedo cancelar mi reserva?",
-      "Sí, puedes solicitar la cancelación desde \"Mi Viaje\". Las condiciones (plazos, importes reembolsables) se detallan en la política de cada viaje antes de reservar.",
-    ],
-    [
-      "¿Puedo cambiar el nombre de un viajero ya confirmado?",
-      "Una vez confirmada la reserva no se puede editar libremente. Puedes solicitar un cambio de viajero desde \"Mi Viaje\" y lo revisamos caso por caso.",
-    ],
-    [
+      "pago-y-reserva",
       "¿Cómo funcionan los pagos?",
-      "El viaje se paga íntegro en el momento de reservar. Aceptamos tarjeta, wallets, Bizum y Klarna a través de Stripe, y PayPal (incluyendo Pay Later cuando esté disponible para tu cuenta).",
+      "Tu reserva se paga íntegra en el momento de reservar, con tarjeta, Bizum o Klarna a través de Stripe, o con PayPal. Durante el pago pueden aparecer opciones de pago aplazado de Klarna o PayPal según disponibilidad para tu compra.",
     ],
     [
-      "¿Quién acompaña al grupo?",
-      "Cada viaje tiene un coordinador responsable del grupo y, en destino, un host local que conoce bien la ciudad y el club.",
+      "pago-y-reserva",
+      "¿Hay depósitos o pagos parciales?",
+      "No por nuestra parte: el importe se cobra completo al reservar. Si tu proveedor de pago ofrece financiación (Klarna, PayPal Pay Later), la gestionas directamente con ellos durante el pago.",
     ],
     [
-      "¿Qué comidas están incluidas?",
-      "Ninguna salvo que se indique expresamente en la ficha del viaje. El alojamiento sí está incluido.",
+      "pago-y-reserva",
+      "¿Puedo cancelar mi reserva?",
+      "Sí, puedes solicitarlo desde \"Mi Viaje\". Las condiciones (plazos, importes reembolsables) se detallan antes de reservar y dependen de lo cerca que estés de la fecha del partido.",
     ],
     [
-      "¿Hay grupo de WhatsApp?",
-      "Sí, se activa aproximadamente 15 días antes de cada viaje para que el grupo empiece a conocerse antes de viajar.",
+      "pago-y-reserva",
+      "¿Puedo cambiar el nombre de un viajero ya confirmado?",
+      "Una vez confirmada la reserva no se puede editar libremente. Puedes solicitar un cambio desde \"Mi Viaje\" y lo revisamos caso por caso.",
+    ],
+    [
+      "despues-de-reservar",
+      "¿Qué ocurre justo después de reservar?",
+      "Recibes la confirmación al instante. A partir de ahí, desde \"Mi Viaje\" vas completando los datos que falten y siguiendo toda la información del partido.",
+    ],
+    [
+      "despues-de-reservar",
+      "¿Qué documentación necesito?",
+      "Depende del destino. Te lo indicamos con tiempo suficiente y lo completas desde \"Mi Viaje\" después de reservar.",
+    ],
+    [
+      "despues-de-reservar",
+      "¿Cómo sé si hay cambios en el horario del partido?",
+      "Si la competición confirma o modifica el horario, lo actualizamos en la ficha del partido y te avisamos si ya has reservado.",
+    ],
+    [
+      "por-que-copa-de-ferias",
+      "¿Qué hace diferente a Copa de Ferias?",
+      "No vendemos el mismo viaje a todo el mundo: cada partido tiene su propio plan de entrada, hotel y vuelo, pensado para ese estadio y esa ciudad.",
+    ],
+    [
+      "por-que-copa-de-ferias",
+      "¿Con qué proveedores trabajáis?",
+      "Las entradas se gestionan con proveedores de ticketing deportivo con acceso oficial a cada partido; el hotel y el vuelo, con partners especializados en viajes de fútbol.",
+    ],
+    [
+      "por-que-copa-de-ferias",
+      "¿Copa de Ferias tiene relación con la antigua competición del mismo nombre?",
+      "No. Tomamos prestado un nombre con historia porque nos gusta la idea de ciudades conectadas por el fútbol, pero no somos continuadores de aquel torneo ni tenemos relación con UEFA, FIFA ni ninguna organización que lo gestionase.",
     ],
   ];
   for (let i = 0; i < faqs.length; i++) {
     await prisma.faq.create({
-      data: { question: faqs[i][0], answer: faqs[i][1], order: i, active: true },
+      data: { category: faqs[i][0], question: faqs[i][1], answer: faqs[i][2], order: i, active: true },
     });
   }
 
