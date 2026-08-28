@@ -17,11 +17,14 @@ function matchesPreference(pref: FlightDaypartPreference, departure: Date): bool
 }
 
 /**
- * Every stage of the flight step runs through this one filter: the
- * viability window (buffers around the match/es) first, then the
+ * Every stage of the flight step runs through this one filter: direct-only
+ * first (A_TU_AIRE never sells a connecting flight — §8, enforced here
+ * defensively regardless of what the caller already filtered upstream),
+ * then the viability window (buffers around the match/es), then the
  * outbound/return daypart preferences — independently, each leg against
  * its own preference. A preference can narrow the result to zero, but it
- * can never widen it past what the buffers allow (§18).
+ * can never widen it past what the buffers or the direct-only rule allow
+ * (§18) — a connecting flight can never become the cheapest option.
  */
 export function filterFlightOffersForSelection(
   offers: NormalizedFlightOffer[],
@@ -30,6 +33,7 @@ export function filterFlightOffersForSelection(
   returnPreference: FlightDaypartPreference,
 ): NormalizedFlightOffer[] {
   return offers
+    .filter((o) => o.stops === 0)
     .filter((o) => isFlightOfferWithinWindow(o, bounds))
     .filter((o) => matchesPreference(outboundPreference, o.outboundDeparture))
     .filter((o) => matchesPreference(returnPreference, o.returnDeparture))

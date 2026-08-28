@@ -1,6 +1,8 @@
 import type { PackageType, ScheduleStatus } from "@prisma/client";
-import type { NormalizedHotelOffer, NormalizedFlightOffer } from "@/lib/providers/types";
+import type { NormalizedHotelOffer, NormalizedFlightOffer, OriginOption } from "@/lib/providers/types";
 import type { RoomMixEntry } from "@/lib/pricing/roomMix";
+
+export type { OriginOption } from "@/lib/providers/types";
 
 export type FlightDaypartPreference = "ANY" | "MORNING" | "AFTERNOON";
 
@@ -20,22 +22,26 @@ export type EventSummary = {
 // always freshly derived from this by buildAtuAireQuote, never stored
 // separately (§22 — derived state, not duplicated state).
 export type AtuAireSelection = {
+  buyerCountry: string | null;
   packageType: PackageType | null;
   partySize: number | null;
-  ticketCategory: string | null; // category name chosen on the primary Event
+  ticketSelections: Record<string, string>; // eventId -> category, one entry per Event
   nights: 1 | 2 | null;
   hotelOfferId: string | null;
+  originAirport: string | null; // Spanish IATA code, explicit customer choice — never assumed
   outboundPreference: FlightDaypartPreference;
   returnPreference: FlightDaypartPreference;
   flightOfferId: string | null;
 };
 
 export const DEFAULT_SELECTION: AtuAireSelection = {
+  buyerCountry: null,
   packageType: null,
   partySize: null,
-  ticketCategory: null,
+  ticketSelections: {},
   nights: null,
   hotelOfferId: null,
+  originAirport: null,
   outboundPreference: "ANY",
   returnPreference: "ANY",
   flightOfferId: null,
@@ -89,11 +95,13 @@ export type FlightAvailability = { blocked: true; reason: string } | { blocked: 
 export type AtuAireQuote = {
   trip: { id: string; slug: string; name: string; subtitle: string; city: string; maxPartySize: number };
   events: EventSummary[];
+  flightPackageEligible: boolean;
   packageTypeOptions: PackageTypeOption[];
   partySizeLimits: { min: number; max: number };
-  ticketOptions: TicketCategoryOption[];
+  ticketOptionsByEvent: Record<string, TicketCategoryOption[]>;
   roomMix: RoomMixEntry[] | null;
   hotelOptions: HotelOptionView[];
+  eligibleOrigins: OriginOption[];
   flightAvailability: FlightAvailability;
   outboundPreferenceOptions: FlightPreferenceOption[];
   returnPreferenceOptions: FlightPreferenceOption[];
@@ -129,6 +137,10 @@ export type AtuAireQuoteData = {
   events: EventSummary[];
   ticketOffersByEventId: Record<string, { id: string; category: string; sector: string; costNet: number; restrictions: string }[]>;
   hotelOffers: NormalizedHotelOffer[];
+  // Merged across every eligible Spanish origin (each offer carries its
+  // own originAirport) — [] whenever the buyer isn't flight-eligible, no
+  // package on this trip requires a flight, or no eligible origin exists.
+  eligibleOrigins: OriginOption[];
   flightOffers: NormalizedFlightOffer[];
   feeConfig: { feeTicketOnly: number; feeHotelTiers: string; feeHotelFlightTiers: string; additionalMatchFee: number };
   revalidated: boolean;

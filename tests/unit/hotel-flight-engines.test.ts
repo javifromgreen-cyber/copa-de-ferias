@@ -134,6 +134,7 @@ describe("flight window (§48-56/§171-172)", () => {
       returnDeparture: new Date(2026, 5, 12, 10),
       returnArrival: new Date(2026, 5, 12, 13),
       pricePerPerson: 100,
+      stops: 0,
     };
     expect(isFlightOfferWithinWindow(tooLate, bounds)).toBe(false);
   });

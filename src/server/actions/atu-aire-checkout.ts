@@ -6,9 +6,10 @@ import { getFlightProvider } from "@/lib/providers/flights";
 import { parseAvailablePackageTypes } from "@/lib/pricing/packageTypes";
 import { packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
 import { buildAtuAireQuote } from "@/lib/checkout-atu-aire/quoteBuilder";
-import { airportForCity, DEFAULT_ORIGIN_AIRPORT } from "@/lib/checkout-atu-aire/airports";
+import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
+import { airportForCity } from "@/lib/checkout-atu-aire/airports";
 import type { AtuAireQuote, AtuAireQuoteData, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
-import type { NormalizedHotelOffer, NormalizedFlightOffer } from "@/lib/providers/types";
+import type { NormalizedHotelOffer, NormalizedFlightOffer, OriginOption } from "@/lib/providers/types";
 
 function addDays(date: Date, days: number): Date {
   const d = new Date(date);
@@ -42,7 +43,8 @@ export async function getAtuAireCheckoutQuote(
 
   const availablePackageTypes = parseAvailablePackageTypes(trip.availablePackageTypes);
   const needsHotel = availablePackageTypes.some(packageRequiresHotel);
-  const needsFlight = availablePackageTypes.some(packageRequiresFlight);
+  const needsFlightPackage = availablePackageTypes.some(packageRequiresFlight);
+  const flightPackageEligible = isFlightPackageEligible(selection.buyerCountry);
 
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
   const earliestMatch = sortedEvents[0].matchDate;
@@ -56,17 +58,24 @@ export async function getAtuAireCheckoutQuote(
     hotelOffers = perProvider.flat();
   }
 
+  // Flight data is only ever fetched when the product actually offers a
+  // flight-inclusive package AND the buyer is eligible for it (§2/§3) —
+  // a LATAM buyer's request never even queries the flight provider.
+  let eligibleOrigins: OriginOption[] = [];
   let flightOffers: NormalizedFlightOffer[] = [];
-  if (needsFlight) {
-    const outboundDate = addDays(earliestMatch, -1);
-    const returnDate = addDays(latestMatch, 1);
+  if (needsFlightPackage && flightPackageEligible) {
+    const destinationAirport = airportForCity(trip.city);
     const provider = getFlightProvider({ tripIsDemo: trip.isDemo });
-    flightOffers = await provider.getOffers({
-      originAirport: DEFAULT_ORIGIN_AIRPORT,
-      destinationAirport: airportForCity(trip.city),
-      outboundDate,
-      returnDate,
-    });
+    eligibleOrigins = await provider.listDirectOrigins({ destinationAirport });
+
+    if (eligibleOrigins.length > 0) {
+      const outboundDate = addDays(earliestMatch, -1);
+      const returnDate = addDays(latestMatch, 1);
+      const perOrigin = await Promise.all(
+        eligibleOrigins.map((origin) => provider.getOffers({ originAirport: origin.iata, destinationAirport, outboundDate, returnDate })),
+      );
+      flightOffers = perOrigin.flat();
+    }
   }
 
   const ticketOffersByEventId: AtuAireQuoteData["ticketOffersByEventId"] = {};
@@ -102,6 +111,7 @@ export async function getAtuAireCheckoutQuote(
     })),
     ticketOffersByEventId,
     hotelOffers,
+    eligibleOrigins,
     flightOffers,
     feeConfig: {
       feeTicketOnly: feeConfig.feeTicketOnly,

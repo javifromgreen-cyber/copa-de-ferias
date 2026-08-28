@@ -708,6 +708,7 @@ async function main() {
       { eventId: demoCEvent1.id, provider: "manual", category: "General", sector: "Clock End", costNet: 60, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
       { eventId: demoCEvent1.id, provider: "manual", category: "Members", sector: "Club Level", costNet: 120, currency: "EUR", stock: 20, deliveryType: "digital", active: true },
       { eventId: demoCEvent2.id, provider: "manual", category: "General", sector: "Away end", costNet: 70, currency: "EUR", stock: 50, deliveryType: "digital", active: true },
+      { eventId: demoCEvent2.id, provider: "manual", category: "Members", sector: "Away end premium", costNet: 110, currency: "EUR", stock: 15, deliveryType: "digital", active: true },
     ],
   });
 

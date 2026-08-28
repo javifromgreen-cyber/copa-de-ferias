@@ -53,16 +53,29 @@ export type NormalizedFlightOffer = {
   returnDeparture: Date;
   returnArrival: Date;
   pricePerPerson: number;
+  /** 0 = direct. A_TU_AIRE only ever sells direct flights (§8) — callers must filter on this, never assume it's already 0. */
+  stops: number;
 };
+
+export type OriginOption = { iata: string; city: string; airportName: string };
 
 export interface FlightProvider {
   readonly kind: string;
   /**
+   * Spanish origin airports with at least one DIRECT route to this
+   * destination — the only thing the UI's airport selector is allowed to
+   * offer (§6/§7/§9). Never hardcoded in the UI; always derived from
+   * what the provider actually has. Returns [] (never throws) when
+   * unavailable.
+   */
+  listDirectOrigins(params: { destinationAirport: string }): Promise<OriginOption[]>;
+  /**
    * Returns every real candidate round-trip for the given route and
-   * calendar days — daypart/preference filtering happens downstream (see
+   * calendar days, direct and connecting alike — daypart/preference
+   * filtering AND the direct-only filter happen downstream (see
    * src/lib/checkout-atu-aire/flightOptions.ts), never inside the
    * provider. Returns [] (never throws) when unavailable — e.g. no
-   * credentials configured.
+   * credentials configured, or no route exists between this origin/destination.
    */
   getOffers(params: { originAirport: string; destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<NormalizedFlightOffer[]>;
 }

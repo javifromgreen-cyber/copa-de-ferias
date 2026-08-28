@@ -3,40 +3,22 @@
 import { useEffect, useState } from "react";
 import { getAtuAireCheckoutQuote } from "@/server/actions/atu-aire-checkout";
 import { packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
+import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
+import { reconcileSelection } from "@/lib/checkout-atu-aire/reconcile";
 import { DEFAULT_SELECTION, type AtuAireQuote, type AtuAireSelection, type FlightDaypartPreference } from "@/lib/checkout-atu-aire/types";
 import { EventsHeader } from "./EventsHeader";
+import { CountryStep } from "./CountryStep";
 import { PackageTypeStep } from "./PackageTypeStep";
 import { TravelersStep } from "./TravelersStep";
 import { TicketStep } from "./TicketStep";
 import { NightsStep } from "./NightsStep";
 import { HotelStep } from "./HotelStep";
+import { AirportStep } from "./AirportStep";
 import { FlightStep } from "./FlightStep";
 import { SummarySidebar } from "./SummarySidebar";
 import { MobileSummaryBar } from "./MobileSummaryBar";
 import { Button } from "@/components/ui/Button";
 import type { PackageType } from "@prisma/client";
-
-/**
- * Reconciles a selection against the just-fetched quote: a choice that
- * depended on something that changed (party size invalidating a hotel,
- * a preference change dropping a concrete flight offer) is cleared —
- * everything else survives untouched (§21). Returns the same object
- * reference when nothing needs to change, so callers can skip a refetch.
- */
-function reconcile(selection: AtuAireSelection, quote: AtuAireQuote): AtuAireSelection {
-  let next = selection;
-
-  if (next.hotelOfferId) {
-    const stillValid = quote.hotelOptions.find((h) => h.offer.id === next.hotelOfferId && h.valid);
-    if (!stillValid) next = { ...next, hotelOfferId: null };
-  }
-  if (next.flightOfferId) {
-    const stillThere = quote.flightOffers.find((f) => f.id === next.flightOfferId);
-    if (!stillThere) next = { ...next, flightOfferId: null };
-  }
-
-  return next;
-}
 
 export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   const [selection, setSelection] = useState<AtuAireSelection>(DEFAULT_SELECTION);
@@ -56,7 +38,7 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
       }
       setError("");
       setQuote(result.quote);
-      const reconciled = reconcile(selection, result.quote);
+      const reconciled = reconcileSelection(selection, result.quote);
       if (reconciled !== selection) setSelection(reconciled);
       setConfirmed(false);
     });
@@ -65,16 +47,38 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
     };
   }, [tripSlug, selection]);
 
+  function selectCountry(buyerCountry: string) {
+    setSelection((s) => {
+      // The chosen modality itself can become invalid on a country change
+      // (e.g. TICKET_HOTEL_FLIGHT while switching to a non-eligible
+      // market) — when that happens the whole downstream flow has to be
+      // redone, since it all hung off that modality. Otherwise nothing
+      // else is touched.
+      const packageStillValid = !s.packageType || !packageRequiresFlight(s.packageType) || isFlightPackageEligible(buyerCountry);
+      if (packageStillValid) return { ...s, buyerCountry };
+      return { ...DEFAULT_SELECTION, buyerCountry };
+    });
+  }
+
   function selectPackageType(packageType: PackageType) {
     setSelection((s) => ({
       ...s,
       packageType,
       nights: packageRequiresHotel(packageType) ? s.nights : null,
       hotelOfferId: packageRequiresHotel(packageType) ? s.hotelOfferId : null,
+      originAirport: packageRequiresFlight(packageType) ? s.originAirport : null,
       outboundPreference: packageRequiresFlight(packageType) ? s.outboundPreference : "ANY",
       returnPreference: packageRequiresFlight(packageType) ? s.returnPreference : "ANY",
       flightOfferId: packageRequiresFlight(packageType) ? s.flightOfferId : null,
     }));
+  }
+
+  function selectTicket(eventId: string, category: string) {
+    setSelection((s) => ({ ...s, ticketSelections: { ...s.ticketSelections, [eventId]: category } }));
+  }
+
+  function selectOrigin(originAirport: string) {
+    setSelection((s) => ({ ...s, originAirport, flightOfferId: null }));
   }
 
   async function handleRevalidate() {
@@ -87,7 +91,7 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
       setError(result.error);
       return;
     }
-    const reconciled = reconcile(selection, result.quote);
+    const reconciled = reconcileSelection(selection, result.quote);
     if (reconciled !== selection) {
       setSelection(reconciled);
       setError("");
@@ -111,14 +115,21 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   const hotelRequired = selection.packageType ? packageRequiresHotel(selection.packageType) : false;
   const flightRequired = selection.packageType ? packageRequiresFlight(selection.packageType) : false;
 
-  const showTravelers = Boolean(selection.packageType);
-  const showTicket = showTravelers && Boolean(selection.partySize);
-  const showNights = showTicket && Boolean(selection.ticketCategory) && hotelRequired;
+  const showPackageType = Boolean(selection.buyerCountry);
+  const showTravelers = showPackageType && Boolean(selection.packageType);
+  const showTickets = showTravelers && Boolean(selection.partySize);
+  const allTicketsSelected = quote.events.every((event) => {
+    const options = quote.ticketOptionsByEvent[event.id] ?? [];
+    return Boolean(selection.ticketSelections[event.id]) || options.length === 1;
+  });
+  const showNights = showTickets && allTicketsSelected && hotelRequired;
   const showHotel = showNights && Boolean(selection.nights);
   // TICKET_HOTEL_FLIGHT is the only modality that ever requires a flight,
-  // and it always requires a hotel too — so the flight step only ever
-  // unlocks once a valid hotel has actually been picked.
-  const showFlight = flightRequired && showHotel && Boolean(selection.hotelOfferId);
+  // and it always requires a hotel too — so the flight/airport steps only
+  // ever unlock once a valid hotel has actually been picked.
+  const showFlightGate = flightRequired && showHotel && Boolean(selection.hotelOfferId);
+  const showAirport = showFlightGate && !quote.flightAvailability.blocked;
+  const showFlightStep = showFlightGate && (quote.flightAvailability.blocked || Boolean(selection.originAirport));
   const readyToRevalidate = quote.price.missing.length === 0 && Boolean(selection.partySize);
 
   return (
@@ -126,7 +137,9 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
       <div className="space-y-6">
         <EventsHeader events={quote.events} />
 
-        <PackageTypeStep options={quote.packageTypeOptions} selected={selection.packageType} onSelect={selectPackageType} />
+        <CountryStep value={selection.buyerCountry} onSelect={selectCountry} />
+
+        {showPackageType ? <PackageTypeStep options={quote.packageTypeOptions} selected={selection.packageType} onSelect={selectPackageType} /> : null}
 
         {showTravelers ? (
           <TravelersStep
@@ -136,8 +149,8 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
           />
         ) : null}
 
-        {showTicket ? (
-          <TicketStep options={quote.ticketOptions} selected={selection.ticketCategory} onSelect={(ticketCategory) => setSelection((s) => ({ ...s, ticketCategory }))} />
+        {showTickets ? (
+          <TicketStep events={quote.events} optionsByEvent={quote.ticketOptionsByEvent} selections={selection.ticketSelections} onSelect={selectTicket} />
         ) : null}
 
         {showNights ? <NightsStep nights={selection.nights} onSelect={(nights) => setSelection((s) => ({ ...s, nights, hotelOfferId: null }))} /> : null}
@@ -146,7 +159,9 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
           <HotelStep options={quote.hotelOptions} selectedId={selection.hotelOfferId} onSelect={(hotelOfferId) => setSelection((s) => ({ ...s, hotelOfferId }))} />
         ) : null}
 
-        {showFlight ? (
+        {showAirport ? <AirportStep origins={quote.eligibleOrigins} selected={selection.originAirport} onSelect={selectOrigin} /> : null}
+
+        {showFlightStep ? (
           <FlightStep
             quote={quote}
             outboundPreference={selection.outboundPreference}

@@ -1,28 +1,26 @@
 import type { TicketCategoryOption } from "./types";
 
-type RawTicketOffer = { id: string; category: string; sector: string; costNet: number; restrictions: string };
+export type RawTicketOffer = { id: string; category: string; sector: string; costNet: number; restrictions: string };
 
 /**
- * Ticket categories are shown for the product's primary Event only —
- * every other Event (a second match on the same trip) automatically uses
- * its own cheapest active offer, so the customer makes exactly one
- * "Entrada" decision (matches the spec's single-step flow) while every
- * match still gets a real ticket costed into the total.
+ * Every Event in a multi-match product gets its own ticket-category
+ * selection — no Event's ticket is ever chosen silently on the
+ * customer's behalf (§17/§18). Called once per Event; the UI renders one
+ * of these lists under each match's own heading (§21).
  */
-export function buildTicketCategoryOptions(primaryEventOffers: RawTicketOffer[], otherEventsCheapestCostSum: number): TicketCategoryOption[] {
-  if (primaryEventOffers.length === 0) return [];
+export function buildTicketCategoryOptionsForEvent(offers: RawTicketOffer[]): TicketCategoryOption[] {
+  if (offers.length === 0) return [];
 
-  const withTotals = primaryEventOffers.map((o) => ({
-    category: o.category,
-    sector: o.sector,
-    restrictions: o.restrictions,
-    totalCostNetPerPerson: o.costNet + otherEventsCheapestCostSum,
-  }));
+  const cheapest = Math.min(...offers.map((o) => o.costNet));
 
-  const cheapest = Math.min(...withTotals.map((o) => o.totalCostNetPerPerson));
-
-  return withTotals
-    .map((o) => ({ ...o, deltaFromCheapest: o.totalCostNetPerPerson - cheapest }))
+  return offers
+    .map((o) => ({
+      category: o.category,
+      sector: o.sector,
+      restrictions: o.restrictions,
+      totalCostNetPerPerson: o.costNet,
+      deltaFromCheapest: o.costNet - cheapest,
+    }))
     .sort((a, b) => a.totalCostNetPerPerson - b.totalCostNetPerPerson);
 }
 

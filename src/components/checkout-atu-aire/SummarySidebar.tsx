@@ -3,26 +3,36 @@ import { PriceTag } from "./PriceTag";
 import type { AtuAireQuote, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
 import { packageRequiresFlight, packageRequiresHotel } from "@/lib/checkout-atu-aire/packageRequirements";
 
+const PREFERENCE_LABELS: Record<string, string> = { ANY: "Cualquier horario", MORNING: "Mañana", AFTERNOON: "Tarde" };
+
 /**
  * Always visible while the customer has at least chosen a modality —
  * so at every point they know what they've picked and what it currently
  * costs (§23/§24), without having to reach the end of the checkout.
  */
 export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; selection: AtuAireSelection }) {
-  const selectedTicket = quote.ticketOptions.find((t) => t.category === selection.ticketCategory);
   const selectedHotel = quote.hotelOptions.find((h) => h.offer.id === selection.hotelOfferId);
   const selectedFlight = quote.flightOffers.find((f) => f.id === selection.flightOfferId);
+  const selectedOrigin = quote.eligibleOrigins.find((o) => o.iata === selection.originAirport);
+  const flightRequired = selection.packageType ? packageRequiresFlight(selection.packageType) : false;
 
   return (
     <aside className="rounded-sm border border-carbon/15 bg-ivory-dark/40 p-5" aria-label="Resumen de tu reserva">
       <h2 className="font-display mb-3 text-lg uppercase">Tu viaje</h2>
-      <ul className="mb-4 space-y-1 text-sm text-carbon/80">
-        {quote.events.map((event) => (
-          <li key={event.id}>
-            {event.homeTeam} – {event.awayTeam}
-            {event.scheduleStatus === "provisional" ? <span className="ml-1 text-xs text-stamp">(provisional)</span> : null}
-          </li>
-        ))}
+      <ul className="mb-4 space-y-2 text-sm text-carbon/80">
+        {quote.events.map((event) => {
+          const options = quote.ticketOptionsByEvent[event.id] ?? [];
+          const chosenCategory = selection.ticketSelections[event.id] ?? (options.length === 1 ? options[0].category : null);
+          return (
+            <li key={event.id}>
+              <span>
+                {event.homeTeam} – {event.awayTeam}
+                {event.scheduleStatus === "provisional" ? <span className="ml-1 text-xs text-stamp">(provisional)</span> : null}
+              </span>
+              {chosenCategory ? <span className="block text-xs text-carbon/60">Entrada: {chosenCategory}</span> : null}
+            </li>
+          );
+        })}
       </ul>
 
       <dl className="mb-4 space-y-3 text-sm">
@@ -30,12 +40,6 @@ export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; sele
           <div>
             <dt className="text-xs text-carbon/50 uppercase">Viajeros</dt>
             <dd>{selection.partySize}</dd>
-          </div>
-        ) : null}
-        {selectedTicket ? (
-          <div>
-            <dt className="text-xs text-carbon/50 uppercase">Entrada</dt>
-            <dd>{selectedTicket.category}</dd>
           </div>
         ) : null}
         {selection.packageType && packageRequiresHotel(selection.packageType) ? (
@@ -47,7 +51,25 @@ export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; sele
             </dd>
           </div>
         ) : null}
-        {selection.packageType && packageRequiresFlight(selection.packageType) ? (
+        {flightRequired ? (
+          <div>
+            <dt className="text-xs text-carbon/50 uppercase">Salida</dt>
+            <dd>{selectedOrigin ? `${selectedOrigin.city} (${selectedOrigin.iata})` : "Sin elegir"}</dd>
+          </div>
+        ) : null}
+        {flightRequired && selectedOrigin ? (
+          <div>
+            <dt className="text-xs text-carbon/50 uppercase">Ida</dt>
+            <dd>{PREFERENCE_LABELS[selection.outboundPreference]}</dd>
+          </div>
+        ) : null}
+        {flightRequired && selectedOrigin ? (
+          <div>
+            <dt className="text-xs text-carbon/50 uppercase">Vuelta</dt>
+            <dd>{PREFERENCE_LABELS[selection.returnPreference]}</dd>
+          </div>
+        ) : null}
+        {flightRequired ? (
           <div>
             <dt className="text-xs text-carbon/50 uppercase">Vuelo</dt>
             <dd>
