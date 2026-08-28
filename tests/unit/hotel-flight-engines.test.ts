@@ -4,13 +4,14 @@ import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import {
   classifyDaypart,
   computeStayWindowBounds,
-  isFlightOfferWithinWindow,
+  isOutboundLegWithinWindow,
+  isReturnLegWithinWindow,
   areFlightsBlockedByProvisionalSchedule,
   deriveEventKickoffWindow,
   CONSERVATIVE_EARLIEST_KICKOFF_HOUR,
   CONSERVATIVE_LATEST_KICKOFF_HOUR,
 } from "@/lib/pricing/flightWindow";
-import type { NormalizedHotelOffer, NormalizedFlightOffer } from "@/lib/providers/types";
+import type { NormalizedHotelOffer, NormalizedFlightLeg } from "@/lib/providers/types";
 
 function hotel(overrides: Partial<NormalizedHotelOffer>): NormalizedHotelOffer {
   return {
@@ -125,25 +126,42 @@ describe("flight window (§48-56/§171-172)", () => {
     expect(withHost.latestArrival.getTime()).toBeLessThan(withoutHost.latestArrival.getTime());
   });
 
-  it("filters out a flight offer that arrives after the latest allowed arrival", () => {
+  it("filters out an outbound leg that arrives after the latest allowed arrival", () => {
     const bounds = computeStayWindowBounds({
       eventWindows: [{ earliestPossibleKickoff: new Date(2026, 5, 10, 20), latestPossibleKickoff: new Date(2026, 5, 10, 20) }],
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
     });
-    const tooLate: NormalizedFlightOffer = {
+    const tooLate: NormalizedFlightLeg = {
       id: "f1",
       provider: "mock",
       originAirport: "BCN",
       destinationAirport: "BEG",
-      outboundDeparture: new Date(2026, 5, 10, 15),
-      outboundArrival: new Date(2026, 5, 10, 18), // after 17:00 latest arrival
-      returnDeparture: new Date(2026, 5, 12, 10),
-      returnArrival: new Date(2026, 5, 12, 13),
+      departure: new Date(2026, 5, 10, 15),
+      arrival: new Date(2026, 5, 10, 18), // after 17:00 latest arrival
       pricePerPerson: 100,
       stops: 0,
     };
-    expect(isFlightOfferWithinWindow(tooLate, bounds)).toBe(false);
+    expect(isOutboundLegWithinWindow(tooLate, bounds)).toBe(false);
+  });
+
+  it("filters out a return leg that departs before the earliest allowed return", () => {
+    const bounds = computeStayWindowBounds({
+      eventWindows: [{ earliestPossibleKickoff: new Date(2026, 5, 10, 20), latestPossibleKickoff: new Date(2026, 5, 10, 20) }],
+      minimumArrivalBufferBeforeKickoffMinutes: 180,
+      minimumReturnBufferAfterEventMinutes: 120,
+    });
+    const tooEarly: NormalizedFlightLeg = {
+      id: "f2",
+      provider: "mock",
+      originAirport: "BEG",
+      destinationAirport: "BCN",
+      departure: new Date(2026, 5, 10, 21), // before the 22:00 earliest return
+      arrival: new Date(2026, 5, 11, 0),
+      pricePerPerson: 90,
+      stops: 0,
+    };
+    expect(isReturnLegWithinWindow(tooEarly, bounds)).toBe(false);
   });
 
   it("blocks flights by default only when a match DAY is still uncertain (date_provisional), unless Admin overrides", () => {

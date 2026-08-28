@@ -1,18 +1,14 @@
-import type { FlightProvider, NormalizedFlightOffer, OriginOption } from "../types";
+import type { FlightProvider, NormalizedFlightLeg, OriginOption } from "../types";
 
-// Deterministic demo route map: which Spanish airports can build a full
-// round trip (DIRECT outbound AND DIRECT return) to each destination, and
-// which only ever produce a non-round-trip-direct itinerary (either a
-// genuinely connecting fare, or direct one way but not the other — both
-// cases are observably identical: some offers may exist, but they always
-// carry stops > 0, are never round-trip-direct-eligible, and never win on
-// price). OVD (Asturias) deliberately has no entry anywhere — it exists
-// only to prove an unconnected Spanish airport never shows up in the
-// origin selector (§7/§29). SVQ (Sevilla) deliberately falls in the
-// "connecting" bucket for every destination below — for LHR it's a
-// genuinely connecting fare; for MAN it represents a direct outbound with
-// no direct return (§22) — either way it must never appear as an eligible
-// origin and never win on price (§8/§10/§21).
+// Deterministic demo route map: which Spanish airports have DIRECT service
+// in each direction, per destination. Outbound and return are tracked
+// independently — an airport can be direct one way and not the other (§22).
+// OVD (Asturias) deliberately has no entry anywhere — it exists only to
+// prove an unconnected Spanish airport never shows up in the origin
+// selector (§7/§29). SVQ (Sevilla) deliberately has a direct OUTBOUND to
+// LHR/MAN but no direct RETURN — it exists to prove an airport direct in
+// only one direction is excluded from the eligible-origin list, and that
+// its only obtainable leg (a connecting one) never wins on price (§8/§10/§21-22).
 const SPANISH_AIRPORTS: Record<string, OriginOption> = {
   MAD: { iata: "MAD", city: "Madrid", airportName: "Adolfo Suárez Madrid-Barajas" },
   BCN: { iata: "BCN", city: "Barcelona", airportName: "Josep Tarradellas Barcelona-El Prat" },
@@ -21,14 +17,17 @@ const SPANISH_AIRPORTS: Record<string, OriginOption> = {
   OVD: { iata: "OVD", city: "Asturias", airportName: "Asturias" },
 };
 
-const ROUTES: Record<string, { direct: string[]; connecting: string[] }> = {
-  LHR: { direct: ["MAD", "BCN", "AGP"], connecting: ["SVQ"] },
-  AMS: { direct: ["MAD"], connecting: [] },
-  MXP: { direct: ["MAD"], connecting: [] },
-  // Manchester — the always-confirmed demo product (§27/§29): MAD/BCN/AGP
-  // are genuinely round-trip-direct; SVQ has a direct Friday outbound but
-  // no direct Manchester -> Sevilla return, so it's excluded entirely.
-  MAN: { direct: ["MAD", "BCN", "AGP"], connecting: ["SVQ"] },
+const ROUTES: Record<string, { outboundDirect: string[]; returnDirect: string[] }> = {
+  LHR: { outboundDirect: ["MAD", "BCN", "AGP", "SVQ"], returnDirect: ["MAD", "BCN", "AGP"] },
+  // Both Ámsterdam and Milán have real direct service from more than just
+  // Madrid — Barcelona included, so the origin selector never shows a
+  // single-airport list when a genuine alternative exists (§6/§7).
+  AMS: { outboundDirect: ["MAD", "BCN"], returnDirect: ["MAD", "BCN"] },
+  MXP: { outboundDirect: ["MAD", "BCN"], returnDirect: ["MAD", "BCN"] },
+  // Manchester — the always-confirmed demo product: MAD/BCN/AGP are
+  // genuinely round-trip-direct; SVQ has a direct Friday outbound but no
+  // direct Manchester -> Sevilla return, so it's excluded entirely.
+  MAN: { outboundDirect: ["MAD", "BCN", "AGP", "SVQ"], returnDirect: ["MAD", "BCN", "AGP"] },
 };
 
 type OriginProfile = { base: number; outbound: { hour: number; adj: number }[]; return: { hour: number; adj: number }[] };
@@ -37,8 +36,10 @@ type OriginProfile = { base: number; outbound: { hour: number; adj: number }[]; 
 // different prices — never a single fixed "morning price"; the checkout
 // engine derives its own daypart prices by filtering + taking the
 // cheapest match (see src/lib/checkout-atu-aire/flightOptions.ts). Each
-// origin has a genuinely different price profile so the selector
-// actually changes what's shown, not just the label (§12).
+// origin has a genuinely different price profile so the selector actually
+// changes what's shown, not just the label (§12). `base` is split roughly
+// in half between the outbound and return legs of that origin's fare
+// family — the two legs are still priced and selected fully independently.
 const ORIGIN_PROFILES: Record<string, OriginProfile> = {
   MAD: {
     base: 71,
@@ -81,11 +82,11 @@ const ORIGIN_PROFILES: Record<string, OriginProfile> = {
   },
 };
 
-// Per-destination overrides of the shared profile above — used on the
+// Per-destination override of the shared profile above — used on the
 // Manchester demo so MAD genuinely has NO afternoon return slot (both its
 // return times are morning), giving the checkout a real "Tarde — No
-// disponible" case for the return leg to verify against (§25/§30),
-// without touching MAD's profile for every other destination.
+// disponible" case on the return leg to verify against (§12/§13), without
+// touching MAD's profile for every other destination.
 const DESTINATION_PROFILE_OVERRIDES: Partial<Record<string, Partial<Record<string, OriginProfile>>>> = {
   MAN: {
     MAD: {
@@ -120,63 +121,67 @@ export class MockFlightProvider implements FlightProvider {
   async listEligibleDirectOriginsForTrip(params: { destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<OriginOption[]> {
     void params.outboundDate;
     void params.returnDate;
-    const direct = ROUTES[params.destinationAirport]?.direct ?? [];
-    return direct.map((iata) => SPANISH_AIRPORTS[iata]);
-  }
-
-  async getOffers(params: { originAirport: string; destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<NormalizedFlightOffer[]> {
     const route = ROUTES[params.destinationAirport];
     if (!route) return [];
+    const eligible = route.outboundDirect.filter((iata) => route.returnDirect.includes(iata));
+    return eligible.map((iata) => SPANISH_AIRPORTS[iata]);
+  }
 
-    const isDirect = route.direct.includes(params.originAirport);
-    const isConnecting = route.connecting.includes(params.originAirport);
-    if (!isDirect && !isConnecting) return [];
+  async getLegs(params: { originAirport: string; destinationAirport: string; date: Date }): Promise<NormalizedFlightLeg[]> {
+    const isOutbound = params.originAirport in SPANISH_AIRPORTS;
+    const spanishCode = isOutbound ? params.originAirport : params.destinationAirport;
+    const foreignCode = isOutbound ? params.destinationAirport : params.originAirport;
 
-    if (isConnecting) {
-      // A single, deliberately cheap non-round-trip-direct option — cheap
-      // enough that it would win on price if the stops filter didn't exist.
-      const outboundDeparture = atHour(params.outboundDate, 11);
-      const outboundArrival = new Date(outboundDeparture.getTime() + LEG_DURATION_MS * 2);
-      const returnDeparture = atHour(params.returnDate, 15);
-      const returnArrival = new Date(returnDeparture.getTime() + LEG_DURATION_MS * 2);
+    const route = ROUTES[foreignCode];
+    if (!route) return [];
+
+    const directSet = isOutbound ? route.outboundDirect : route.returnDirect;
+
+    if (directSet.includes(spanishCode)) {
+      const profile = DESTINATION_PROFILE_OVERRIDES[foreignCode]?.[spanishCode] ?? ORIGIN_PROFILES[spanishCode] ?? ORIGIN_PROFILES.MAD;
+      const slots = isOutbound ? profile.outbound : profile.return;
+      const outboundBase = Math.ceil(profile.base / 2);
+      const returnBase = profile.base - outboundBase;
+      const legBase = isOutbound ? outboundBase : returnBase;
+      return slots.map((slot) => {
+        const departure = atHour(params.date, slot.hour);
+        const arrival = new Date(departure.getTime() + LEG_DURATION_MS);
+        return {
+          id: `mock:${params.originAirport}-${params.destinationAirport}:${isOutbound ? "out" : "ret"}:${slot.hour}`,
+          provider: this.kind,
+          originAirport: params.originAirport,
+          destinationAirport: params.destinationAirport,
+          departure,
+          arrival,
+          pricePerPerson: legBase + slot.adj,
+          stops: 0,
+        };
+      });
+    }
+
+    // Not direct in this direction. If this Spanish airport is direct in
+    // the OTHER direction (e.g. SVQ, direct outbound but not return), it's
+    // still technically reachable via a connection — represented as a
+    // single, deliberately cheap connecting leg, cheap enough that it
+    // would win on price if the stops filter didn't exist.
+    const otherDirectSet = isOutbound ? route.returnDirect : route.outboundDirect;
+    if (spanishCode in SPANISH_AIRPORTS && otherDirectSet.includes(spanishCode)) {
+      const departure = atHour(params.date, isOutbound ? 11 : 15);
+      const arrival = new Date(departure.getTime() + LEG_DURATION_MS * 2);
       return [
         {
           id: `mock:${params.originAirport}-${params.destinationAirport}:connecting`,
           provider: this.kind,
           originAirport: params.originAirport,
           destinationAirport: params.destinationAirport,
-          outboundDeparture,
-          outboundArrival,
-          returnDeparture,
-          returnArrival,
-          pricePerPerson: 55,
+          departure,
+          arrival,
+          pricePerPerson: 25,
           stops: 1,
         },
       ];
     }
 
-    const profile = DESTINATION_PROFILE_OVERRIDES[params.destinationAirport]?.[params.originAirport] ?? ORIGIN_PROFILES[params.originAirport] ?? ORIGIN_PROFILES.MAD;
-    const offers: NormalizedFlightOffer[] = [];
-    for (const out of profile.outbound) {
-      for (const ret of profile.return) {
-        const outboundDeparture = atHour(params.outboundDate, out.hour);
-        const outboundArrival = new Date(outboundDeparture.getTime() + LEG_DURATION_MS);
-        const returnDeparture = atHour(params.returnDate, ret.hour);
-        const returnArrival = new Date(returnDeparture.getTime() + LEG_DURATION_MS);
-        offers.push({
-          id: `mock:${params.originAirport}-${params.destinationAirport}:${out.hour}-${ret.hour}`,
-          provider: this.kind,
-          originAirport: params.originAirport,
-          destinationAirport: params.destinationAirport,
-          outboundDeparture,
-          outboundArrival,
-          returnDeparture,
-          returnArrival,
-          pricePerPerson: profile.base + out.adj + ret.adj,
-          stops: 0,
-        });
-      }
-    }
-    return offers;
+    return [];
   }
 }

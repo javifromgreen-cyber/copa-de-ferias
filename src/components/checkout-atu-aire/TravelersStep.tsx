@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { GroupIcon } from "@/components/icons";
 
 export function TravelersStep({
@@ -10,6 +11,18 @@ export function TravelersStep({
   onChange: (value: number) => void;
 }) {
   const value = partySize ?? limits.min;
+
+  // The counter visually shows `limits.min` (1) before any click, but that
+  // was never actually committed to the selection — every step downstream
+  // gates on `Boolean(selection.partySize)`, which stayed null until the
+  // customer clicked "+" at least once, so a solo traveler's whole
+  // downstream flow (tickets, traveler data, etc.) silently never
+  // appeared. Committing the shown default as soon as this step mounts
+  // fixes that at the source, for every party size — not just 1.
+  useEffect(() => {
+    if (partySize === null) onChange(limits.min);
+  }, [partySize, limits.min, onChange]);
+
   return (
     <section aria-labelledby="travelers-heading" className="rounded-sm border border-carbon/15 bg-white p-5">
       <h2 id="travelers-heading" className="mb-3 flex items-center gap-2 text-lg font-semibold">

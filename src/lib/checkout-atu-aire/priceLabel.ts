@@ -15,7 +15,10 @@ export function derivePriceLabel(opts: {
   flightRequired: boolean; // pass false when flights are provisional-blocked — that's surfaced separately
   originRequired: boolean;
   originSelected: boolean;
-  flightSelected: boolean;
+  // Ida and vuelta are independent selections (§9/§10) — both must be made
+  // before the price can be a real "total", never just one leg.
+  outboundFlightSelected: boolean;
+  returnFlightSelected: boolean;
   revalidated: boolean;
 }): PriceLabel {
   if (!opts.hasPartySize) return "from";
@@ -24,7 +27,7 @@ export function derivePriceLabel(opts: {
     opts.ticketsSelected &&
     (!opts.hotelRequired || opts.hotelSelected) &&
     (!opts.flightRequired || (opts.originRequired ? opts.originSelected : true)) &&
-    (!opts.flightRequired || opts.flightSelected);
+    (!opts.flightRequired || (opts.outboundFlightSelected && opts.returnFlightSelected));
 
   if (allRequiredSelected && opts.revalidated) return "total";
   return "estimated";
@@ -37,12 +40,14 @@ export function missingSelectionLabels(opts: {
   flightRequired: boolean; // pass false when blocked — caller adds its own explicit reason
   originRequired: boolean;
   originSelected: boolean;
-  flightSelected: boolean;
+  outboundFlightSelected: boolean;
+  returnFlightSelected: boolean;
 }): string[] {
   const missing: string[] = [];
   if (!opts.ticketsSelected) missing.push("entradas");
   if (opts.hotelRequired && !opts.hotelSelected) missing.push("hotel");
   if (opts.originRequired && !opts.originSelected) missing.push("aeropuerto de salida");
-  if (opts.flightRequired && opts.originSelected && !opts.flightSelected) missing.push("vuelo");
+  if (opts.flightRequired && opts.originSelected && !opts.outboundFlightSelected) missing.push("vuelo de ida");
+  if (opts.flightRequired && opts.originSelected && !opts.returnFlightSelected) missing.push("vuelo de vuelta");
   return missing;
 }

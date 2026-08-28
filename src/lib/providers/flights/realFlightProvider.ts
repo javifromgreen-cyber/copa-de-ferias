@@ -1,5 +1,5 @@
 import { flightApiConfig } from "@/lib/env";
-import type { FlightProvider, NormalizedFlightOffer, OriginOption } from "../types";
+import type { FlightProvider, NormalizedFlightLeg, OriginOption } from "../types";
 
 /**
  * Stub for a real flight-search integration. Must NEVER fire a real
@@ -18,7 +18,7 @@ export class RealFlightProvider implements FlightProvider {
     throw new Error("RealFlightProvider is not implemented — no live flight-search integration exists in this app yet.");
   }
 
-  async getOffers(): Promise<NormalizedFlightOffer[]> {
+  async getLegs(): Promise<NormalizedFlightLeg[]> {
     if (!flightApiConfig.isConfigured) {
       return [];
     }

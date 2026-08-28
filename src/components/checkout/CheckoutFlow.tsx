@@ -220,10 +220,7 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
         {step === 0 ? (
           <section>
             <h2 className="font-display mb-2 text-xl uppercase">¿Cuántos viajáis?</h2>
-            <p className="mb-4 text-sm text-carbon/60">
-              Puedes reservar tu plaza y las de tus acompañantes en una sola compra. Quedan {trip.spotsLeft} plazas
-              disponibles.
-            </p>
+            <p className="mb-4 text-sm text-carbon/60">Puedes reservar tu plaza y las de tus acompañantes en una sola compra.</p>
             <div className="flex items-center gap-4">
               <button
                 type="button"

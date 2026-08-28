@@ -7,7 +7,7 @@ import { buildAtuAireQuote } from "@/lib/checkout-atu-aire/quoteBuilder";
 import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
 import type { AtuAireQuote, AtuAireQuoteData, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
-import type { NormalizedHotelOffer, NormalizedFlightOffer, OriginOption } from "@/lib/providers/types";
+import type { NormalizedHotelOffer, NormalizedFlightLeg, OriginOption } from "@/lib/providers/types";
 
 function addDays(date: Date, days: number): Date {
   const d = new Date(date);
@@ -57,9 +57,12 @@ export async function getAtuAireCheckoutQuote(
 
   // Flight data is only ever fetched when the buyer is eligible for the
   // flight-inclusive package (§2/§3) — a LATAM buyer's request never even
-  // queries the flight provider.
+  // queries the flight provider. Outbound and return legs are two
+  // independent one-way queries per eligible origin (§9/§10) — never a
+  // single combined round-trip fetch.
   let eligibleOrigins: OriginOption[] = [];
-  let flightOffers: NormalizedFlightOffer[] = [];
+  let outboundLegs: NormalizedFlightLeg[] = [];
+  let returnLegs: NormalizedFlightLeg[] = [];
   if (flightPackageEligible) {
     const destinationAirport = airportForCity(trip.city);
     const provider = getFlightProvider({ tripIsDemo: trip.isDemo });
@@ -68,10 +71,14 @@ export async function getAtuAireCheckoutQuote(
     eligibleOrigins = await provider.listEligibleDirectOriginsForTrip({ destinationAirport, outboundDate, returnDate });
 
     if (eligibleOrigins.length > 0) {
-      const perOrigin = await Promise.all(
-        eligibleOrigins.map((origin) => provider.getOffers({ originAirport: origin.iata, destinationAirport, outboundDate, returnDate })),
+      const perOriginOutbound = await Promise.all(
+        eligibleOrigins.map((origin) => provider.getLegs({ originAirport: origin.iata, destinationAirport, date: outboundDate })),
       );
-      flightOffers = perOrigin.flat();
+      outboundLegs = perOriginOutbound.flat();
+      const perOriginReturn = await Promise.all(
+        eligibleOrigins.map((origin) => provider.getLegs({ originAirport: destinationAirport, destinationAirport: origin.iata, date: returnDate })),
+      );
+      returnLegs = perOriginReturn.flat();
     }
   }
 
@@ -88,6 +95,7 @@ export async function getAtuAireCheckoutQuote(
       subtitle: trip.subtitle,
       city: trip.city,
       maxPartySize: trip.maxPartySize,
+      requiredTravelerFields: trip.requiredTravelerFields,
       minimumArrivalBufferBeforeKickoffMinutes: trip.minimumArrivalBufferBeforeKickoffMinutes,
       minimumReturnBufferAfterEventMinutes: trip.minimumReturnBufferAfterEventMinutes,
       orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
@@ -109,7 +117,8 @@ export async function getAtuAireCheckoutQuote(
     ticketOffersByEventId,
     hotelOffers,
     eligibleOrigins,
-    flightOffers,
+    outboundLegs,
+    returnLegs,
     feeConfig: {
       feeTicketOnly: feeConfig.feeTicketOnly,
       feeHotelTiers: feeConfig.feeHotelTiers,

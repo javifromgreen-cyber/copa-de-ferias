@@ -43,15 +43,18 @@ export interface HotelProvider {
 
 export type Daypart = "morning" | "midday" | "afternoon" | "night";
 
-export type NormalizedFlightOffer = {
+// A single one-way leg — outbound (Spanish airport -> destination) and
+// return (destination -> Spanish airport) are independent NormalizedFlightLeg
+// instances, each with its own price, never a bundled round-trip fare. This
+// is what lets the checkout offer ida and vuelta as two genuinely separate
+// decisions, each showing only that leg's own price (§9/§10).
+export type NormalizedFlightLeg = {
   id: string;
   provider: string;
   originAirport: string;
   destinationAirport: string;
-  outboundDeparture: Date;
-  outboundArrival: Date;
-  returnDeparture: Date;
-  returnArrival: Date;
+  departure: Date;
+  arrival: Date;
   pricePerPerson: number;
   /** 0 = direct. A_TU_AIRE only ever sells direct flights (§8) — callers must filter on this, never assume it's already 0. */
   stops: number;
@@ -73,12 +76,15 @@ export interface FlightProvider {
    */
   listEligibleDirectOriginsForTrip(params: { destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<OriginOption[]>;
   /**
-   * Returns every real candidate round-trip for the given route and
-   * calendar days, direct and connecting alike — daypart/preference
-   * filtering AND the direct-only filter happen downstream (see
+   * Every real candidate leg for this one direction and calendar day,
+   * direct and connecting alike — daypart/preference filtering AND the
+   * direct-only filter happen downstream (see
    * src/lib/checkout-atu-aire/flightOptions.ts), never inside the
-   * provider. Returns [] (never throws) when unavailable — e.g. no
-   * credentials configured, or no route exists between this origin/destination.
+   * provider. Call once with a Spanish originAirport for the outbound leg,
+   * and once with a Spanish destinationAirport for the return leg — the
+   * two directions are independent queries, never a combined round trip.
+   * Returns [] (never throws) when unavailable — e.g. no credentials
+   * configured, or no route exists between this origin/destination.
    */
-  getOffers(params: { originAirport: string; destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<NormalizedFlightOffer[]>;
+  getLegs(params: { originAirport: string; destinationAirport: string; date: Date }): Promise<NormalizedFlightLeg[]>;
 }

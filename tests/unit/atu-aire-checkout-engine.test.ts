@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
 import { buildTicketCategoryOptionsForEvent } from "@/lib/checkout-atu-aire/ticketOptions";
 import { buildHotelOptions } from "@/lib/checkout-atu-aire/hotelOptions";
-import { buildOutboundPreferenceOptions, buildReturnPreferenceOptions, filterFlightOffersForSelection } from "@/lib/checkout-atu-aire/flightOptions";
+import { buildOutboundPreferenceOptions, buildReturnPreferenceOptions, filterOutboundLegsForSelection } from "@/lib/checkout-atu-aire/flightOptions";
 import { derivePriceLabel } from "@/lib/checkout-atu-aire/priceLabel";
 import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { reconcileSelection } from "@/lib/checkout-atu-aire/reconcile";
 import { buildAtuAireQuote } from "@/lib/checkout-atu-aire/quoteBuilder";
 import { computeStayWindowBounds } from "@/lib/pricing/flightWindow";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
-import type { NormalizedFlightOffer, NormalizedHotelOffer } from "@/lib/providers/types";
+import type { NormalizedFlightLeg, NormalizedHotelOffer } from "@/lib/providers/types";
 import type { AtuAireQuoteData, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
 import { DEFAULT_SELECTION } from "@/lib/checkout-atu-aire/types";
 
@@ -70,12 +70,12 @@ function hotel(overrides: Partial<NormalizedHotelOffer>): NormalizedHotelOffer {
   };
 }
 
-describe("buildHotelOptions", () => {
+describe("buildHotelOptions — no price on the option itself, never a per-card resultant figure (§5/§6)", () => {
   it("marks an invalid offer but still returns it, sorted after valid ones", () => {
     const mix = computeRequiredRoomMix(3); // needs 1 triple
     const cheapInvalid = hotel({ id: "a", roomsAvailable: { single: 5, double: 5, triple: 0 }, pricePerNight: { single: 50, double: 30, triple: 20 } });
     const pricierValid = hotel({ id: "b", roomsAvailable: { single: 5, double: 5, triple: 2 }, pricePerNight: { single: 90, double: 60, triple: 50 } });
-    const options = buildHotelOptions([cheapInvalid, pricierValid], mix, 1, 3, 0);
+    const options = buildHotelOptions([cheapInvalid, pricierValid], mix, 1, 3);
     expect(options[0].offer.id).toBe("b");
     expect(options[0].valid).toBe(true);
     expect(options[1].offer.id).toBe("a");
@@ -83,25 +83,23 @@ describe("buildHotelOptions", () => {
     expect(options[1].invalidReason).toBeTruthy();
   });
 
-  it("resultantTotalPerPerson adds the hotel's own per-person cost to the other fixed components — never shown as a bare '+X' delta (§11/§12)", () => {
+  it("totalPrice/perPersonPrice are computed (used internally for sorting and the summary total) even though the card never renders them", () => {
     const mix = computeRequiredRoomMix(2);
     const offer = hotel({ id: "h", roomsAvailable: { single: 5, double: 5, triple: 5 }, pricePerNight: { single: 80, double: 50, triple: 40 } });
-    const options = buildHotelOptions([offer], mix, 1, 2, 109); // 109 = ticket + fee, e.g.
+    const options = buildHotelOptions([offer], mix, 1, 2);
     expect(options[0].perPersonPrice).toBe(25); // one double room (50) split across 2 travelers
-    expect(options[0].resultantTotalPerPerson).toBe(109 + 25);
+    expect(options[0]).not.toHaveProperty("resultantTotalPerPerson");
   });
 });
 
-function flightOffer(overrides: Partial<NormalizedFlightOffer>): NormalizedFlightOffer {
+function flightLeg(overrides: Partial<NormalizedFlightLeg>): NormalizedFlightLeg {
   return {
     id: "f1",
     provider: "mock",
     originAirport: "MAD",
     destinationAirport: "LHR",
-    outboundDeparture: new Date(2026, 5, 10, 9),
-    outboundArrival: new Date(2026, 5, 10, 12),
-    returnDeparture: new Date(2026, 5, 12, 21),
-    returnArrival: new Date(2026, 5, 13, 0),
+    departure: new Date(2026, 5, 10, 9),
+    arrival: new Date(2026, 5, 10, 12),
     pricePerPerson: 100,
     stops: 0,
     ...overrides,
@@ -115,43 +113,43 @@ const bounds = computeStayWindowBounds({
   minimumReturnBufferAfterEventMinutes: 120,
 });
 
-describe("direct-only filtering — a connecting flight can never win (§8/§21/§24)", () => {
-  it("excludes a stops>0 offer from filterFlightOffersForSelection even if it would be cheapest", () => {
-    const direct = flightOffer({ id: "direct", pricePerPerson: 120, stops: 0 });
-    const connecting = flightOffer({ id: "cheap-connecting", pricePerPerson: 30, stops: 1 });
-    const result = filterFlightOffersForSelection([direct, connecting], bounds, "ANY", "ANY");
-    expect(result.map((o) => o.id)).toEqual(["direct"]);
+describe("direct-only filtering — a connecting flight can never win (§8)", () => {
+  it("excludes a stops>0 leg from filterOutboundLegsForSelection even if it would be cheapest", () => {
+    const direct = flightLeg({ id: "direct", pricePerPerson: 120, stops: 0 });
+    const connecting = flightLeg({ id: "cheap-connecting", pricePerPerson: 30, stops: 1 });
+    const result = filterOutboundLegsForSelection([direct, connecting], bounds, "ANY");
+    expect(result.map((l) => l.id)).toEqual(["direct"]);
   });
 
-  it("excludes stops>0 offers from ANY/MORNING/AFTERNOON preference pricing, and marks them unavailable", () => {
-    const connecting = flightOffer({ id: "cheap-connecting", pricePerPerson: 10, stops: 1, outboundDeparture: new Date(2026, 5, 10, 8) });
-    const options = buildOutboundPreferenceOptions([connecting], bounds, "ANY");
+  it("excludes stops>0 legs from ANY/MORNING/AFTERNOON preference pricing, and marks them unavailable", () => {
+    const connecting = flightLeg({ id: "cheap-connecting", pricePerPerson: 10, stops: 1, departure: new Date(2026, 5, 10, 8) });
+    const options = buildOutboundPreferenceOptions([connecting], bounds);
     expect(options.every((o) => o.priceFromPerPerson === null)).toBe(true);
     expect(options.every((o) => o.available === false)).toBe(true);
   });
 });
 
 describe("daypart preference filtering", () => {
-  const morningOut = flightOffer({ id: "morning", outboundDeparture: new Date(2026, 5, 10, 8), pricePerPerson: 112 });
-  const afternoonOut = flightOffer({ id: "afternoon", outboundDeparture: new Date(2026, 5, 10, 17), pricePerPerson: 94 });
-  const offers = [morningOut, afternoonOut];
+  const morningOut = flightLeg({ id: "morning", departure: new Date(2026, 5, 10, 8), pricePerPerson: 112 });
+  const afternoonOut = flightLeg({ id: "afternoon", departure: new Date(2026, 5, 10, 17), pricePerPerson: 94 });
+  const legs = [morningOut, afternoonOut];
 
-  it("ANY accepts both morning and afternoon offers", () => {
-    const result = filterFlightOffersForSelection(offers, bounds, "ANY", "ANY");
-    expect(result.map((o) => o.id).sort()).toEqual(["afternoon", "morning"]);
+  it("ANY accepts both morning and afternoon legs", () => {
+    const result = filterOutboundLegsForSelection(legs, bounds, "ANY");
+    expect(result.map((l) => l.id).sort()).toEqual(["afternoon", "morning"]);
   });
-  it("MORNING excludes the afternoon offer", () => {
-    expect(filterFlightOffersForSelection(offers, bounds, "MORNING", "ANY").map((o) => o.id)).toEqual(["morning"]);
+  it("MORNING excludes the afternoon leg", () => {
+    expect(filterOutboundLegsForSelection(legs, bounds, "MORNING").map((l) => l.id)).toEqual(["morning"]);
   });
-  it("AFTERNOON excludes the morning offer", () => {
-    expect(filterFlightOffersForSelection(offers, bounds, "AFTERNOON", "ANY").map((o) => o.id)).toEqual(["afternoon"]);
+  it("AFTERNOON excludes the morning leg", () => {
+    expect(filterOutboundLegsForSelection(legs, bounds, "AFTERNOON").map((l) => l.id)).toEqual(["afternoon"]);
   });
 });
 
-describe("daypart availability — 'No disponible' when nothing matches (§25/§26)", () => {
-  it("a preference with zero matching offers is marked unavailable, not just priced null", () => {
-    const onlyMorning = flightOffer({ id: "morning", outboundDeparture: new Date(2026, 5, 10, 8), pricePerPerson: 100 });
-    const options = buildOutboundPreferenceOptions([onlyMorning], bounds, "ANY");
+describe("daypart availability — 'No disponible' when nothing matches (§12)", () => {
+  it("a preference with zero matching legs is marked unavailable, not just priced null", () => {
+    const onlyMorning = flightLeg({ id: "morning", departure: new Date(2026, 5, 10, 8), pricePerPerson: 100 });
+    const options = buildOutboundPreferenceOptions([onlyMorning], bounds);
     const afternoon = options.find((o) => o.value === "AFTERNOON")!;
     expect(afternoon.available).toBe(false);
     expect(afternoon.priceFromPerPerson).toBeNull();
@@ -160,16 +158,21 @@ describe("daypart availability — 'No disponible' when nothing matches (§25/§
   });
 });
 
-describe("independent outbound/return preferences", () => {
-  const cheapMorningOutAnyReturn = flightOffer({ id: "a", outboundDeparture: new Date(2026, 5, 10, 8), returnDeparture: new Date(2026, 5, 12, 8), pricePerPerson: 90 });
-  const afternoonOutMorningReturn = flightOffer({ id: "b", outboundDeparture: new Date(2026, 5, 10, 17), returnDeparture: new Date(2026, 5, 12, 9), pricePerPerson: 130 });
-  const offers = [cheapMorningOutAnyReturn, afternoonOutMorningReturn];
+describe("independent outbound/return preferences (§10/§11)", () => {
+  it("outbound preference options are computed purely from outbound legs — a same-shaped return leg list never leaks in", () => {
+    const outboundLegs = [flightLeg({ id: "out-morning", departure: new Date(2026, 5, 10, 8), pricePerPerson: 90 })];
+    const returnLegsThatShouldNeverMatter = [flightLeg({ id: "ret-morning", originAirport: "LHR", destinationAirport: "MAD", departure: new Date(2026, 5, 12, 9), pricePerPerson: 999 })];
+    void returnLegsThatShouldNeverMatter;
+    const outboundOptions = buildOutboundPreferenceOptions(outboundLegs, bounds);
+    expect(outboundOptions.find((o) => o.value === "MORNING")?.priceFromPerPerson).toBe(90);
+  });
 
-  it("outbound preference options are priced holding the current return preference", () => {
-    const optionsReturnAny = buildOutboundPreferenceOptions(offers, bounds, "ANY");
-    expect(optionsReturnAny.find((o) => o.value === "MORNING")?.priceFromPerPerson).toBe(90);
-    const optionsReturnMorning = buildReturnPreferenceOptions(offers, bounds, "MORNING");
-    expect(optionsReturnMorning.find((o) => o.value === "ANY")?.priceFromPerPerson).toBe(90);
+  it("return preference options are computed purely from return legs — an outbound-shaped leg list never leaks in", () => {
+    const returnLegs = [flightLeg({ id: "ret-morning", originAirport: "LHR", destinationAirport: "MAD", departure: new Date(2026, 5, 12, 9), pricePerPerson: 85 })];
+    const outboundLegsThatShouldNeverMatter = [flightLeg({ id: "out-morning", departure: new Date(2026, 5, 10, 8), pricePerPerson: 999 })];
+    void outboundLegsThatShouldNeverMatter;
+    const returnOptions = buildReturnPreferenceOptions(returnLegs, bounds);
+    expect(returnOptions.find((o) => o.value === "MORNING")?.priceFromPerPerson).toBe(85);
   });
 });
 
@@ -182,7 +185,8 @@ describe("derivePriceLabel", () => {
     flightRequired: false,
     originRequired: false,
     originSelected: false,
-    flightSelected: false,
+    outboundFlightSelected: false,
+    returnFlightSelected: false,
     revalidated: false,
   };
   it("is 'from' until a party size exists", () => {
@@ -194,28 +198,55 @@ describe("derivePriceLabel", () => {
   it("is 'estimated' when flight-required but no origin chosen yet, even if revalidated flag is set", () => {
     expect(derivePriceLabel({ ...base, flightRequired: true, originRequired: true, originSelected: false, revalidated: true })).toBe("estimated");
   });
+  it("is 'estimated' when only one of ida/vuelta has been selected", () => {
+    expect(
+      derivePriceLabel({ ...base, flightRequired: true, originRequired: true, originSelected: true, outboundFlightSelected: true, returnFlightSelected: false, revalidated: true }),
+    ).toBe("estimated");
+  });
   it("is 'total' only once everything required is selected AND revalidated", () => {
     expect(derivePriceLabel({ ...base, hotelRequired: true, hotelSelected: true, revalidated: true })).toBe("total");
     expect(derivePriceLabel({ ...base, hotelRequired: true, hotelSelected: true, revalidated: false })).toBe("estimated");
   });
 });
 
-describe("reconcileSelection (§15/§21/§24)", () => {
-  it("clears the origin and flight offer when the origin is no longer eligible, keeping everything else", () => {
-    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL_FLIGHT", partySize: 2, originAirport: "AGP", flightOfferId: "old-offer" };
-    const quote = { eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }], hotelOptions: [], flightOffers: [] } as never;
+describe("reconcileSelection (§9/§10/§11)", () => {
+  it("clears the origin and both flight legs when the origin is no longer eligible, keeping everything else", () => {
+    const selection: AtuAireSelection = {
+      ...DEFAULT_SELECTION,
+      buyerCountry: "ES",
+      packageType: "TICKET_HOTEL_FLIGHT",
+      partySize: 2,
+      originAirport: "AGP",
+      outboundLegId: "old-out",
+      returnLegId: "old-ret",
+    };
+    const quote = { eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }], hotelOptions: [], outboundLegs: [], returnLegs: [] } as never;
     const result = reconcileSelection(selection, quote);
     expect(result.originAirport).toBeNull();
-    expect(result.flightOfferId).toBeNull();
+    expect(result.outboundLegId).toBeNull();
+    expect(result.returnLegId).toBeNull();
     expect(result.partySize).toBe(2); // untouched
     expect(result.packageType).toBe("TICKET_HOTEL_FLIGHT"); // untouched
   });
 
-  it("keeps the origin and offer when both are still valid", () => {
-    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, originAirport: "MAD", flightOfferId: "f1" };
-    const quote = { eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }], hotelOptions: [], flightOffers: [{ id: "f1" }] } as never;
+  it("keeps the origin and both legs when everything is still valid", () => {
+    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, originAirport: "MAD", outboundLegId: "out1", returnLegId: "ret1" };
+    const quote = {
+      eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }],
+      hotelOptions: [],
+      outboundLegs: [{ id: "out1" }],
+      returnLegs: [{ id: "ret1" }],
+    } as never;
     const result = reconcileSelection(selection, quote);
     expect(result).toBe(selection); // same reference — nothing changed
+  });
+
+  it("dropping just the outbound leg (e.g. a preference change) never clears the still-valid return leg", () => {
+    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, originAirport: "MAD", outboundLegId: "stale-out", returnLegId: "ret1" };
+    const quote = { eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }], hotelOptions: [], outboundLegs: [], returnLegs: [{ id: "ret1" }] } as never;
+    const result = reconcileSelection(selection, quote);
+    expect(result.outboundLegId).toBeNull();
+    expect(result.returnLegId).toBe("ret1");
   });
 });
 
@@ -232,6 +263,7 @@ function baseData(overrides: Partial<AtuAireQuoteData> = {}): AtuAireQuoteData {
       subtitle: "",
       city: "City",
       maxPartySize: 10,
+      requiredTravelerFields: "",
       minimumArrivalBufferBeforeKickoffMinutes: 180,
       minimumReturnBufferAfterEventMinutes: 120,
       orgFeeTicketOnlyOverride: null,
@@ -254,9 +286,16 @@ function baseData(overrides: Partial<AtuAireQuoteData> = {}): AtuAireQuoteData {
       { iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" },
       { iata: "BCN", city: "Barcelona", airportName: "Barcelona-El Prat" },
     ],
-    flightOffers: [
-      flightOffer({ id: "mad-1", originAirport: "MAD", pricePerPerson: 100 }),
-      flightOffer({ id: "bcn-1", originAirport: "BCN", pricePerPerson: 130 }),
+    // Each origin's round-trip is split evenly across an outbound and a
+    // return leg (100/100 for MAD, 30/30 for BCN) — priced and selected
+    // fully independently (§9/§10), never a single bundled fare.
+    outboundLegs: [
+      flightLeg({ id: "mad-out", originAirport: "MAD", destinationAirport: "LHR", pricePerPerson: 100 }),
+      flightLeg({ id: "bcn-out", originAirport: "BCN", destinationAirport: "LHR", pricePerPerson: 30 }),
+    ],
+    returnLegs: [
+      flightLeg({ id: "mad-ret", originAirport: "LHR", destinationAirport: "MAD", departure: new Date(2026, 5, 12, 21), arrival: new Date(2026, 5, 13, 0), pricePerPerson: 100 }),
+      flightLeg({ id: "bcn-ret", originAirport: "LHR", destinationAirport: "BCN", departure: new Date(2026, 5, 12, 21), arrival: new Date(2026, 5, 13, 0), pricePerPerson: 30 }),
     ],
     feeConfig: {
       feeTicketOnly: 49,
@@ -290,7 +329,7 @@ describe("buildAtuAireQuote — every A_TU_AIRE product always supports all thre
   });
 
   it("TICKET_HOTEL_FLIGHT is still listed for Spain even when no direct Spanish route exists at all — never removed, just unpriced (§3/§10)", () => {
-    const data = baseData({ eligibleOrigins: [], flightOffers: [] });
+    const data = baseData({ eligibleOrigins: [], outboundLegs: [], returnLegs: [] });
     const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
     const flightOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_HOTEL_FLIGHT");
     expect(flightOption).toBeDefined();
@@ -306,7 +345,7 @@ describe("buildAtuAireQuote — every A_TU_AIRE product always supports all thre
 
 describe("buildAtuAireQuote — flight unavailable state never fakes availability (§3/§10/§14)", () => {
   it("blocks flight selection with an explicit 'no direct route' reason, without hiding the modality", () => {
-    const data = baseData({ eligibleOrigins: [], flightOffers: [] });
+    const data = baseData({ eligibleOrigins: [], outboundLegs: [], returnLegs: [] });
     const quote = buildAtuAireQuote(data, {
       ...DEFAULT_SELECTION,
       buyerCountry: "ES",
@@ -324,60 +363,43 @@ describe("buildAtuAireQuote — flight unavailable state never fakes availabilit
   });
 });
 
-describe("buildAtuAireQuote — 'desde' price never assumes MAD (§13/§24)", () => {
-  it("uses the cheapest DIRECT offer across all eligible origins, not a fixed airport", () => {
-    const data = baseData({
-      eligibleOrigins: [
-        { iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" },
-        { iata: "BCN", city: "Barcelona", airportName: "Barcelona-El Prat" },
-      ],
-      flightOffers: [
-        flightOffer({ id: "mad-1", originAirport: "MAD", pricePerPerson: 200, stops: 0 }),
-        flightOffer({ id: "bcn-1", originAirport: "BCN", pricePerPerson: 60, stops: 0 }), // BCN is cheaper here
-      ],
-    });
+describe("buildAtuAireQuote — 'desde' price never assumes MAD (§13)", () => {
+  it("uses the cheapest DIRECT outbound + cheapest DIRECT return across all eligible origins, not a fixed airport", () => {
+    const data = baseData(); // BCN's legs (30+30) are cheaper than MAD's (100+100)
     const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
     const flightOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_HOTEL_FLIGHT")!;
-    // Ticket(60) + cheapest single-room hotel(70) + BCN's 60 + hotel-flight fee(149) = 339.
-    // Had MAD's 200 been used instead, "desde" would be 479 — well above this.
+    // Ticket(60) + cheapest single-room hotel(70) + BCN round trip(30+30=60) + hotel-flight fee(149) = 339.
+    // Had MAD's 200 combined been used instead, "desde" would be 479 — well above this.
     expect(flightOption.fromPricePerPerson).toBe(339);
     expect(flightOption.fromPricePerPerson).toBeLessThan(479);
   });
 
-  it("ignores a connecting offer even if it is the cheapest raw offer available", () => {
+  it("ignores a connecting leg even if it is the cheapest raw leg available", () => {
     const data = baseData({
       eligibleOrigins: [{ iata: "MAD", city: "Madrid", airportName: "Madrid-Barajas" }],
-      flightOffers: [flightOffer({ id: "mad-direct", originAirport: "MAD", pricePerPerson: 150, stops: 0 }), flightOffer({ id: "svq-connecting", originAirport: "SVQ", pricePerPerson: 20, stops: 1 })],
+      outboundLegs: [flightLeg({ id: "mad-direct-out", originAirport: "MAD", pricePerPerson: 75, stops: 0 }), flightLeg({ id: "svq-connecting-out", originAirport: "SVQ", pricePerPerson: 10, stops: 1 })],
+      returnLegs: [flightLeg({ id: "mad-direct-ret", originAirport: "LHR", destinationAirport: "MAD", pricePerPerson: 75, stops: 0 })],
     });
     const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
     const flightOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_HOTEL_FLIGHT")!;
     const ticketOnlyOption = quote.packageTypeOptions.find((o) => o.packageType === "TICKET_ONLY")!;
-    // The 20€ connecting offer must never be used — the flight component must reflect 150, not 20.
+    // The 10€ connecting leg must never be used — the flight component must reflect 150 (75+75), not 10.
     expect(flightOption.fromPricePerPerson! - ticketOnlyOption.fromPricePerPerson!).toBeGreaterThan(100);
   });
 });
 
-describe("buildAtuAireQuote — resultant pricing on hotel/flight cards, not raw deltas (§11/§12/§14)", () => {
-  it("each hotel option's resultantTotalPerPerson is the whole trip's per-person total with that hotel chosen", () => {
-    const data = baseData();
-    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1 };
-    const quote = buildAtuAireQuote(data, sel);
-    const hB = quote.hotelOptions.find((h) => h.offer.id === "hB")!;
-    // Selecting hB should make price.totalCommercial/partySize match its resultantTotalPerPerson.
-    const withHb = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hB" });
-    expect(withHb.price.perPerson).toBeCloseTo(hB.resultantTotalPerPerson, 5);
-  });
-
-  it("changing hotel updates both per-person and total immediately, no mental addition required (§12)", () => {
+describe("buildAtuAireQuote — total price reflects the selected hotel/flight, never a per-card resultant figure (§5/§6/§9)", () => {
+  it("selecting a hotel recalculates the summary total correctly, even though the hotel card itself carries no price", () => {
     const data = baseData();
     const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1 };
     const withHa = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hA" });
     const withHb = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hB" });
     expect(withHa.price.totalCommercial).not.toBe(withHb.price.totalCommercial);
     expect(withHa.price.perPerson).not.toBe(withHb.price.perPerson);
+    expect(withHb.hotelOptions.find((h) => h.offer.id === "hB")).not.toHaveProperty("resultantTotalPerPerson");
   });
 
-  it("each flight offer's resultantTotalPerPerson includes ticket + hotel + fee + that flight's own price (§14)", () => {
+  it("selecting the outbound+return legs explicitly matches the auto-selected (cheapest) total for that origin", () => {
     const data = baseData();
     const sel: AtuAireSelection = {
       ...DEFAULT_SELECTION,
@@ -389,12 +411,14 @@ describe("buildAtuAireQuote — resultant pricing on hotel/flight cards, not raw
       hotelOfferId: "hB",
       originAirport: "MAD",
     };
-    const quote = buildAtuAireQuote(data, sel);
-    const offer = quote.flightOffers[0];
-    expect(offer.resultantTotalPerPerson).toBeGreaterThan(offer.pricePerPerson);
-    // Selecting that exact offer must make the price block match its resultant total.
-    const withOffer = buildAtuAireQuote(data, { ...sel, flightOfferId: offer.id });
-    expect(withOffer.price.perPerson).toBeCloseTo(offer.resultantTotalPerPerson, 5);
+    const autoQuote = buildAtuAireQuote(data, sel); // no legs picked yet — price falls back to the cheapest filtered leg per direction
+    const outboundLeg = autoQuote.outboundLegs[0];
+    const returnLeg = autoQuote.returnLegs[0];
+    const withLegs = buildAtuAireQuote(data, { ...sel, outboundLegId: outboundLeg.id, returnLegId: returnLeg.id });
+    expect(withLegs.price.perPerson).toBeCloseTo(autoQuote.price.perPerson!, 5);
+    // Each leg card shows only its own (much smaller) price — never the trip's resulting total.
+    expect(outboundLeg.pricePerPerson).toBeLessThan(withLegs.price.perPerson!);
+    expect(returnLeg.pricePerPerson).toBeLessThan(withLegs.price.perPerson!);
   });
 });
 
@@ -415,12 +439,14 @@ describe("buildAtuAireQuote — origin selection (§6/§7/§9/§22/§24)", () =>
     expect(quote.eligibleOrigins.map((o) => o.iata).sort()).toEqual(["BCN", "MAD"]);
   });
 
-  it("changing the origin recalculates the flight offers shown", () => {
+  it("changing the origin recalculates the outbound and return legs shown", () => {
     const data = baseData();
     const withMad = buildAtuAireQuote(data, { ...flightSelection, originAirport: "MAD" });
     const withBcn = buildAtuAireQuote(data, { ...flightSelection, originAirport: "BCN" });
-    expect(withMad.flightOffers.every((f) => f.originAirport === "MAD")).toBe(true);
-    expect(withBcn.flightOffers.every((f) => f.originAirport === "BCN")).toBe(true);
+    expect(withMad.outboundLegs.every((l) => l.originAirport === "MAD")).toBe(true);
+    expect(withBcn.outboundLegs.every((l) => l.originAirport === "BCN")).toBe(true);
+    expect(withMad.returnLegs.every((l) => l.destinationAirport === "MAD")).toBe(true);
+    expect(withBcn.returnLegs.every((l) => l.destinationAirport === "BCN")).toBe(true);
   });
 
   it("changing the origin recalculates the price", () => {
@@ -430,39 +456,42 @@ describe("buildAtuAireQuote — origin selection (§6/§7/§9/§22/§24)", () =>
     expect(withMad.price.totalCommercial).not.toBe(withBcn.price.totalCommercial);
   });
 
-  it("switching origin clears only the flight offer — travelers/tickets/hotel/nights stay put (§15, via reconcileSelection)", () => {
+  it("switching origin clears only the flight legs — travelers/tickets/hotel/nights stay put (§15, via reconcileSelection)", () => {
     const data = baseData();
-    // A fresh quote fetched for the NEW origin (BCN) naturally has no offer
+    // A fresh quote fetched for the NEW origin (BCN) naturally has no leg
     // with the old MAD-specific id — reconcileSelection compares the stale
     // selection against exactly this kind of fresh quote.
     const freshQuoteForBcn = buildAtuAireQuote(data, { ...flightSelection, originAirport: "BCN" });
-    const staleSelection: AtuAireSelection = { ...flightSelection, originAirport: "BCN", flightOfferId: "mad-1" };
+    const staleSelection: AtuAireSelection = { ...flightSelection, originAirport: "BCN", outboundLegId: "mad-out", returnLegId: "mad-ret" };
     const reconciled = reconcileSelection(staleSelection, freshQuoteForBcn);
-    expect(reconciled.flightOfferId).toBeNull();
+    expect(reconciled.outboundLegId).toBeNull();
+    expect(reconciled.returnLegId).toBeNull();
     expect(reconciled.originAirport).toBe("BCN");
     expect(reconciled.hotelOfferId).toBe("hB");
     expect(reconciled.nights).toBe(1);
     expect(reconciled.partySize).toBe(1);
   });
 
-  it("no origin chosen yet -> no preference options or flight offers are computed", () => {
+  it("no origin chosen yet -> no preference options or flight legs are computed", () => {
     const data = baseData();
     const quote = buildAtuAireQuote(data, flightSelection);
     expect(quote.outboundPreferenceOptions).toEqual([]);
-    expect(quote.flightOffers).toEqual([]);
+    expect(quote.returnPreferenceOptions).toEqual([]);
+    expect(quote.outboundLegs).toEqual([]);
+    expect(quote.returnLegs).toEqual([]);
     expect(quote.price.missing).toContain("aeropuerto de salida");
   });
 
-  it("daypart preference options, once an origin is chosen, only use that origin's direct offers", () => {
+  it("daypart preference options, once an origin is chosen, only use that origin's direct legs", () => {
     const data = baseData({
-      flightOffers: [
-        flightOffer({ id: "mad-morning", originAirport: "MAD", outboundDeparture: new Date(2026, 5, 10, 8), pricePerPerson: 71 }),
-        flightOffer({ id: "bcn-morning", originAirport: "BCN", outboundDeparture: new Date(2026, 5, 10, 8), pricePerPerson: 999 }),
+      outboundLegs: [
+        flightLeg({ id: "mad-morning", originAirport: "MAD", departure: new Date(2026, 5, 10, 8), pricePerPerson: 71 }),
+        flightLeg({ id: "bcn-morning", originAirport: "BCN", departure: new Date(2026, 5, 10, 8), pricePerPerson: 999 }),
       ],
     });
     const quote = buildAtuAireQuote(data, { ...flightSelection, originAirport: "MAD" });
     const morningOption = quote.outboundPreferenceOptions.find((o) => o.value === "MORNING");
-    expect(morningOption?.priceFromPerPerson).toBe(71); // never picks up BCN's offer
+    expect(morningOption?.priceFromPerPerson).toBe(71); // never picks up BCN's leg
   });
 });
 
@@ -489,34 +518,25 @@ describe("buildAtuAireQuote — date_provisional blocks flights; time_provisiona
     if (quote.flightAvailability.blocked) {
       expect(quote.flightAvailability.reason.toLowerCase()).toContain("fecha");
     }
-    expect(quote.flightOffers).toEqual([]);
+    expect(quote.outboundLegs).toEqual([]);
+    expect(quote.returnLegs).toEqual([]);
   });
 
-  it("time_provisional: never blocks by itself — only genuinely safe offers survive the conservative window", () => {
+  it("time_provisional: never blocks by itself — only genuinely safe legs survive the conservative window, per direction", () => {
     // Conservative window for an all-day-unknown-hour match: earliest kickoff
     // 12:00, latest 21:00 -> latestArrival = 12:00-180min = 09:00,
     // earliestReturn = 21:00+120min = 23:00 (same day).
-    const day = new Date(2026, 5, 13);
-    const safeOffer = flightOffer({
-      id: "safe",
-      originAirport: "MAD",
-      outboundArrival: new Date(2026, 5, 13, 8, 30), // before 09:00 cutoff
-      returnDeparture: new Date(2026, 5, 13, 23, 30), // after 23:00 cutoff
-      pricePerPerson: 90,
-    });
-    const unsafeOffer = flightOffer({
-      id: "unsafe-arrival",
-      originAirport: "MAD",
-      outboundArrival: new Date(2026, 5, 13, 11, 0), // after 09:00 cutoff — unsafe if kickoff turns out early
-      returnDeparture: new Date(2026, 5, 13, 23, 30),
-      pricePerPerson: 50,
-    });
-    const data = baseData({ events: [eventWith("time_provisional")], flightOffers: [safeOffer, unsafeOffer] });
-    void day;
+    const safeOutbound = flightLeg({ id: "safe-out", originAirport: "MAD", arrival: new Date(2026, 5, 13, 8, 30), pricePerPerson: 90 }); // before 09:00 cutoff
+    const unsafeOutbound = flightLeg({ id: "unsafe-out", originAirport: "MAD", arrival: new Date(2026, 5, 13, 11, 0), pricePerPerson: 50 }); // after 09:00 cutoff
+    const safeReturn = flightLeg({ id: "safe-ret", originAirport: "LHR", destinationAirport: "MAD", departure: new Date(2026, 5, 13, 23, 30), pricePerPerson: 90 }); // after 23:00 cutoff
+    const unsafeReturn = flightLeg({ id: "unsafe-ret", originAirport: "LHR", destinationAirport: "MAD", departure: new Date(2026, 5, 13, 21, 0), pricePerPerson: 40 }); // before 23:00 cutoff
+    const data = baseData({ events: [eventWith("time_provisional")], outboundLegs: [safeOutbound, unsafeOutbound], returnLegs: [safeReturn, unsafeReturn] });
     const quote = buildAtuAireQuote(data, flightSelection());
     expect(quote.flightAvailability.blocked).toBe(false);
-    expect(quote.flightOffers.map((f) => f.id)).toEqual(["safe"]);
-    expect(quote.flightOffers.map((f) => f.id)).not.toContain("unsafe-arrival");
+    expect(quote.outboundLegs.map((l) => l.id)).toEqual(["safe-out"]);
+    expect(quote.outboundLegs.map((l) => l.id)).not.toContain("unsafe-out");
+    expect(quote.returnLegs.map((l) => l.id)).toEqual(["safe-ret"]);
+    expect(quote.returnLegs.map((l) => l.id)).not.toContain("unsafe-ret");
   });
 });
 

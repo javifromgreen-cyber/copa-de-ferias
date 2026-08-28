@@ -13,7 +13,8 @@ const PREFERENCE_LABELS: Record<string, string> = { ANY: "Cualquier horario", MO
  */
 export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; selection: AtuAireSelection }) {
   const selectedHotel = quote.hotelOptions.find((h) => h.offer.id === selection.hotelOfferId);
-  const selectedFlight = quote.flightOffers.find((f) => f.id === selection.flightOfferId);
+  const selectedOutboundLeg = quote.outboundLegs.find((l) => l.id === selection.outboundLegId);
+  const selectedReturnLeg = quote.returnLegs.find((l) => l.id === selection.returnLegId);
   const selectedOrigin = quote.eligibleOrigins.find((o) => o.iata === selection.originAirport);
   const flightRequired = selection.packageType ? packageRequiresFlight(selection.packageType) : false;
 
@@ -62,25 +63,43 @@ export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; sele
         ) : null}
         {flightRequired && selectedOrigin ? (
           <div>
-            <dt className="text-xs text-carbon/50 uppercase">Ida</dt>
+            <dt className="text-xs text-carbon/50 uppercase">Preferencia ida</dt>
             <dd>{PREFERENCE_LABELS[selection.outboundPreference]}</dd>
+          </div>
+        ) : null}
+        {flightRequired ? (
+          <div>
+            <dt className="text-xs text-carbon/50 uppercase">Vuelo de ida</dt>
+            <dd>
+              {selectedOutboundLeg ? (
+                <>
+                  {selectedOutboundLeg.originAirport} → {selectedOutboundLeg.destinationAirport}
+                  <br />
+                  {formatDate(selectedOutboundLeg.departure, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </>
+              ) : quote.flightAvailability.blocked ? (
+                "Pendiente de horario"
+              ) : (
+                "Sin elegir"
+              )}
+            </dd>
           </div>
         ) : null}
         {flightRequired && selectedOrigin ? (
           <div>
-            <dt className="text-xs text-carbon/50 uppercase">Vuelta</dt>
+            <dt className="text-xs text-carbon/50 uppercase">Preferencia vuelta</dt>
             <dd>{PREFERENCE_LABELS[selection.returnPreference]}</dd>
           </div>
         ) : null}
         {flightRequired ? (
           <div>
-            <dt className="text-xs text-carbon/50 uppercase">Vuelo</dt>
+            <dt className="text-xs text-carbon/50 uppercase">Vuelo de vuelta</dt>
             <dd>
-              {selectedFlight ? (
+              {selectedReturnLeg ? (
                 <>
-                  {selectedFlight.originAirport} → {selectedFlight.destinationAirport}
+                  {selectedReturnLeg.originAirport} → {selectedReturnLeg.destinationAirport}
                   <br />
-                  {formatDate(selectedFlight.outboundDeparture, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {formatDate(selectedReturnLeg.departure, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                 </>
               ) : quote.flightAvailability.blocked ? (
                 "Pendiente de horario"

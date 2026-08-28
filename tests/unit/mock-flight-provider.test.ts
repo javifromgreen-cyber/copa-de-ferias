@@ -1,44 +1,48 @@
 import { describe, it, expect } from "vitest";
 import { MockFlightProvider } from "@/lib/providers/flights/mockFlightProvider";
 
-describe("MockFlightProvider (§17/§26 — several concrete deterministic offers)", () => {
-  it("returns several distinct offers, not a single fixed one", async () => {
+describe("MockFlightProvider.getLegs (§9/§10 — several concrete deterministic one-way legs)", () => {
+  it("returns several distinct outbound legs, not a single fixed one", async () => {
     const provider = new MockFlightProvider();
-    const offers = await provider.getOffers({
-      originAirport: "MAD",
-      destinationAirport: "AMS",
-      outboundDate: new Date(2026, 5, 10),
-      returnDate: new Date(2026, 5, 12),
-    });
-    expect(offers.length).toBeGreaterThan(3);
-    const uniqueIds = new Set(offers.map((o) => o.id));
-    expect(uniqueIds.size).toBe(offers.length);
+    const legs = await provider.getLegs({ originAirport: "MAD", destinationAirport: "AMS", date: new Date(2026, 5, 10) });
+    expect(legs.length).toBeGreaterThan(1);
+    const uniqueIds = new Set(legs.map((l) => l.id));
+    expect(uniqueIds.size).toBe(legs.length);
   });
 
-  it("spreads offers across different departure hours and prices, not a single hardcoded price", async () => {
+  it("spreads outbound legs across different departure hours and prices, not a single hardcoded price", async () => {
     const provider = new MockFlightProvider();
-    const offers = await provider.getOffers({
-      originAirport: "MAD",
-      destinationAirport: "AMS",
-      outboundDate: new Date(2026, 5, 10),
-      returnDate: new Date(2026, 5, 12),
-    });
-    const prices = new Set(offers.map((o) => o.pricePerPerson));
-    const hours = new Set(offers.map((o) => o.outboundDeparture.getHours()));
+    const legs = await provider.getLegs({ originAirport: "MAD", destinationAirport: "AMS", date: new Date(2026, 5, 10) });
+    const prices = new Set(legs.map((l) => l.pricePerPerson));
+    const hours = new Set(legs.map((l) => l.departure.getHours()));
     expect(prices.size).toBeGreaterThan(1);
     expect(hours.size).toBeGreaterThan(1);
   });
 
   it("is deterministic — same input always produces the same output", async () => {
     const provider = new MockFlightProvider();
-    const params = { originAirport: "MAD", destinationAirport: "LHR", outboundDate: new Date(2026, 5, 10), returnDate: new Date(2026, 5, 12) };
-    const first = await provider.getOffers(params);
-    const second = await provider.getOffers(params);
+    const params = { originAirport: "MAD", destinationAirport: "LHR", date: new Date(2026, 5, 10) };
+    const first = await provider.getLegs(params);
+    const second = await provider.getLegs(params);
     expect(first).toEqual(second);
+  });
+
+  it("outbound and return legs for the same origin/destination are priced independently, never a bundled round-trip fare", async () => {
+    const provider = new MockFlightProvider();
+    const outbound = await provider.getLegs({ originAirport: "MAD", destinationAirport: "AMS", date: new Date(2026, 5, 10) });
+    const returnLegs = await provider.getLegs({ originAirport: "AMS", destinationAirport: "MAD", date: new Date(2026, 5, 12) });
+    expect(outbound.length).toBeGreaterThan(0);
+    expect(returnLegs.length).toBeGreaterThan(0);
+    // Each leg carries only its own one-way price — the two direction's
+    // price sets don't have to (and here, don't) match.
+    const outboundPrices = new Set(outbound.map((l) => l.pricePerPerson));
+    const returnPrices = new Set(returnLegs.map((l) => l.pricePerPerson));
+    expect([...outboundPrices].every((p) => p > 0)).toBe(true);
+    expect([...returnPrices].every((p) => p > 0)).toBe(true);
   });
 });
 
-describe("MockFlightProvider.listEligibleDirectOriginsForTrip — round-trip eligibility (§21-23/§29)", () => {
+describe("MockFlightProvider.listEligibleDirectOriginsForTrip — round-trip eligibility (§7/§8/§22)", () => {
   const params = { destinationAirport: "MAN", outboundDate: new Date(2026, 5, 10), returnDate: new Date(2026, 5, 12) };
 
   it("returns only Spanish airports with genuinely round-trip-direct service", async () => {
@@ -59,25 +63,30 @@ describe("MockFlightProvider.listEligibleDirectOriginsForTrip — round-trip eli
     expect(origins.map((o) => o.iata)).not.toContain("OVD");
   });
 
-  it("SVQ's offers for this destination always carry stops > 0 — never a usable direct round trip", async () => {
+  it("SVQ's legs for this destination always carry stops > 0 — never a usable direct round trip", async () => {
     const provider = new MockFlightProvider();
-    const offers = await provider.getOffers({ originAirport: "SVQ", destinationAirport: "MAN", outboundDate: params.outboundDate, returnDate: params.returnDate });
-    expect(offers.length).toBeGreaterThan(0);
-    expect(offers.every((o) => o.stops > 0)).toBe(true);
+    const outboundLegs = await provider.getLegs({ originAirport: "SVQ", destinationAirport: "MAN", date: params.outboundDate });
+    const returnLegs = await provider.getLegs({ originAirport: "MAN", destinationAirport: "SVQ", date: params.returnDate });
+    expect(outboundLegs.length).toBeGreaterThan(0);
+    expect(returnLegs.length).toBeGreaterThan(0);
+    // SVQ is direct outbound (stops === 0) but only ever connecting on the
+    // return (stops > 0) — the asymmetry is real, not narrative.
+    expect(outboundLegs.every((l) => l.stops === 0)).toBe(true);
+    expect(returnLegs.every((l) => l.stops > 0)).toBe(true);
   });
 
-  it("a destination with only one eligible Spanish origin (e.g. AMS/MXP) still returns just that one, not a hardcoded list", async () => {
+  it("a destination with more than one eligible Spanish origin (e.g. AMS) returns all of them, never just Madrid (§7 fix)", async () => {
     const provider = new MockFlightProvider();
     const origins = await provider.listEligibleDirectOriginsForTrip({ destinationAirport: "AMS", outboundDate: params.outboundDate, returnDate: params.returnDate });
-    expect(origins.map((o) => o.iata)).toEqual(["MAD"]);
+    expect(origins.map((o) => o.iata).sort()).toEqual(["BCN", "MAD"]);
   });
 });
 
-describe("MockFlightProvider — Manchester daypart-unavailable fixture (§25/§30)", () => {
-  it("MAD -> MAN has no afternoon return slot at all — a real 'unavailable' case", async () => {
+describe("MockFlightProvider — Manchester daypart-unavailable fixture (§12/§13)", () => {
+  it("MAD -> MAN has no afternoon return leg at all — a real 'unavailable' case", async () => {
     const provider = new MockFlightProvider();
-    const offers = await provider.getOffers({ originAirport: "MAD", destinationAirport: "MAN", outboundDate: new Date(2026, 5, 10), returnDate: new Date(2026, 5, 12) });
-    const returnHours = new Set(offers.map((o) => o.returnDeparture.getHours()));
+    const returnLegs = await provider.getLegs({ originAirport: "MAN", destinationAirport: "MAD", date: new Date(2026, 5, 12) });
+    const returnHours = new Set(returnLegs.map((l) => l.departure.getHours()));
     for (const h of returnHours) {
       expect(h).toBeLessThan(15); // every MAD return slot is before the afternoon window (15-20)
     }

@@ -1,4 +1,4 @@
-import type { Daypart, NormalizedFlightOffer } from "@/lib/providers/types";
+import type { Daypart, NormalizedFlightLeg } from "@/lib/providers/types";
 import type { ScheduleStatus } from "@prisma/client";
 
 export function classifyDaypart(date: Date): Daypart {
@@ -91,18 +91,28 @@ export function computeStayWindowBounds(opts: {
   };
 }
 
-export function isFlightOfferWithinWindow(offer: NormalizedFlightOffer, bounds: StayWindowBounds): boolean {
-  return offer.outboundArrival.getTime() <= bounds.latestArrival.getTime() && offer.returnDeparture.getTime() >= bounds.earliestReturn.getTime();
+/** Outbound leg must ARRIVE at the destination before the stay window's latest-arrival bound. */
+export function isOutboundLegWithinWindow(leg: NormalizedFlightLeg, bounds: StayWindowBounds): boolean {
+  return leg.arrival.getTime() <= bounds.latestArrival.getTime();
 }
 
-export function filterFlightOffersByWindow(offers: NormalizedFlightOffer[], bounds: StayWindowBounds): NormalizedFlightOffer[] {
-  return offers.filter((o) => isFlightOfferWithinWindow(o, bounds));
+/** Return leg must DEPART the destination after the stay window's earliest-return bound. */
+export function isReturnLegWithinWindow(leg: NormalizedFlightLeg, bounds: StayWindowBounds): boolean {
+  return leg.departure.getTime() >= bounds.earliestReturn.getTime();
 }
 
-export function matchesDaypartPreference(offer: NormalizedFlightOffer, outboundDaypart?: Daypart, returnDaypart?: Daypart): boolean {
-  if (outboundDaypart && classifyDaypart(offer.outboundDeparture) !== outboundDaypart) return false;
-  if (returnDaypart && classifyDaypart(offer.returnDeparture) !== returnDaypart) return false;
-  return true;
+export function filterOutboundLegsByWindow(legs: NormalizedFlightLeg[], bounds: StayWindowBounds): NormalizedFlightLeg[] {
+  return legs.filter((leg) => isOutboundLegWithinWindow(leg, bounds));
+}
+
+export function filterReturnLegsByWindow(legs: NormalizedFlightLeg[], bounds: StayWindowBounds): NormalizedFlightLeg[] {
+  return legs.filter((leg) => isReturnLegWithinWindow(leg, bounds));
+}
+
+/** A single leg's own departure time against a daypart preference — outbound and return are checked independently, never coupled (§11). */
+export function legMatchesDaypartPreference(leg: NormalizedFlightLeg, daypart?: Daypart): boolean {
+  if (!daypart) return true;
+  return classifyDaypart(leg.departure) === daypart;
 }
 
 /**

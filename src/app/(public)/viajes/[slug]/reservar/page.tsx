@@ -24,9 +24,6 @@ export default async function ReservarPage({ params }: { params: Promise<{ slug:
   if (trip.travelMode === "A_TU_AIRE") {
     return (
       <Container className="py-10 sm:py-14">
-        <p className="font-display mb-2 text-xs tracking-[0.25em] text-cement uppercase">
-          Viaje #{String(trip.number).padStart(3, "0")}
-        </p>
         <h1 className="font-display mb-8 text-3xl uppercase sm:text-4xl">
           {trip.name} — {trip.subtitle}
         </h1>
@@ -49,9 +46,6 @@ export default async function ReservarPage({ params }: { params: Promise<{ slug:
 
   return (
     <Container className="py-10 sm:py-14">
-      <p className="font-display mb-2 text-xs tracking-[0.25em] text-cement uppercase">
-        Viaje #{String(trip.number).padStart(3, "0")}
-      </p>
       <h1 className="font-display mb-8 text-3xl uppercase sm:text-4xl">
         Reservar — {trip.name}, {trip.subtitle}
       </h1>

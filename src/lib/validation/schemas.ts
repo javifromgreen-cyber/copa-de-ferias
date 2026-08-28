@@ -26,6 +26,28 @@ export const atuAireBuyerSchema = z.object({
 });
 export type AtuAireBuyerInput = z.infer<typeof atuAireBuyerSchema>;
 
+// One entry per traveler in the party (§15/§16) — A_TU_AIRE has no
+// per-traveler origin city (the whole party shares one selected origin
+// airport) and no peer-pairing room preference (rooming is derived
+// automatically from party size via computeRequiredRoomMix, not chosen),
+// so this is a trimmed sibling of checkoutTravelerSchema rather than a
+// reuse of it. Requiredness is per-trip (Trip.requiredTravelerFields),
+// enforced server-side in createAtuAireBooking, not by this static schema.
+export const atuAireTravelerSchema = z.object({
+  firstName: z.string().trim().min(1, "Nombre requerido").max(80),
+  lastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
+  birthDate: z.string().trim().max(10).optional().default(""), // yyyy-mm-dd or ""
+  nationality: z.string().trim().max(80).optional().default(""),
+  docType: z.enum(["dni", "passport", ""]).optional().default(""),
+  docNumber: z.string().trim().max(60).optional().default(""),
+  docExpiry: z.string().trim().max(10).optional().default(""), // yyyy-mm-dd or ""
+  docCountry: z.string().trim().max(80).optional().default(""),
+  phone: z.string().trim().max(30).optional().default(""),
+  emergencyContactName: z.string().trim().max(160).optional().default(""),
+  emergencyContactPhone: z.string().trim().max(30).optional().default(""),
+});
+export type AtuAireTravelerInput = z.infer<typeof atuAireTravelerSchema>;
+
 export const travelerRoomPreference = z.enum(["share_with_group", "share_same_sex", "single"]);
 
 // Core traveler data is captured during checkout, not deferred to "Mi

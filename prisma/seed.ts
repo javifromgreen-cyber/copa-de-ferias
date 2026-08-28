@@ -732,7 +732,7 @@ async function main() {
       number: 7,
       slug: "manchester-a-tu-aire",
       name: "Manchester",
-      subtitle: "Derbi de Manchester — producto de prueba A_TU_AIRE",
+      subtitle: "Derbi de Manchester",
       city: "Manchester",
       country: "Inglaterra",
       homeTeam: "Manchester City",

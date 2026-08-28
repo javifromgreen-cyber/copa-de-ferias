@@ -6,7 +6,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/trips/StatusBadge";
 import { TripPhoto } from "@/components/trips/TripPhoto";
 import { getTripBySlug } from "@/lib/trips/queries";
-import { effectiveStatus, spotsLeft } from "@/lib/trips/status";
+import { effectiveStatus } from "@/lib/trips/status";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { WaitlistCta } from "@/components/trips/WaitlistCta";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
@@ -36,7 +36,6 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
   if (!trip || !trip.published) notFound();
 
   const status = effectiveStatus(trip);
-  const left = spotsLeft(trip);
   const included = trip.inclusions.filter((i) => i.included);
   const excluded = trip.inclusions.filter((i) => !i.included);
 
@@ -80,9 +79,6 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
         <TripPhoto heroImageKey={trip.heroImageKey} tone={status === "completed" ? "sepia" : "color"} className="h-[60vh] min-h-[420px] w-full">
           <div className="absolute inset-0 flex items-end">
             <Container className="pb-10 text-ivory">
-              <p className="font-display mb-2 text-xs tracking-[0.3em] text-ivory/70 uppercase">
-                Viaje #{String(trip.number).padStart(3, "0")}
-              </p>
               <div className="mb-3 flex items-center gap-3">
                 <StatusBadge status={status} />
               </div>
@@ -106,15 +102,15 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </section>
           ) : null}
 
-          {/* El grupo / comunidad — a GROUP_CDF concept (fixed shared
-              capacity, a coordinator); A_TU_AIRE never shows a group
-              headcount or capacity publicly (§7). */}
+          {/* El grupo / comunidad — a GROUP_CDF concept (a coordinator, a
+              host); A_TU_AIRE never shows this section. Never mentions a
+              capacity/headcount number — that's never shown publicly (§1). */}
           {!isAtuAire ? (
             <section>
               <h2 className="font-display mb-4 text-2xl uppercase">El grupo</h2>
               <p className="text-carbon/80">
-                Grupo pequeño, máximo {trip.maxSpots} viajeros. Puedes venir solo, con un amigo o en grupo: lo normal
-                es encontrarse allí con gente que va exactamente por lo mismo que tú.
+                Grupo pequeño. Puedes venir solo, con un amigo o en grupo: lo normal es encontrarse allí con gente que
+                va exactamente por lo mismo que tú.
                 {trip.coordinatorName ? ` Coordina el grupo: ${trip.coordinatorName}.` : ""}
                 {trip.hostName ? ` En destino, ${trip.hostName}.` : ""}
               </p>
@@ -320,16 +316,9 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
               </>
             )}
 
-            {/* A_TU_AIRE has no fixed group-capacity pool to show publicly
-                (§7) — the checkout itself resolves real ticket/hotel/flight
-                availability once the customer starts configuring the trip. */}
-            {!isAtuAire && status === "open" ? (
-              <p className="mb-4 text-sm text-carbon/70">
-                {left} plaza{left === 1 ? "" : "s"} disponible{left === 1 ? "" : "s"} de {trip.maxSpots}
-                {trip.soldSpots > 0 ? ` · ${trip.soldSpots} aficionados ya se han apuntado` : ""}
-              </p>
-            ) : null}
-
+            {/* Capacity/plazas is never shown publicly, for any travel mode
+                (§1/§20) — internal availability still gates the CTA below
+                via effectiveStatus, it's just never surfaced as a number. */}
             {status === "open" ? (
               <ButtonLink href={`/viajes/${trip.slug}/reservar`} className="w-full justify-center">
                 {isAtuAire ? "Reservar" : "Reservar plaza"}

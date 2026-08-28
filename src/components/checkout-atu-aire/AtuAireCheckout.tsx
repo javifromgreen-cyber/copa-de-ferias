@@ -16,8 +16,11 @@ import { TicketStep } from "./TicketStep";
 import { NightsStep } from "./NightsStep";
 import { HotelStep } from "./HotelStep";
 import { AirportStep } from "./AirportStep";
-import { FlightStep } from "./FlightStep";
+import { OutboundFlightStep, ReturnFlightStep } from "./FlightStep";
 import { BuyerStep, EMPTY_BUYER, isBuyerFormComplete, type AtuAireBuyerFormState } from "./BuyerStep";
+import { TravelerDetailsStep, emptyAtuAireTraveler, isAtuAireTravelersComplete, type AtuAireTravelerFormState } from "./TravelerDetailsStep";
+import { RoomingStep } from "./RoomingStep";
+import { assignTravelersToRooms } from "@/lib/checkout-atu-aire/rooming";
 import { SummarySidebar } from "./SummarySidebar";
 import { MobileSummaryBar } from "./MobileSummaryBar";
 import { Button } from "@/components/ui/Button";
@@ -32,8 +35,29 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [priceChangedNotice, setPriceChangedNotice] = useState<string | null>(null);
   const [buyer, setBuyer] = useState<AtuAireBuyerFormState>(EMPTY_BUYER);
+  const [travelers, setTravelers] = useState<AtuAireTravelerFormState[]>([emptyAtuAireTraveler()]);
   const [paying, setPaying] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+
+  // The only place partySize ever changes — keeps exactly one traveler
+  // fieldset per party member (§15) in the same update, in either
+  // direction, preserving already-entered data for travelers that still
+  // exist. Done here rather than in an effect reacting to partySize, so
+  // it's one direct state update from a real event, not a cascading
+  // render off a synchronized derived value.
+  function setPartySize(partySize: number) {
+    setSelection((s) => ({ ...s, partySize }));
+    setTravelers((prev) => {
+      if (prev.length === partySize) return prev;
+      const next = [...prev];
+      while (next.length < partySize) next.push(emptyAtuAireTraveler());
+      return next.slice(0, partySize);
+    });
+  }
+
+  function updateTraveler(index: number, patch: Partial<AtuAireTravelerFormState>) {
+    setTravelers((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +100,8 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
       originAirport: packageRequiresFlight(packageType) ? s.originAirport : null,
       outboundPreference: packageRequiresFlight(packageType) ? s.outboundPreference : "ANY",
       returnPreference: packageRequiresFlight(packageType) ? s.returnPreference : "ANY",
-      flightOfferId: packageRequiresFlight(packageType) ? s.flightOfferId : null,
+      outboundLegId: packageRequiresFlight(packageType) ? s.outboundLegId : null,
+      returnLegId: packageRequiresFlight(packageType) ? s.returnLegId : null,
     }));
   }
 
@@ -85,7 +110,7 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   }
 
   function selectOrigin(originAirport: string) {
-    setSelection((s) => ({ ...s, originAirport, flightOfferId: null }));
+    setSelection((s) => ({ ...s, originAirport, outboundLegId: null, returnLegId: null }));
   }
 
   async function handleRevalidate() {
@@ -115,7 +140,7 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   async function handlePay() {
     setPaying(true);
     setPaymentError("");
-    const result = await createAtuAireBooking(tripSlug, selection, buyer);
+    const result = await createAtuAireBooking(tripSlug, selection, buyer, travelers);
     setPaying(false);
     if (!result.ok) {
       setPaymentError(result.error);
@@ -148,8 +173,21 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
   // ever unlock once a valid hotel has actually been picked.
   const showFlightGate = flightRequired && showHotel && Boolean(selection.hotelOfferId);
   const showAirport = showFlightGate && !quote.flightAvailability.blocked;
-  const showFlightStep = showFlightGate && (quote.flightAvailability.blocked || Boolean(selection.originAirport));
+  const showOutboundFlightStep = showFlightGate && (quote.flightAvailability.blocked || Boolean(selection.originAirport));
+  // Vuelta only appears once ida has been picked — two distinct,
+  // sequential steps, never one combined block (§10). Once reached, it
+  // must stay visible even if the customer later changes ida's daypart
+  // preference (which clears only outboundLegId, forcing a fresh outbound
+  // pick) — checking returnLegId too means an already-chosen return leg,
+  // and the whole vuelta step, is never hidden by an ida-only change
+  // (§11: changing one must never make the other's options disappear).
+  const showReturnFlightStep = showOutboundFlightStep && !quote.flightAvailability.blocked && (Boolean(selection.outboundLegId) || Boolean(selection.returnLegId));
   const readyToRevalidate = quote.price.missing.length === 0 && Boolean(selection.partySize);
+
+  const requiredTravelerFields = quote.trip.requiredTravelerFields;
+  const travelerNames = travelers.map((t) => `${t.firstName} ${t.lastName}`.trim());
+  const roomAssignments = hotelRequired && quote.roomMix && selection.partySize ? assignTravelersToRooms(selection.partySize, quote.roomMix) : [];
+  const canPay = isBuyerFormComplete(buyer) && isAtuAireTravelersComplete(travelers, requiredTravelerFields);
 
   return (
     <div className="grid gap-8 pb-24 lg:grid-cols-[1fr_360px] lg:pb-0">
@@ -164,7 +202,7 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
           <TravelersStep
             partySize={selection.partySize}
             limits={quote.partySizeLimits}
-            onChange={(partySize) => setSelection((s) => ({ ...s, partySize }))}
+            onChange={setPartySize}
           />
         ) : null}
 
@@ -180,15 +218,23 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
 
         {showAirport ? <AirportStep origins={quote.eligibleOrigins} selected={selection.originAirport} onSelect={selectOrigin} /> : null}
 
-        {showFlightStep ? (
-          <FlightStep
+        {showOutboundFlightStep ? (
+          <OutboundFlightStep
             quote={quote}
-            outboundPreference={selection.outboundPreference}
-            returnPreference={selection.returnPreference}
-            flightOfferId={selection.flightOfferId}
-            onChangeOutbound={(outboundPreference: FlightDaypartPreference) => setSelection((s) => ({ ...s, outboundPreference, flightOfferId: null }))}
-            onChangeReturn={(returnPreference: FlightDaypartPreference) => setSelection((s) => ({ ...s, returnPreference, flightOfferId: null }))}
-            onSelectFlight={(flightOfferId) => setSelection((s) => ({ ...s, flightOfferId }))}
+            preference={selection.outboundPreference}
+            legId={selection.outboundLegId}
+            onChangePreference={(outboundPreference: FlightDaypartPreference) => setSelection((s) => ({ ...s, outboundPreference, outboundLegId: null }))}
+            onSelectLeg={(outboundLegId) => setSelection((s) => ({ ...s, outboundLegId }))}
+          />
+        ) : null}
+
+        {showReturnFlightStep ? (
+          <ReturnFlightStep
+            quote={quote}
+            preference={selection.returnPreference}
+            legId={selection.returnLegId}
+            onChangePreference={(returnPreference: FlightDaypartPreference) => setSelection((s) => ({ ...s, returnPreference, returnLegId: null }))}
+            onSelectLeg={(returnLegId) => setSelection((s) => ({ ...s, returnLegId }))}
           />
         ) : null}
 
@@ -202,8 +248,16 @@ export function AtuAireCheckout({ tripSlug }: { tripSlug: string }) {
                 <div className="mb-4">
                   <BuyerStep value={buyer} onChange={setBuyer} />
                 </div>
+                <div className="mb-4">
+                  <TravelerDetailsStep travelers={travelers} requiredFields={requiredTravelerFields} onChange={updateTraveler} />
+                </div>
+                {hotelRequired ? (
+                  <div className="mb-4">
+                    <RoomingStep assignments={roomAssignments} travelerNames={travelerNames} />
+                  </div>
+                ) : null}
                 {paymentError ? <p className="mb-3 rounded-sm bg-stamp/10 p-3 text-sm text-stamp">{paymentError}</p> : null}
-                <Button onClick={handlePay} disabled={paying || !isBuyerFormComplete(buyer)}>
+                <Button onClick={handlePay} disabled={paying || !canPay}>
                   {paying ? "Procesando pago…" : "Continuar al pago"}
                 </Button>
               </>

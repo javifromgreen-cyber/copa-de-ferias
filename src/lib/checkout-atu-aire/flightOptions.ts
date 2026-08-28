@@ -1,6 +1,6 @@
-import type { NormalizedFlightOffer } from "@/lib/providers/types";
-import { classifyDaypart, isFlightOfferWithinWindow, type StayWindowBounds } from "@/lib/pricing/flightWindow";
-import type { FlightDaypartPreference, FlightPreferenceOption, FlightOfferView } from "./types";
+import type { NormalizedFlightLeg } from "@/lib/providers/types";
+import { classifyDaypart, isOutboundLegWithinWindow, isReturnLegWithinWindow, type StayWindowBounds } from "@/lib/pricing/flightWindow";
+import type { FlightDaypartPreference, FlightPreferenceOption, FlightLegView } from "./types";
 
 const PREFERENCE_LABELS: Record<FlightDaypartPreference, string> = {
   ANY: "Cualquier horario",
@@ -17,74 +17,65 @@ function matchesPreference(pref: FlightDaypartPreference, departure: Date): bool
 }
 
 /**
- * Every stage of the flight step runs through this one filter: direct-only
- * first (A_TU_AIRE never sells a connecting flight — §8, enforced here
- * defensively regardless of what the caller already filtered upstream),
- * then the viability window (buffers around the match/es), then the
- * outbound/return daypart preferences — independently, each leg against
- * its own preference. A preference can narrow the result to zero, but it
- * can never widen it past what the buffers or the direct-only rule allow
- * (§18) — a connecting flight can never become the cheapest option.
+ * Direct-only, then the viability window, then this direction's own
+ * daypart preference — outbound and return are filtered completely
+ * independently of one another (§10/§11): neither list, nor the
+ * preference options built from it below, ever depends on the OTHER
+ * direction's leg list or preference. Changing one can never narrow or
+ * confuse the other.
  */
-export function filterFlightOffersForSelection(
-  offers: NormalizedFlightOffer[],
-  bounds: StayWindowBounds,
-  outboundPreference: FlightDaypartPreference,
-  returnPreference: FlightDaypartPreference,
-): NormalizedFlightOffer[] {
-  return offers
-    .filter((o) => o.stops === 0)
-    .filter((o) => isFlightOfferWithinWindow(o, bounds))
-    .filter((o) => matchesPreference(outboundPreference, o.outboundDeparture))
-    .filter((o) => matchesPreference(returnPreference, o.returnDeparture))
+export function filterOutboundLegsForSelection(legs: NormalizedFlightLeg[], bounds: StayWindowBounds, preference: FlightDaypartPreference): NormalizedFlightLeg[] {
+  return legs
+    .filter((l) => l.stops === 0)
+    .filter((l) => isOutboundLegWithinWindow(l, bounds))
+    .filter((l) => matchesPreference(preference, l.departure))
     .sort((a, b) => a.pricePerPerson - b.pricePerPerson);
 }
 
-function cheapestPrice(offers: NormalizedFlightOffer[]): number | null {
-  if (offers.length === 0) return null;
-  return Math.min(...offers.map((o) => o.pricePerPerson));
+export function filterReturnLegsForSelection(legs: NormalizedFlightLeg[], bounds: StayWindowBounds, preference: FlightDaypartPreference): NormalizedFlightLeg[] {
+  return legs
+    .filter((l) => l.stops === 0)
+    .filter((l) => isReturnLegWithinWindow(l, bounds))
+    .filter((l) => matchesPreference(preference, l.departure))
+    .sort((a, b) => a.pricePerPerson - b.pricePerPerson);
+}
+
+function cheapestPrice(legs: NormalizedFlightLeg[]): number | null {
+  if (legs.length === 0) return null;
+  return Math.min(...legs.map((l) => l.pricePerPerson));
 }
 
 /**
- * Builds the outbound preference options — each one's "desde" price comes
- * from actually re-filtering the real offer set with that outbound value
- * held against the *current* return preference, never a stored/hardcoded
- * per-daypart price (§13/§14).
+ * Preference options for one direction, built purely from that
+ * direction's own direct+window-filtered leg list — never re-filters
+ * using the other direction's preference (§11, replaces the old
+ * cross-coupled outbound/return builders).
  */
-export function buildOutboundPreferenceOptions(
-  offers: NormalizedFlightOffer[],
-  bounds: StayWindowBounds,
-  currentReturnPreference: FlightDaypartPreference,
-): FlightPreferenceOption[] {
+function buildPreferenceOptions(directWindowedLegs: NormalizedFlightLeg[]): FlightPreferenceOption[] {
   return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => {
-    const priceFromPerPerson = cheapestPrice(filterFlightOffersForSelection(offers, bounds, value, currentReturnPreference));
+    const priceFromPerPerson = cheapestPrice(directWindowedLegs.filter((l) => matchesPreference(value, l.departure)));
     return { value, label: PREFERENCE_LABELS[value], priceFromPerPerson, available: priceFromPerPerson !== null };
   });
 }
 
-export function buildReturnPreferenceOptions(
-  offers: NormalizedFlightOffer[],
-  bounds: StayWindowBounds,
-  currentOutboundPreference: FlightDaypartPreference,
-): FlightPreferenceOption[] {
-  return (["ANY", "MORNING", "AFTERNOON"] as const).map((value) => {
-    const priceFromPerPerson = cheapestPrice(filterFlightOffersForSelection(offers, bounds, currentOutboundPreference, value));
-    return { value, label: PREFERENCE_LABELS[value], priceFromPerPerson, available: priceFromPerPerson !== null };
-  });
+export function buildOutboundPreferenceOptions(legs: NormalizedFlightLeg[], bounds: StayWindowBounds): FlightPreferenceOption[] {
+  return buildPreferenceOptions(legs.filter((l) => l.stops === 0).filter((l) => isOutboundLegWithinWindow(l, bounds)));
 }
 
-// resultantTotalPerPerson depends on ticket/hotel/fee context this pure
-// mapping doesn't have — the caller (quoteBuilder) adds it.
-export function toFlightOfferView(offer: NormalizedFlightOffer): Omit<FlightOfferView, "resultantTotalPerPerson"> {
+export function buildReturnPreferenceOptions(legs: NormalizedFlightLeg[], bounds: StayWindowBounds): FlightPreferenceOption[] {
+  return buildPreferenceOptions(legs.filter((l) => l.stops === 0).filter((l) => isReturnLegWithinWindow(l, bounds)));
+}
+
+// Pure field mapping — a leg view only ever carries its own price (§9),
+// there is no "resultant" variant of this for flights.
+export function toFlightLegView(leg: NormalizedFlightLeg): FlightLegView {
   return {
-    id: offer.id,
-    provider: offer.provider,
-    originAirport: offer.originAirport,
-    destinationAirport: offer.destinationAirport,
-    outboundDeparture: offer.outboundDeparture,
-    outboundArrival: offer.outboundArrival,
-    returnDeparture: offer.returnDeparture,
-    returnArrival: offer.returnArrival,
-    pricePerPerson: offer.pricePerPerson,
+    id: leg.id,
+    provider: leg.provider,
+    originAirport: leg.originAirport,
+    destinationAirport: leg.destinationAirport,
+    departure: leg.departure,
+    arrival: leg.arrival,
+    pricePerPerson: leg.pricePerPerson,
   };
 }

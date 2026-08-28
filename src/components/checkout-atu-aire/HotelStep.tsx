@@ -1,5 +1,4 @@
 import { BedIcon } from "@/components/icons";
-import { formatCurrency } from "@/lib/utils";
 import type { HotelOptionView } from "@/lib/checkout-atu-aire/types";
 
 export function HotelStep({
@@ -39,11 +38,8 @@ export function HotelStep({
               <span className="text-sm text-carbon/60">
                 {option.offer.stars}★ · {option.offer.zone}
               </span>
-              {option.valid ? (
-                <span className="mt-1 font-display text-lg">{formatCurrency(option.resultantTotalPerPerson)} / persona</span>
-              ) : (
-                <span className="mt-1 text-xs text-stamp">{option.invalidReason}</span>
-              )}
+              {/* Hotel cards never show a price, not even resultant (§5/§6) — the total lives only in the summary sidebar. */}
+              {!option.valid ? <span className="mt-1 text-xs text-stamp">{option.invalidReason}</span> : null}
             </button>
           );
         })}

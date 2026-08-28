@@ -1,7 +1,8 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import { atuAireBuyerSchema, type AtuAireBuyerInput } from "@/lib/validation/schemas";
+import { atuAireBuyerSchema, atuAireTravelerSchema, type AtuAireBuyerInput, type AtuAireTravelerInput } from "@/lib/validation/schemas";
+import { parseRequiredFields } from "@/lib/checkout/travelerFields";
 import { getAtuAireCheckoutQuote } from "./atu-aire-checkout";
 import { getPaymentProvider } from "@/lib/payments";
 import { sendTemplatedEmail } from "@/lib/email";
@@ -14,6 +15,31 @@ export type CreateAtuAireBookingResult =
 
 class RaceConditionError extends Error {}
 
+function atuAireTravelerFieldValue(t: AtuAireTravelerInput, key: string): string {
+  switch (key) {
+    case "birthDate":
+      return t.birthDate;
+    case "nationality":
+      return t.nationality;
+    case "docType":
+      return t.docType;
+    case "docNumber":
+      return t.docNumber;
+    case "docExpiry":
+      return t.docExpiry;
+    case "docCountry":
+      return t.docCountry;
+    case "phone":
+      return t.phone;
+    default:
+      return "";
+  }
+}
+
+function parseFormDate(value: string): Date | null {
+  return value ? new Date(value) : null;
+}
+
 /**
  * A_TU_AIRE's own "continuar al pago" step (§6) — reuses the existing
  * payment-provider abstraction and Booking/Traveler tables exactly like
@@ -25,12 +51,23 @@ class RaceConditionError extends Error {}
  * is nothing here equivalent to GROUP_CDF's soldSpots race-condition guard
  * — party size is per-booking, not drawn from a shared trip-level pool.
  */
-export async function createAtuAireBooking(tripSlug: string, selection: AtuAireSelection, buyerInput: AtuAireBuyerInput): Promise<CreateAtuAireBookingResult> {
+export async function createAtuAireBooking(
+  tripSlug: string,
+  selection: AtuAireSelection,
+  buyerInput: AtuAireBuyerInput,
+  travelersInput: AtuAireTravelerInput[],
+): Promise<CreateAtuAireBookingResult> {
   const parsedBuyer = atuAireBuyerSchema.safeParse(buyerInput);
   if (!parsedBuyer.success) {
     return { ok: false, error: parsedBuyer.error.issues[0]?.message ?? "Datos no válidos" };
   }
   const buyer = parsedBuyer.data;
+
+  const parsedTravelers = atuAireTravelerSchema.array().min(1).max(20).safeParse(travelersInput);
+  if (!parsedTravelers.success) {
+    return { ok: false, error: parsedTravelers.error.issues[0]?.message ?? "Faltan datos de los viajeros." };
+  }
+  const travelersData = parsedTravelers.data;
 
   const trip = await prisma.trip.findUnique({ where: { slug: tripSlug } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
@@ -51,9 +88,36 @@ export async function createAtuAireBooking(tripSlug: string, selection: AtuAireS
   }
 
   const partySize = selection.partySize;
+
+  // Exactly one traveler entry per party member (§15) — a mismatch means
+  // the client-side resize effect and the server disagree, which should
+  // never happen, but is never silently tolerated either.
+  if (travelersData.length !== partySize) {
+    return { ok: false, error: "El número de viajeros con datos no coincide con el número de plazas seleccionadas." };
+  }
+
+  // Server-side enforcement of this trip's required traveler fields — the
+  // checkout UI already asks for these, but re-check here so it can't be
+  // bypassed (mirrors GROUP_CDF's createBooking — see checkout §14/§15).
+  const requiredFields = parseRequiredFields(trip.requiredTravelerFields);
+  for (const t of travelersData) {
+    const name = `${t.firstName} ${t.lastName}`.trim();
+    for (const key of requiredFields) {
+      if (key === "emergencyContact") {
+        if (!t.emergencyContactName || !t.emergencyContactPhone) {
+          return { ok: false, error: `Falta el contacto de emergencia de ${name} para este viaje` };
+        }
+        continue;
+      }
+      if (!atuAireTravelerFieldValue(t, key)) {
+        return { ok: false, error: `Falta un dato obligatorio de ${name} para este viaje` };
+      }
+    }
+  }
   const totalPrice = quote.price.totalCommercial;
   const selectedHotel = quote.hotelOptions.find((h) => h.offer.id === selection.hotelOfferId && h.valid) ?? null;
-  const selectedFlight = quote.flightOffers.find((f) => f.id === selection.flightOfferId) ?? null;
+  const selectedOutboundLeg = quote.outboundLegs.find((l) => l.id === selection.outboundLegId) ?? null;
+  const selectedReturnLeg = quote.returnLegs.find((l) => l.id === selection.returnLegId) ?? null;
   const selectedOrigin = quote.eligibleOrigins.find((o) => o.iata === selection.originAirport) ?? null;
 
   const reference = generateBookingReference();
@@ -93,24 +157,36 @@ export async function createAtuAireBooking(tripSlug: string, selection: AtuAireS
           hotelSelectionSnapshot: selectedHotel
             ? JSON.stringify({ hotelOfferId: selectedHotel.offer.id, name: selectedHotel.offer.name, nights: selection.nights, perPersonPrice: selectedHotel.perPersonPrice })
             : "",
-          flightSelectionSnapshot: selectedFlight
-            ? JSON.stringify({
-                flightOfferId: selectedFlight.id,
-                originAirport: selectedFlight.originAirport,
-                destinationAirport: selectedFlight.destinationAirport,
-                outboundDeparture: selectedFlight.outboundDeparture,
-                returnDeparture: selectedFlight.returnDeparture,
-                pricePerPerson: selectedFlight.pricePerPerson,
-              })
-            : "",
+          flightSelectionSnapshot:
+            selectedOutboundLeg && selectedReturnLeg
+              ? JSON.stringify({
+                  outboundLegId: selectedOutboundLeg.id,
+                  returnLegId: selectedReturnLeg.id,
+                  originAirport: selectedOutboundLeg.originAirport,
+                  destinationAirport: selectedOutboundLeg.destinationAirport,
+                  outboundDeparture: selectedOutboundLeg.departure,
+                  returnDeparture: selectedReturnLeg.departure,
+                  outboundPricePerPerson: selectedOutboundLeg.pricePerPerson,
+                  returnPricePerPerson: selectedReturnLeg.pricePerPerson,
+                })
+              : "",
           priceBreakdownSnapshot: JSON.stringify({ perPerson: quote.price.perPerson, total: quote.price.totalCommercial, ticketSelections: selection.ticketSelections }),
         },
       });
 
-      const travelers = Array.from({ length: partySize }, (_, i) => ({
+      const travelers = travelersData.map((t) => ({
         bookingId: booking.id,
-        firstName: i === 0 ? buyer.buyerFirstName : `Acompañante`,
-        lastName: i === 0 ? buyer.buyerLastName : `${i}`,
+        firstName: t.firstName,
+        lastName: t.lastName,
+        birthDate: parseFormDate(t.birthDate),
+        nationality: t.nationality,
+        docType: t.docType,
+        docNumber: t.docNumber,
+        docExpiry: parseFormDate(t.docExpiry),
+        docCountry: t.docCountry,
+        phone: t.phone,
+        emergencyContactName: t.emergencyContactName,
+        emergencyContactPhone: t.emergencyContactPhone,
         originAirport: selection.originAirport ?? "",
       }));
       await tx.traveler.createMany({ data: travelers });
@@ -139,8 +215,8 @@ export async function createAtuAireBooking(tripSlug: string, selection: AtuAireS
 
   await prisma.booking.update({ where: { id: bookingId }, data: { paymentStatus: "paid", bookingStatus: "confirmed" } });
 
-  const departureDate = new Date(selectedFlight?.outboundDeparture ?? trip.matchDate);
-  const returnDate = new Date(selectedFlight?.returnDeparture ?? trip.matchDate);
+  const departureDate = new Date(selectedOutboundLeg?.departure ?? trip.matchDate);
+  const returnDate = new Date(selectedReturnLeg?.departure ?? trip.matchDate);
 
   await sendTemplatedEmail({
     templateKey: "booking_confirmed",

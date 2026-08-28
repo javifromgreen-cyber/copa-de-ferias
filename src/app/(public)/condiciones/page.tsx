@@ -15,8 +15,8 @@ export default async function CondicionesPage() {
         <h2 className="font-display text-lg text-carbon uppercase">1. El viaje</h2>
         <p>
           Cada viaje de {brand.name} es un producto cerrado: partido, transporte, alojamiento, entrada y actividades
-          especificadas en la ficha correspondiente. Las condiciones concretas de cada viaje (precio, plazas,
-          política de cancelación) se muestran en su ficha antes de reservar.
+          especificadas en la ficha correspondiente. Las condiciones concretas de cada viaje (precio, política de
+          cancelación) se muestran en su ficha antes de reservar.
         </p>
       </section>
 

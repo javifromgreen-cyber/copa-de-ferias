@@ -16,8 +16,8 @@ const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVG
     icon: StadiumIcon,
   },
   {
-    title: "2. Publicamos fechas, precio y plazas",
-    body: "Cada viaje muestra sus fechas, el precio por persona y el número de plazas disponibles.",
+    title: "2. Publicamos fechas y precio",
+    body: "Cada viaje muestra sus fechas y el precio por persona.",
     icon: CalendarIcon,
   },
   {

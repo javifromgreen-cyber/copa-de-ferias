@@ -62,9 +62,6 @@ export function TripCard({ trip, showOrigins = false }: { trip: TripCardData; sh
       )}
 
       <div className="flex flex-1 flex-col gap-3 p-5">
-        <p className="font-display text-xs tracking-[0.2em] text-carbon/50 uppercase">
-          Viaje #{String(trip.number).padStart(3, "0")}
-        </p>
         <div>
           <h3 className="font-display text-xl uppercase">{trip.name}</h3>
           <p className="text-sm text-carbon/70">{trip.subtitle}</p>

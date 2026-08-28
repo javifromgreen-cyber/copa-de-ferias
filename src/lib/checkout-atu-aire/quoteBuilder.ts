@@ -6,11 +6,18 @@ import { ALL_PACKAGE_TYPES } from "@/lib/pricing/packageTypes";
 import { packageRequiresHotel, packageRequiresFlight, PACKAGE_TYPE_COPY } from "./packageRequirements";
 import { buildTicketCategoryOptionsForEvent, cheapestOfferCost } from "./ticketOptions";
 import { buildHotelOptions, cheapestValidHotelPerPerson } from "./hotelOptions";
-import { buildOutboundPreferenceOptions, buildReturnPreferenceOptions, filterFlightOffersForSelection, toFlightOfferView } from "./flightOptions";
+import {
+  buildOutboundPreferenceOptions,
+  buildReturnPreferenceOptions,
+  filterOutboundLegsForSelection,
+  filterReturnLegsForSelection,
+  toFlightLegView,
+} from "./flightOptions";
 import { derivePriceLabel, missingSelectionLabels } from "./priceLabel";
 import { isFlightPackageEligible } from "./countries";
-import type { AtuAireQuote, AtuAireQuoteData, AtuAireSelection, FlightAvailability, TicketCategoryOption } from "./types";
-import type { NormalizedFlightOffer } from "@/lib/providers/types";
+import { parseRequiredFields } from "@/lib/checkout/travelerFields";
+import type { AtuAireQuote, AtuAireQuoteData, AtuAireSelection, FlightAvailability, FlightLegView, TicketCategoryOption } from "./types";
+import type { NormalizedFlightLeg } from "@/lib/providers/types";
 
 const NIGHTS_DEFAULT = 1;
 
@@ -38,10 +45,20 @@ function cheapestTicketTotalAcrossEvents(data: AtuAireQuoteData): number {
   return data.events.reduce((sum, e) => sum + cheapestOfferCost(data.ticketOffersByEventId[e.id] ?? []), 0);
 }
 
-function cheapestDirectFlightPrice(offers: NormalizedFlightOffer[]): number | null {
-  const direct = offers.filter((o) => o.stops === 0);
+function cheapestDirectLegPrice(legs: NormalizedFlightLeg[]): number | null {
+  const direct = legs.filter((l) => l.stops === 0);
   if (direct.length === 0) return null;
-  return Math.min(...direct.map((o) => o.pricePerPerson));
+  return Math.min(...direct.map((l) => l.pricePerPerson));
+}
+
+// A round-trip "desde" estimate is the cheapest direct outbound leg plus
+// the cheapest direct return leg — null (never a fabricated number) when
+// either direction genuinely has no direct offer at all (§10).
+function cheapestDirectRoundTripPrice(outboundLegs: NormalizedFlightLeg[], returnLegs: NormalizedFlightLeg[]): number | null {
+  const outbound = cheapestDirectLegPrice(outboundLegs);
+  const ret = cheapestDirectLegPrice(returnLegs);
+  if (outbound === null || ret === null) return null;
+  return outbound + ret;
 }
 
 /**
@@ -101,14 +118,15 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
     let hotelCost = 0;
     if (packageRequiresHotel(packageType)) {
       const mix1 = computeRequiredRoomMix(1);
-      const hotelOptions1 = buildHotelOptions(data.hotelOffers, mix1, NIGHTS_DEFAULT, 1, 0);
+      const hotelOptions1 = buildHotelOptions(data.hotelOffers, mix1, NIGHTS_DEFAULT, 1);
       hotelCost = cheapestValidHotelPerPerson(hotelOptions1) ?? 0;
     }
-    // Cheapest DIRECT offer across every eligible Spanish origin — never
-    // silently assumes any single airport (§13). null when we genuinely
-    // can't compute one yet (no eligible route found at all) — the card
-    // still appears, just without a fabricated price (§10).
-    const flightCost = packageRequiresFlight(packageType) ? cheapestDirectFlightPrice(data.flightOffers) : 0;
+    // Cheapest DIRECT outbound + cheapest DIRECT return, across every
+    // eligible Spanish origin — never silently assumes any single airport
+    // (§13). null when we genuinely can't compute one yet (no eligible
+    // route found in either direction) — the card still appears, just
+    // without a fabricated price (§10).
+    const flightCost = packageRequiresFlight(packageType) ? cheapestDirectRoundTripPrice(data.outboundLegs, data.returnLegs) : 0;
     const fee = computeOrganizationFee({ packageType, partySize: 1, matchCount, global, overrides });
     return {
       packageType,
@@ -129,26 +147,30 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
   // resultant price, and the final price block below (§11/§12/§14). ---
   const { total: ticketPerPersonTotal, allSelected: allTicketsSelected } = ticketsAcrossEvents(data, selection, ticketOptionsByEvent);
   const fee = selection.packageType && partySize ? computeOrganizationFee({ packageType: selection.packageType, partySize, matchCount, global, overrides }) : null;
-  const feePerPerson = fee && partySize ? fee.total / partySize : 0;
-  const flightEstimatePerPerson = flightRequiredByPackage ? (cheapestDirectFlightPrice(data.flightOffers) ?? 0) : 0;
 
-  // --- Hotel ------------------------------------------------------------
+  // --- Hotel --------------------------------------------------------------
+  // Hotel cards never show a price at all, not even resultant (§5/§6) — so
+  // buildHotelOptions no longer needs the other-components baseline that
+  // used to feed a resultantTotalPerPerson field.
   const roomMix = partySize ? computeRequiredRoomMix(partySize) : null;
   const nights = selection.nights ?? NIGHTS_DEFAULT;
-  const otherComponentsForHotel = ticketPerPersonTotal + flightEstimatePerPerson + feePerPerson;
-  const hotelOptions = hotelRequired && roomMix && partySize ? buildHotelOptions(data.hotelOffers, roomMix, nights, partySize, otherComponentsForHotel) : [];
+  const hotelOptions = hotelRequired && roomMix && partySize ? buildHotelOptions(data.hotelOffers, roomMix, nights, partySize) : [];
   const selectedHotel = hotelOptions.find((h) => h.offer.id === selection.hotelOfferId && h.valid) ?? null;
   const cheapestValidHotel = hotelOptions.find((h) => h.valid) ?? null;
-  const hotelComponentPerPerson = selectedHotel?.perPersonPrice ?? cheapestValidHotel?.perPersonPrice ?? 0;
 
   // --- Flight: schedule gate, then route gate, then origin gate, then
-  // preferences/offers ----------------------------------------------------
+  // preferences/legs — outbound and return are computed fully independently
+  // of one another from here on (§9/§10/§11): each has its own leg list,
+  // its own preference options, and its own selection. -------------------
   let flightAvailability: FlightAvailability = { blocked: false };
   let outboundPreferenceOptions: AtuAireQuote["outboundPreferenceOptions"] = [];
   let returnPreferenceOptions: AtuAireQuote["returnPreferenceOptions"] = [];
-  let flightOfferViews: AtuAireQuote["flightOffers"] = [];
-  let selectedFlight = null as ReturnType<typeof toFlightOfferView> | null;
-  let cheapestFilteredFlight: number | null = null;
+  let outboundLegViews: FlightLegView[] = [];
+  let returnLegViews: FlightLegView[] = [];
+  let selectedOutboundLeg: FlightLegView | null = null;
+  let selectedReturnLeg: FlightLegView | null = null;
+  let cheapestFilteredOutbound: number | null = null;
+  let cheapestFilteredReturn: number | null = null;
 
   if (flightRequiredByPackage) {
     // A genuinely uncertain match DAY is the only thing that hard-blocks
@@ -177,16 +199,24 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
         minimumArrivalBufferBeforeKickoffMinutes: data.trip.minimumArrivalBufferBeforeKickoffMinutes,
         minimumReturnBufferAfterEventMinutes: data.trip.minimumReturnBufferAfterEventMinutes,
       });
-      const offersForOrigin = data.flightOffers.filter((o) => o.originAirport === selection.originAirport);
-      outboundPreferenceOptions = buildOutboundPreferenceOptions(offersForOrigin, bounds, selection.returnPreference);
-      returnPreferenceOptions = buildReturnPreferenceOptions(offersForOrigin, bounds, selection.outboundPreference);
-      const filtered = filterFlightOffersForSelection(offersForOrigin, bounds, selection.outboundPreference, selection.returnPreference);
-      const resultantBase = ticketPerPersonTotal + hotelComponentPerPerson + feePerPerson;
-      flightOfferViews = filtered.map((o) => ({ ...toFlightOfferView(o), resultantTotalPerPerson: resultantBase + o.pricePerPerson }));
-      selectedFlight = flightOfferViews.find((f) => f.id === selection.flightOfferId) ?? null;
-      cheapestFilteredFlight = flightOfferViews[0]?.pricePerPerson ?? null;
+      // Outbound legs run Spanish origin -> destination; return legs run
+      // destination -> Spanish origin, so the selected origin shows up on
+      // opposite ends of each direction's legs (§9/§10).
+      const outboundForOrigin = data.outboundLegs.filter((l) => l.originAirport === selection.originAirport);
+      const returnForOrigin = data.returnLegs.filter((l) => l.destinationAirport === selection.originAirport);
+
+      outboundPreferenceOptions = buildOutboundPreferenceOptions(outboundForOrigin, bounds);
+      returnPreferenceOptions = buildReturnPreferenceOptions(returnForOrigin, bounds);
+
+      outboundLegViews = filterOutboundLegsForSelection(outboundForOrigin, bounds, selection.outboundPreference).map(toFlightLegView);
+      returnLegViews = filterReturnLegsForSelection(returnForOrigin, bounds, selection.returnPreference).map(toFlightLegView);
+
+      selectedOutboundLeg = outboundLegViews.find((l) => l.id === selection.outboundLegId) ?? null;
+      selectedReturnLeg = returnLegViews.find((l) => l.id === selection.returnLegId) ?? null;
+      cheapestFilteredOutbound = outboundLegViews[0]?.pricePerPerson ?? null;
+      cheapestFilteredReturn = returnLegViews[0]?.pricePerPerson ?? null;
     }
-    // Not blocked but no originAirport chosen yet: preference/offer lists
+    // Not blocked but no originAirport chosen yet: preference/leg lists
     // stay empty — the UI shows the airport step first (§11).
   }
 
@@ -201,8 +231,9 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
 
     let flightTotal = 0;
     if (flightRequiredByPackage && !flightBlocked) {
-      const perPersonFlightPrice = selectedFlight?.pricePerPerson ?? cheapestFilteredFlight ?? flightEstimatePerPerson;
-      flightTotal = perPersonFlightPrice * partySize;
+      const perPersonOutbound = selectedOutboundLeg?.pricePerPerson ?? cheapestFilteredOutbound ?? (cheapestDirectLegPrice(data.outboundLegs) ?? 0);
+      const perPersonReturn = selectedReturnLeg?.pricePerPerson ?? cheapestFilteredReturn ?? (cheapestDirectLegPrice(data.returnLegs) ?? 0);
+      flightTotal = (perPersonOutbound + perPersonReturn) * partySize;
     }
 
     const quote = computeQuote({
@@ -219,7 +250,8 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
       flightRequired: flightRequiredByPackage && !flightBlocked,
       originRequired,
       originSelected: Boolean(selection.originAirport),
-      flightSelected: Boolean(selectedFlight),
+      outboundFlightSelected: Boolean(selectedOutboundLeg),
+      returnFlightSelected: Boolean(selectedReturnLeg),
     });
     if (flightRequiredByPackage && flightBlocked) missing.push("vuelo (" + (data.eligibleOrigins.length === 0 ? "sin ruta directa disponible todavía" : "fecha del partido pendiente de confirmar") + ")");
 
@@ -232,7 +264,8 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
         flightRequired: flightRequiredByPackage && !flightBlocked,
         originRequired,
         originSelected: Boolean(selection.originAirport),
-        flightSelected: Boolean(selectedFlight),
+        outboundFlightSelected: Boolean(selectedOutboundLeg),
+        returnFlightSelected: Boolean(selectedReturnLeg),
         revalidated: data.revalidated,
       }),
       totalCommercial: quote.commercialTotal,
@@ -242,7 +275,15 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
   }
 
   return {
-    trip: { id: data.trip.id, slug: data.trip.slug, name: data.trip.name, subtitle: data.trip.subtitle, city: data.trip.city, maxPartySize: data.trip.maxPartySize },
+    trip: {
+      id: data.trip.id,
+      slug: data.trip.slug,
+      name: data.trip.name,
+      subtitle: data.trip.subtitle,
+      city: data.trip.city,
+      maxPartySize: data.trip.maxPartySize,
+      requiredTravelerFields: parseRequiredFields(data.trip.requiredTravelerFields),
+    },
     events: data.events,
     flightPackageEligible,
     packageTypeOptions,
@@ -254,7 +295,8 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
     flightAvailability,
     outboundPreferenceOptions,
     returnPreferenceOptions,
-    flightOffers: flightOfferViews,
+    outboundLegs: outboundLegViews,
+    returnLegs: returnLegViews,
     price,
     additionalMatchFeeApplies: matchCount > 1,
   };

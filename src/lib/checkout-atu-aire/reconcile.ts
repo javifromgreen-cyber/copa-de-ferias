@@ -17,11 +17,17 @@ export function reconcileSelection(selection: AtuAireSelection, quote: AtuAireQu
   }
   if (next.originAirport) {
     const stillEligible = quote.eligibleOrigins.some((o) => o.iata === next.originAirport);
-    if (!stillEligible) next = { ...next, originAirport: null, flightOfferId: null };
+    if (!stillEligible) next = { ...next, originAirport: null, outboundLegId: null, returnLegId: null };
   }
-  if (next.flightOfferId) {
-    const stillThere = quote.flightOffers.find((f) => f.id === next.flightOfferId);
-    if (!stillThere) next = { ...next, flightOfferId: null };
+  // Outbound and return are reconciled independently (§9/§10/§11) — one
+  // disappearing (e.g. a preference change) never clears the other.
+  if (next.outboundLegId) {
+    const stillThere = quote.outboundLegs.find((l) => l.id === next.outboundLegId);
+    if (!stillThere) next = { ...next, outboundLegId: null };
+  }
+  if (next.returnLegId) {
+    const stillThere = quote.returnLegs.find((l) => l.id === next.returnLegId);
+    if (!stillThere) next = { ...next, returnLegId: null };
   }
 
   return next;
