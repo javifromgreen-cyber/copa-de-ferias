@@ -2,6 +2,14 @@ import { prisma } from "@/lib/db";
 import { isPubliclyListed } from "./status";
 import type { TripCardData } from "@/components/trips/TripCard";
 
+// Belgrado (GROUP_CDF) is retired from every public listing surface — it
+// reads as a different, confusing product next to the A_TU_AIRE line-up and
+// is no longer a UX reference. Its data/checkout stay technically intact
+// (still reachable at its direct URL) purely so the existing GROUP_CDF
+// checkout e2e coverage keeps working; it must just never be discoverable
+// through browsing (Home, catálogo, sitemap).
+export const PUBLIC_LISTING_EXCLUDED_SLUGS = new Set(["derbi-eterno-belgrado"]);
+
 function toCardData(trip: {
   id: string;
   slug: string;
@@ -40,7 +48,7 @@ export async function getHomeTrips(): Promise<TripCardData[]> {
     orderBy: { order: "asc" },
     include: { origins: { orderBy: { order: "asc" } } },
   });
-  return trips.filter(isPubliclyListed).map(toCardData);
+  return trips.filter(isPubliclyListed).filter((t) => !PUBLIC_LISTING_EXCLUDED_SLUGS.has(t.slug)).map(toCardData);
 }
 
 export async function getTripsByStatusGroup() {
@@ -48,7 +56,7 @@ export async function getTripsByStatusGroup() {
     orderBy: { order: "asc" },
     include: { origins: { orderBy: { order: "asc" } } },
   });
-  const listed = trips.filter(isPubliclyListed);
+  const listed = trips.filter(isPubliclyListed).filter((t) => !PUBLIC_LISTING_EXCLUDED_SLUGS.has(t.slug));
 
   return {
     open: listed.filter((t) => t.status === "open" || t.status === "sold_out").map(toCardData),

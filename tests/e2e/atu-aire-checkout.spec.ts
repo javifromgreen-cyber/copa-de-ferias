@@ -160,6 +160,87 @@ test.describe("A_TU_AIRE — traveler data at party size 1 (§14/§15)", () => {
   });
 });
 
+test.describe("A_TU_AIRE — global max 6 travelers, independent of any trip's own maxPartySize", () => {
+  test("Milán (Trip.maxPartySize=8): the '+' button stops at 6 and the copy reads 'Máximo 6 viajeros por reserva.'", async ({ page }) => {
+    await page.goto("/viajes/milan-derby-della-madonnina/reservar");
+    await selectCountry(page, "España");
+    await page.waitForSelector("text=¿Qué quieres reservar?");
+    await page.locator("button").filter({ hasText: "Entrada + Hotel" }).filter({ hasNotText: "Vuelo" }).click();
+    await page.waitForSelector("text=¿Cuántos viajeros sois?");
+
+    const section = page.locator("section", { has: page.getByText("¿Cuántos viajeros sois?") });
+    await expect(section.getByText("Máximo 6 viajeros por reserva.")).toBeVisible();
+
+    const plus = section.getByRole("button", { name: "Más viajeros" });
+    for (let i = 0; i < 5; i++) await plus.click(); // 1 -> 6
+    await expect(section.getByText("6", { exact: true })).toBeVisible();
+    await expect(plus).toBeDisabled();
+
+    // The button is disabled, so a further click is a no-op — the counter
+    // never reaches 7, even though Milán's own maxPartySize is 8.
+    await plus.click({ force: true }).catch(() => {});
+    await expect(section.getByText("6", { exact: true })).toBeVisible();
+  });
+});
+
+test.describe("A_TU_AIRE — Rooming block for 5 and 6 travelers (bug fix: it used to silently disappear)", () => {
+  async function reachRoomingFor(page: Page, extraClicks: number) {
+    await page.goto("/viajes/milan-derby-della-madonnina/reservar");
+    await selectCountry(page, "España");
+    await page.waitForSelector("text=¿Qué quieres reservar?");
+    await page.locator("button").filter({ hasText: "Entrada + Hotel" }).filter({ hasNotText: "Vuelo" }).click();
+    await page.waitForSelector("text=¿Cuántos viajeros sois?");
+    const plus = page.getByRole("button", { name: "Más viajeros" });
+    for (let i = 0; i < extraClicks; i++) await plus.click();
+
+    await page.waitForSelector("text=Tus entradas");
+    await page.getByRole("button", { name: /Curva/ }).click();
+    await page.waitForSelector("text=¿Cuántas noches os quedáis?");
+    await page.getByRole("button", { name: "1 noche" }).click();
+    await page.waitForSelector("text=Elige tu hotel");
+    await page.locator("section", { has: page.getByText("Elige tu hotel") }).locator("button:not([disabled])").first().click();
+
+    await page.waitForSelector("text=Revisar precio y disponibilidad");
+    await page.getByRole("button", { name: "Revisar precio y disponibilidad" }).click();
+    await page.waitForSelector("text=Todo listo");
+  }
+
+  test("5 travelers: Habitaciones shows exactly 1 Doble + 1 Triple, all 5 travelers assigned", async ({ page }) => {
+    await reachRoomingFor(page, 4); // 1 -> 5
+
+    await expect(page.getByText("Habitaciones", { exact: true })).toBeVisible();
+    const roomingSection = page.locator("section", { has: page.getByText("Habitaciones", { exact: true }) }).last(); // .last() picks RoomingStep's own <section>, not the outer wrapper that also contains TravelerDetailsStep's "Viajero N" fieldset legends
+    await expect(roomingSection.getByText(/Habitación \d+ ·/)).toHaveCount(2);
+    await expect(roomingSection.getByText("Doble")).toHaveCount(1);
+    await expect(roomingSection.getByText("Triple")).toHaveCount(1);
+    for (const n of [1, 2, 3, 4, 5]) {
+      await expect(roomingSection.getByText(`Viajero ${n}`)).toBeVisible();
+    }
+  });
+
+  test("6 travelers: Habitaciones shows exactly 3 Dobles, all 6 travelers assigned", async ({ page }) => {
+    await reachRoomingFor(page, 5); // 1 -> 6
+
+    await expect(page.getByText("Habitaciones", { exact: true })).toBeVisible();
+    const roomingSection = page.locator("section", { has: page.getByText("Habitaciones", { exact: true }) }).last(); // .last() picks RoomingStep's own <section>, not the outer wrapper that also contains TravelerDetailsStep's "Viajero N" fieldset legends
+    await expect(roomingSection.getByText(/Habitación \d+ ·/)).toHaveCount(3);
+    await expect(roomingSection.getByText("Doble")).toHaveCount(3);
+    await expect(roomingSection.getByText("Triple")).toHaveCount(0);
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      await expect(roomingSection.getByText(`Viajero ${n}`)).toBeVisible();
+    }
+  });
+
+  test("4 travelers still shows exactly 2 Dobles (regression — must keep working exactly as before)", async ({ page }) => {
+    await reachRoomingFor(page, 3); // 1 -> 4
+
+    const roomingSection = page.locator("section", { has: page.getByText("Habitaciones", { exact: true }) }).last(); // .last() picks RoomingStep's own <section>, not the outer wrapper that also contains TravelerDetailsStep's "Viajero N" fieldset legends
+    await expect(roomingSection.getByText(/Habitación \d+ ·/)).toHaveCount(2);
+    await expect(roomingSection.getByText("Doble")).toHaveCount(2);
+    await expect(roomingSection.getByText("Triple")).toHaveCount(0);
+  });
+});
+
 test.describe("A_TU_AIRE checkout — Ámsterdam", () => {
   test("ticket flow works and the price updates on change; now also offers Entrada+Hotel and Entrada+Hotel+Vuelo (§1)", async ({ page }) => {
     await page.goto("/viajes/amsterdam-de-klassieker/reservar");
@@ -495,7 +576,7 @@ test.describe("A_TU_AIRE checkout — Manchester (QA demo product, confirmed sch
 
     // --- Rooming: visible, based on the real room mix for 2 travelers (a double, both named) (§16) ---
     await expect(page.getByText("Habitaciones", { exact: true })).toBeVisible();
-    const roomingSection = page.locator("section", { has: page.getByText("Habitaciones", { exact: true }) });
+    const roomingSection = page.locator("section", { has: page.getByText("Habitaciones", { exact: true }) }).last(); // .last() picks RoomingStep's own <section>, not the outer wrapper that also contains TravelerDetailsStep's "Viajero N" fieldset legends
     await expect(roomingSection.getByText("Doble")).toBeVisible();
     await expect(roomingSection.getByText(/QA Manchester/)).toBeVisible();
     await expect(roomingSection.getByText(/Compi DeViaje/)).toBeVisible();

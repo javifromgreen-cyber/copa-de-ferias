@@ -89,6 +89,14 @@ export async function createAtuAireBooking(
 
   const partySize = selection.partySize;
 
+  // Defensive re-check of the global party-size cap (max 6, never trip-
+  // specific) — the client already disables past this, but the server
+  // never trusts a client-side-only limit for something the price/room
+  // mix depend on.
+  if (partySize > quote.partySizeLimits.max) {
+    return { ok: false, error: `El máximo permitido es ${quote.partySizeLimits.max} viajeros por reserva.` };
+  }
+
   // Exactly one traveler entry per party member (§15) — a mismatch means
   // the client-side resize effect and the server disagree, which should
   // never happen, but is never silently tolerated either.

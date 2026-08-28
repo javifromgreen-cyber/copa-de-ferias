@@ -248,6 +248,34 @@ describe("reconcileSelection (§9/§10/§11)", () => {
     expect(result.outboundLegId).toBeNull();
     expect(result.returnLegId).toBe("ret1");
   });
+
+  it("auto-selects the cheapest still-valid hotel when the current one no longer supports the room mix — never silently clears it (rooming bug fix)", () => {
+    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, hotelOfferId: "hA" };
+    // Mirrors buildHotelOptions' own sort order: invalid last, cheapest-valid first.
+    const quote = {
+      eligibleOrigins: [],
+      outboundLegs: [],
+      returnLegs: [],
+      hotelOptions: [
+        { offer: { id: "hB" }, valid: true, totalPrice: 200 },
+        { offer: { id: "hA" }, valid: false, totalPrice: 100 },
+      ],
+    } as never;
+    const result = reconcileSelection(selection, quote);
+    expect(result.hotelOfferId).toBe("hB");
+  });
+
+  it("falls back to null only when genuinely no hotel offer supports the mix", () => {
+    const selection: AtuAireSelection = { ...DEFAULT_SELECTION, hotelOfferId: "hA" };
+    const quote = {
+      eligibleOrigins: [],
+      outboundLegs: [],
+      returnLegs: [],
+      hotelOptions: [{ offer: { id: "hA" }, valid: false, totalPrice: 100 }],
+    } as never;
+    const result = reconcileSelection(selection, quote);
+    expect(result.hotelOfferId).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------
@@ -623,5 +651,93 @@ describe("buildAtuAireQuote — price recompute on each decision (regression, §
     for (const option of quote.packageTypeOptions) {
       expect(option.fromPricePerPerson).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("buildAtuAireQuote — global 6-traveler cap, independent of any trip's own maxPartySize", () => {
+  it("caps partySizeLimits.max at 6 even when Trip.maxPartySize is higher (e.g. Londres/Manchester at 10)", () => {
+    const data = baseData({ trip: { ...baseData().trip, maxPartySize: 10 } });
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
+    expect(quote.partySizeLimits).toEqual({ min: 1, max: 6 });
+  });
+
+  it("still respects a trip whose own maxPartySize is lower than 6 (never raises it)", () => {
+    const data = baseData({ trip: { ...baseData().trip, maxPartySize: 4 } });
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
+    expect(quote.partySizeLimits).toEqual({ min: 1, max: 4 });
+  });
+});
+
+describe("buildAtuAireQuote — rooming survives every allowed party size, including 5 and 6 (bug fix regression)", () => {
+  // hA mirrors MockHotelProviderA (no triples at all — invalid whenever the
+  // mix needs one, i.e. partySize 3/5/7/9); hB mirrors MockHotelProviderB
+  // (has triples, valid for every size up to 6). Same shape as baseData()'s
+  // own fixture, reused here for clarity.
+
+  for (const partySize of [1, 2, 3, 4, 5, 6] as const) {
+    it(`partySize=${partySize}: the quote exposes the exact roomMix computeRequiredRoomMix returns, and at least one hotel offer is valid`, () => {
+      const data = baseData();
+      const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize, ticketSelections: { ev1: "General" }, nights: 1 };
+      const quote = buildAtuAireQuote(data, sel);
+      expect(quote.roomMix).toEqual(computeRequiredRoomMix(partySize));
+      expect(quote.hotelOptions.some((h) => h.valid)).toBe(true);
+    });
+  }
+
+  it("partySize=5: hA (no triples) is correctly discarded as invalid, hB (has triples) remains selectable", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 5, ticketSelections: { ev1: "General" }, nights: 1 };
+    const quote = buildAtuAireQuote(data, sel);
+    expect(quote.hotelOptions.find((h) => h.offer.id === "hA")?.valid).toBe(false);
+    expect(quote.hotelOptions.find((h) => h.offer.id === "hB")?.valid).toBe(true);
+  });
+
+  it("partySize=6: both hA and hB are valid (no triple needed — 3 doubles)", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 6, ticketSelections: { ev1: "General" }, nights: 1 };
+    const quote = buildAtuAireQuote(data, sel);
+    expect(quote.hotelOptions.find((h) => h.offer.id === "hA")?.valid).toBe(true);
+    expect(quote.hotelOptions.find((h) => h.offer.id === "hB")?.valid).toBe(true);
+  });
+
+  it("the exact bug scenario: hA selected at 4, party size bumped to 5 (hA becomes invalid) — reconcileSelection auto-recovers a valid hotel instead of leaving 'hotel' permanently missing", () => {
+    const data = baseData();
+    const baseSel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", ticketSelections: { ev1: "General" }, nights: 1 };
+
+    // At 4 travelers, hA is valid and selected.
+    const quoteAt4 = buildAtuAireQuote(data, { ...baseSel, partySize: 4, hotelOfferId: "hA" });
+    expect(quoteAt4.hotelOptions.find((h) => h.offer.id === "hA")?.valid).toBe(true);
+
+    // Bump to 5 without changing the hotel selection — hA is now invalid, so
+    // the raw quote reports "hotel" as still missing.
+    const staleSelection: AtuAireSelection = { ...baseSel, partySize: 5, hotelOfferId: "hA" };
+    const quoteAt5Stale = buildAtuAireQuote(data, staleSelection);
+    expect(quoteAt5Stale.hotelOptions.find((h) => h.offer.id === "hA")?.valid).toBe(false);
+    expect(quoteAt5Stale.price.missing).toContain("hotel");
+
+    // reconcileSelection (called automatically by the checkout on every
+    // quote refresh) must recover a valid hotel rather than just nulling it.
+    const reconciled = reconcileSelection(staleSelection, quoteAt5Stale);
+    expect(reconciled.hotelOfferId).toBe("hB");
+
+    // Rebuilding the quote with the reconciled selection clears "hotel" from
+    // missing — the Revisar/Rooming block is reachable again, not stuck.
+    const quoteAt5Reconciled = buildAtuAireQuote(data, reconciled);
+    expect(quoteAt5Reconciled.price.missing).not.toContain("hotel");
+    expect(quoteAt5Reconciled.roomMix).toEqual([
+      { type: "triple", count: 1 },
+      { type: "double", count: 1 },
+    ]);
+  });
+
+  it("a party size that no hotel can support at all falls back to hotelOfferId: null, never a fabricated selection", () => {
+    const data = baseData({
+      hotelOffers: [hotel({ id: "hOnly", roomsAvailable: { single: 1, double: 1, triple: 0 }, pricePerNight: { single: 70, double: 45, triple: 38 } })],
+    });
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, hotelOfferId: "hOnly" };
+    const quote = buildAtuAireQuote(data, { ...sel, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 5, ticketSelections: { ev1: "General" }, nights: 1 });
+    expect(quote.hotelOptions.every((h) => !h.valid)).toBe(true);
+    const reconciled = reconcileSelection({ ...sel, partySize: 5 }, quote);
+    expect(reconciled.hotelOfferId).toBeNull();
   });
 });

@@ -1,10 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-test("home shows Belgrado as Abierto and the two upcoming trips as Próximamente", async ({ page }) => {
+test("home no longer surfaces Belgrado (retired from public listings) and still shows the upcoming trips as Próximamente", async ({ page }) => {
   await page.goto("/");
 
-  const belgrado = page.locator("article", { hasText: "Belgrado" });
-  await expect(belgrado).toContainText("Abierto");
+  await expect(page.getByText("Belgrado")).toHaveCount(0);
 
   const ingles = page.locator("article", { hasText: "Fútbol Inglés" });
   await expect(ingles).toContainText("Próximamente");
@@ -14,10 +13,10 @@ test("home shows Belgrado as Abierto and the two upcoming trips as Próximamente
   await expect(lisboa).toContainText("Próximamente");
 });
 
-test("home does not show a price or spots counter on trip cards", async ({ page }) => {
-  await page.goto("/");
-  const belgrado = page.locator("article", { hasText: "Belgrado" });
-  await expect(belgrado).not.toContainText("€");
+test("trip cards never show a price or spots counter", async ({ page }) => {
+  await page.goto("/viajes");
+  const card = page.locator("article", { hasText: "Ámsterdam" });
+  await expect(card).not.toContainText("€");
 });
 
 test("reviews are hidden by default", async ({ page }) => {

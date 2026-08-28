@@ -21,6 +21,11 @@ import type { NormalizedFlightLeg } from "@/lib/providers/types";
 
 const NIGHTS_DEFAULT = 1;
 
+// Product rule, not a per-trip setting: no A_TU_AIRE booking may exceed 6
+// travelers, regardless of what an individual Trip.maxPartySize says. A
+// trip's own maxPartySize can still cap it lower than 6, but never raise it.
+const MAX_PARTY_SIZE = 6;
+
 const NO_DIRECT_ROUTE_MESSAGE =
   "Ahora mismo no hemos encontrado vuelos directos compatibles con este viaje desde los aeropuertos disponibles. Puedes probar otro aeropuerto más adelante o continuar con Entrada + Hotel.";
 
@@ -287,7 +292,7 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
     events: data.events,
     flightPackageEligible,
     packageTypeOptions,
-    partySizeLimits: { min: 1, max: data.trip.maxPartySize },
+    partySizeLimits: { min: 1, max: Math.min(MAX_PARTY_SIZE, data.trip.maxPartySize) },
     ticketOptionsByEvent,
     roomMix,
     hotelOptions,

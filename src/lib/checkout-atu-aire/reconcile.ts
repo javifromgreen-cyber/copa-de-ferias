@@ -13,7 +13,17 @@ export function reconcileSelection(selection: AtuAireSelection, quote: AtuAireQu
 
   if (next.hotelOfferId) {
     const stillValid = quote.hotelOptions.find((h) => h.offer.id === next.hotelOfferId && h.valid);
-    if (!stillValid) next = { ...next, hotelOfferId: null };
+    if (!stillValid) {
+      // The previously selected hotel no longer supports the current room
+      // mix (e.g. party size changed and it doesn't have enough of some
+      // room type) — never leave the customer with a silently-cleared
+      // choice: quote.hotelOptions is already sorted valid-first then
+      // cheapest (see hotelOptions.ts), so its first valid entry IS the
+      // cheapest offer that DOES support the mix. Auto-select it when one
+      // exists; only fall back to null when genuinely nothing does.
+      const cheapestStillValid = quote.hotelOptions.find((h) => h.valid);
+      next = { ...next, hotelOfferId: cheapestStillValid?.offer.id ?? null };
+    }
   }
   if (next.originAirport) {
     const stillEligible = quote.eligibleOrigins.some((o) => o.iata === next.originAirport);
