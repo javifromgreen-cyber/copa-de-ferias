@@ -7,6 +7,7 @@ test("Mi Viaje requires a valid access token", async ({ page }) => {
 
 test("Mi Viaje lookup form is reachable without a token", async ({ page }) => {
   await page.goto("/mi-viaje");
-  await expect(page.getByLabel(/número de reserva/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Accede a tu viaje" })).toBeVisible();
+  await expect(page.getByLabel(/referencia de reserva/i)).toBeVisible();
   await expect(page.getByLabel(/email/i)).toBeVisible();
 });

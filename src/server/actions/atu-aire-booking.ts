@@ -7,11 +7,19 @@ import { getAtuAireCheckoutQuote } from "./atu-aire-checkout";
 import { getPaymentProvider } from "@/lib/payments";
 import { sendTemplatedEmail } from "@/lib/email";
 import { generateAccessToken, generateBookingReference, formatDate } from "@/lib/utils";
+import { packageRequiresHotel } from "@/lib/checkout-atu-aire/packageRequirements";
+import { assignTravelersToRooms } from "@/lib/checkout-atu-aire/rooming";
 import type { AtuAireSelection } from "@/lib/checkout-atu-aire/types";
 
 export type CreateAtuAireBookingResult =
   | { ok: true; reference: string; accessToken: string; isSimulated: boolean }
   | { ok: false; error: string };
+
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
 
 class RaceConditionError extends Error {}
 
@@ -128,6 +136,22 @@ export async function createAtuAireBooking(
   const selectedReturnLeg = quote.returnLegs.find((l) => l.id === selection.returnLegId) ?? null;
   const selectedOrigin = quote.eligibleOrigins.find((o) => o.iata === selection.originAirport) ?? null;
 
+  // Frozen once, here, at the moment of purchase — this is the same
+  // checkIn/checkOut window getAtuAireCheckoutQuote used to query hotel
+  // offers for this exact booking. Captured into the snapshot so Mi Viaje
+  // never has to re-derive it from the Event's current (possibly later
+  // changed) schedule (correction microblock §12/§13).
+  const eventMatchDates = quote.events.map((e) => e.matchDate).sort((a, b) => a.getTime() - b.getTime());
+  const hotelCheckIn = addDays(eventMatchDates[0], -1);
+  const hotelCheckOut = addDays(eventMatchDates[eventMatchDates.length - 1], 1);
+
+  // Same room mix + assignment the checkout's own RoomingStep showed the
+  // customer, run once here and frozen — never recomputed by Mi Viaje, so
+  // a later change to the room-mix business rule can't reshuffle a room
+  // already bought (§14/§15). travelerIndices match Traveler.order below.
+  const roomingSnapshot =
+    packageRequiresHotel(selection.packageType!) && quote.roomMix ? JSON.stringify(assignTravelersToRooms(partySize, quote.roomMix)) : "";
+
   const reference = generateBookingReference();
   const accessToken = generateAccessToken();
 
@@ -163,8 +187,16 @@ export async function createAtuAireBooking(
           partySize,
           ticketCount: partySize,
           hotelSelectionSnapshot: selectedHotel
-            ? JSON.stringify({ hotelOfferId: selectedHotel.offer.id, name: selectedHotel.offer.name, nights: selection.nights, perPersonPrice: selectedHotel.perPersonPrice })
+            ? JSON.stringify({
+                hotelOfferId: selectedHotel.offer.id,
+                name: selectedHotel.offer.name,
+                nights: selection.nights,
+                perPersonPrice: selectedHotel.perPersonPrice,
+                checkIn: hotelCheckIn,
+                checkOut: hotelCheckOut,
+              })
             : "",
+          roomingSnapshot,
           flightSelectionSnapshot:
             selectedOutboundLeg && selectedReturnLeg
               ? JSON.stringify({

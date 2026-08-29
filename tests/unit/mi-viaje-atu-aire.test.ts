@@ -128,6 +128,8 @@ function baseBooking(overrides: Partial<AtuAireBookingInput> = {}): AtuAireBooki
     hotelSelectionSnapshot: "",
     flightSelectionSnapshot: "",
     priceBreakdownSnapshot: JSON.stringify({ perPerson: 104, total: 208, ticketSelections: { ev1: "General" } }),
+    roomingSnapshot: "",
+    additionalDataRequestNote: "",
     trip: {
       name: "Demo",
       subtitle: "Demo",
@@ -152,6 +154,7 @@ function baseBooking(overrides: Partial<AtuAireBookingInput> = {}): AtuAireBooki
     ],
     documents: [],
     updates: [],
+    actions: [],
     ...overrides,
   };
 }
@@ -188,6 +191,156 @@ describe("buildAtuAireMiViajeView — TICKET_HOTEL shows hotel/rooms but never a
     expect(view.hotel?.name).toBe("Hotel Central Manchester");
     expect(view.rooms).toEqual([{ label: "Habitación 1 · Doble", travelerNames: ["Javier Pérez", "Ana Pérez"] }]);
     expect(view.flights).toBeNull();
+  });
+});
+
+describe("buildAtuAireMiViajeView — hotel dates/rooming come from frozen snapshots, never re-derived post-purchase (correction §12-16)", () => {
+  const snapshotCheckIn = new Date(2026, 11, 4).toISOString();
+  const snapshotCheckOut = new Date(2026, 11, 6).toISOString();
+
+  it("uses hotelSelectionSnapshot's own checkIn/checkOut, not the Event's current matchDate", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel X", nights: 2, perPersonPrice: 90, checkIn: snapshotCheckIn, checkOut: snapshotCheckOut }),
+      }),
+    );
+    expect(view.hotel?.checkIn).toEqual(new Date(2026, 11, 4));
+    expect(view.hotel?.checkOut).toEqual(new Date(2026, 11, 6));
+  });
+
+  it("a later change to the Event's matchDate never moves the displayed hotel dates", () => {
+    const bookingInput = baseBooking({
+      packageType: "TICKET_HOTEL",
+      hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel X", nights: 2, perPersonPrice: 90, checkIn: snapshotCheckIn, checkOut: snapshotCheckOut }),
+    });
+    // Simulate the match being officially rescheduled after purchase.
+    bookingInput.trip.events[0].matchDate = new Date(2027, 2, 20);
+    const view = buildAtuAireMiViajeView(bookingInput);
+    expect(view.hotel?.checkIn).toEqual(new Date(2026, 11, 4));
+    expect(view.hotel?.checkOut).toEqual(new Date(2026, 11, 6));
+    // ...while the match info shown does reflect the new date (§17).
+    expect(view.events[0].dateLabel).toContain("2027");
+  });
+
+  it("falls back to deriving the window from the Event only for a pre-migration booking with no checkIn/checkOut in its snapshot", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel X", nights: 2, perPersonPrice: 90 }),
+      }),
+    );
+    expect(view.hotel?.checkIn).toEqual(new Date(2026, 11, 4)); // baseBooking's event matchDate is 2026-12-05
+    expect(view.hotel?.checkOut).toEqual(new Date(2026, 11, 6));
+  });
+
+  it("uses roomingSnapshot's exact assignment, ignoring what computeRequiredRoomMix would say today", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        partySize: 3,
+        hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel X", nights: 1, perPersonPrice: 90, checkIn: snapshotCheckIn, checkOut: snapshotCheckOut }),
+        // A party of 3 would normally be one triple room (computeRequiredRoomMix(3))
+        // — this snapshot instead freezes what was ACTUALLY booked: a single + a double.
+        roomingSnapshot: JSON.stringify([
+          { type: "single", travelerIndices: [0] },
+          { type: "double", travelerIndices: [1, 2] },
+        ]),
+        travelers: [
+          { id: "t1", firstName: "Javier", lastName: "Pérez", nationality: "España", docType: "dni", docNumber: "11111111A", birthDate: null, phone: "", emergencyContactName: "", emergencyContactPhone: "" },
+          { id: "t2", firstName: "Ana", lastName: "Pérez", nationality: "España", docType: "dni", docNumber: "22222222B", birthDate: null, phone: "", emergencyContactName: "", emergencyContactPhone: "" },
+          { id: "t3", firstName: "Luis", lastName: "Pérez", nationality: "España", docType: "dni", docNumber: "33333333C", birthDate: null, phone: "", emergencyContactName: "", emergencyContactPhone: "" },
+        ],
+      }),
+    );
+    expect(view.rooms).toEqual([
+      { label: "Habitación 1 · Individual", travelerNames: ["Javier Pérez"] },
+      { label: "Habitación 2 · Doble", travelerNames: ["Ana Pérez", "Luis Pérez"] },
+    ]);
+  });
+
+  it("falls back to reconstructing rooming only when no roomingSnapshot was persisted (pre-migration booking)", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel X", nights: 2, perPersonPrice: 90, checkIn: snapshotCheckIn, checkOut: snapshotCheckOut }),
+        roomingSnapshot: "",
+      }),
+    );
+    expect(view.rooms).toEqual([{ label: "Habitación 1 · Doble", travelerNames: ["Javier Pérez", "Ana Pérez"] }]);
+  });
+
+  it("the price paid stays exactly what was frozen at purchase, regardless of anything else", () => {
+    const view = buildAtuAireMiViajeView(baseBooking({ totalPrice: 830 }));
+    expect(view.payment.total).toBe(830);
+  });
+});
+
+describe("buildAtuAireMiViajeView — Acciones necesarias (correction §6-11)", () => {
+  it("no section content at all when there is nothing pending", () => {
+    const view = buildAtuAireMiViajeView(baseBooking());
+    expect(view.necessaryActions).toEqual([]);
+  });
+
+  it("a pending BookingAction appears, with its due date and href", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        actions: [
+          {
+            id: "a1",
+            type: "hotel_checkin",
+            title: "Completa el check-in del hotel",
+            description: "Requiere check-in online.",
+            status: "pending",
+            actionUrl: "",
+            dueAt: new Date(2026, 11, 4),
+          },
+        ],
+      }),
+    );
+    expect(view.necessaryActions).toHaveLength(1);
+    expect(view.necessaryActions[0].title).toBe("Completa el check-in del hotel");
+    expect(view.necessaryActions[0].dueAtLabel).not.toBeNull();
+    expect(view.necessaryActions[0].actionHref).toBe("#hotel");
+  });
+
+  it("a completed BookingAction never appears in Acciones necesarias", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        actions: [
+          { id: "a1", type: "hotel_checkin", title: "Ya hecho", description: "", status: "completed", actionUrl: "", dueAt: null },
+        ],
+      }),
+    );
+    expect(view.necessaryActions).toEqual([]);
+  });
+
+  it("a BookingDocument marked action_required surfaces as a necessary action", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        documents: [{ type: "ticket", eventId: "ev1", status: "action_required", fileUrl: "" }],
+      }),
+    );
+    expect(view.necessaryActions).toHaveLength(1);
+    expect(view.necessaryActions[0].actionHref).toBe("#entradas");
+  });
+
+  it("Booking's additionalDataRequestNote, when set, surfaces as a necessary action", () => {
+    const view = buildAtuAireMiViajeView(baseBooking({ additionalDataRequestNote: "Falta el DNI actualizado de un viajero." }));
+    expect(view.necessaryActions).toHaveLength(1);
+    expect(view.necessaryActions[0].description).toBe("Falta el DNI actualizado de un viajero.");
+    expect(view.necessaryActions[0].actionHref).toBe("#viajeros");
+  });
+
+  it("combines all three real sources at once, never inventing a fourth", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        actions: [{ id: "a1", type: "flight_checkin", title: "Check-in vuelo", description: "", status: "pending", actionUrl: "", dueAt: null }],
+        documents: [{ type: "hotel", eventId: "", status: "action_required", fileUrl: "" }],
+        additionalDataRequestNote: "Revisa un dato.",
+      }),
+    );
+    expect(view.necessaryActions).toHaveLength(3);
   });
 });
 

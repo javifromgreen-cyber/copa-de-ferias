@@ -35,6 +35,7 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
       travelers: { orderBy: { order: "asc" } },
       documents: true,
       updates: { orderBy: { createdAt: "desc" } },
+      actions: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!booking) notFound();

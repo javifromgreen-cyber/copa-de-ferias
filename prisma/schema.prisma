@@ -545,9 +545,20 @@ model Booking {
   // Frozen JSON snapshots of the hotel/flight offers and price breakdown
   // actually purchased, captured at final revalidation — so a later change
   // in mock provider data never rewrites what the customer already bought.
+  // hotelSelectionSnapshot includes checkIn/checkOut (not just nights) so
+  // Mi Viaje never has to re-derive dates from the Event's current
+  // schedule — a later Event change must never silently move a hotel stay
+  // the customer already booked.
   hotelSelectionSnapshot  String @default("")
   flightSelectionSnapshot String @default("")
   priceBreakdownSnapshot  String @default("")
+
+  // Frozen room assignment ({type, travelerIndices}[], travelerIndices
+  // matching Traveler.order) computed once at booking time from the exact
+  // same pure computeRequiredRoomMix + assignTravelersToRooms the checkout
+  // used — so a later change to that business rule can never reshuffle a
+  // room mix the customer already bought. "" when no hotel was purchased.
+  roomingSnapshot String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -557,6 +568,7 @@ model Booking {
   emailLogs      EmailLog[]
   documents      BookingDocument[]
   updates        BookingUpdate[]
+  actions        BookingAction[]
 }
 
 enum RoomPreference {
@@ -670,6 +682,43 @@ model BookingUpdate {
   message String @default("")
 
   createdAt DateTime @default(now())
+}
+
+enum BookingActionType {
+  hotel_checkin
+  flight_checkin
+  data_correction
+  change_review
+  document
+  other
+}
+
+enum BookingActionStatus {
+  pending
+  completed
+}
+
+// Mi Viaje's "Acciones necesarias" block (correction microblock §6-11) —
+// only real, persisted actions ever appear here: an explicit row here, a
+// BookingDocument already marked action_required, or Booking's own
+// admin-set additionalDataRequestNote. Never auto-generated from Event
+// data or heuristics, and never seeded in production by default — only
+// dev/demo seed data creates one to preview the UI.
+model BookingAction {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  type        BookingActionType
+  title       String
+  description String              @default("")
+  status      BookingActionStatus @default(pending)
+
+  actionUrl String    @default("")
+  dueAt     DateTime?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
 }
 
 enum ChangeRequestType {

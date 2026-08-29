@@ -13,6 +13,15 @@ test("mobile menu opens and navigates", async ({ page }) => {
   await expect(page).toHaveURL(/\/viajes$/);
 });
 
+test("Mi Viaje is reachable from the mobile hamburger menu", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /abrir menú/i }).click();
+  await expect(page.getByRole("banner").getByRole("link", { name: "Mi Viaje", exact: true })).toBeVisible();
+  await page.getByRole("banner").getByRole("link", { name: "Mi Viaje", exact: true }).click();
+  await expect(page).toHaveURL(/\/mi-viaje$/);
+  await expect(page.getByRole("heading", { name: "Accede a tu viaje" })).toBeVisible();
+});
+
 test("trip page shows a sticky mobile reserve CTA", async ({ page }) => {
   await page.goto("/viajes/derbi-eterno-belgrado");
   await expect(page.getByRole("link", { name: /reservar plaza/i }).last()).toBeVisible();

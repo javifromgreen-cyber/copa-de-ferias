@@ -1,16 +1,29 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { miViajeLookupSchema, travelerDetailsSchema, travelerContactSchema, changeRequestSchema } from "@/lib/validation/schemas";
+import { MI_VIAJE_COOKIE_NAME } from "@/lib/mi-viaje/cookies";
 
 export type LookupResult = { ok: true; accessToken: string } | { ok: false; error: string };
 
+// Remembers the last booking a visitor successfully authorized on this
+// device, purely as a convenience so a future visit to /mi-viaje can skip
+// straight to it (correction microblock §4) — never a real session/account
+// system. The cookie holds the SAME accessToken that already gates
+// /mi-viaje/[token]; storing it httpOnly just keeps it out of reach of
+// page JS, it grants nothing a stolen URL wouldn't already grant.
+const MI_VIAJE_COOKIE_MAX_AGE = 60 * 60 * 24 * 180; // 180 days
+
 /**
- * Demo-mode "magic link" substitute: instead of emailing a signed link, we
- * let the buyer look themselves up with reference + email (both of which
- * only the buyer and Copa de Ferias know) and hand back the access token
- * for /mi-viaje/[token]. In production this form stays as a fallback, but
- * the primary path is the link emailed after booking.
+ * Security (correction microblock §3): the reference alone is semi-public
+ * (it appears in URLs/emails) and must never be enough on its own — access
+ * requires the reference AND the exact buyer email to match the same
+ * booking. On any mismatch this returns one generic error, never revealing
+ * whether the reference exists or which part was wrong (no enumeration).
+ * The accessToken itself is never put in a form field — only ever handed
+ * back inside this authorized server response, exactly like the existing
+ * confirmación-page flow already does.
  */
 export async function lookupTripAccess(input: { reference: string; email: string }): Promise<LookupResult> {
   const parsed = miViajeLookupSchema.safeParse(input);
@@ -24,6 +37,16 @@ export async function lookupTripAccess(input: { reference: string; email: string
   });
 
   if (!booking) return { ok: false, error: "No encontramos ninguna reserva con esos datos" };
+
+  const cookieStore = await cookies();
+  cookieStore.set(MI_VIAJE_COOKIE_NAME, booking.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: MI_VIAJE_COOKIE_MAX_AGE,
+  });
+
   return { ok: true, accessToken: booking.accessToken };
 }
 

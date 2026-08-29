@@ -9,6 +9,8 @@ import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { KNOWN_COMPETITIONS } from "../src/lib/catalog/knownCompetitions";
 import { computeOrganizationFee, NO_OVERRIDES } from "../src/lib/pricing/organizationFee";
+import { computeRequiredRoomMix } from "../src/lib/pricing/roomMix";
+import { assignTravelersToRooms } from "../src/lib/checkout-atu-aire/rooming";
 
 const prisma = new PrismaClient();
 
@@ -850,6 +852,13 @@ async function main() {
   await prisma.booking.deleteMany({ where: { reference: "CDF-DEMOMAN1" } });
   const demoMiViajeOutbound = addDays(demoDMatchDate, -1);
   const demoMiViajeReturn = addDays(demoDMatchDate, 1);
+  // Frozen once here, exactly like createAtuAireBooking does for a real
+  // purchase (correction microblock §12/§13) — Mi Viaje must keep showing
+  // these dates even if demoDMatchDate/demoDEvent later change.
+  const demoHotelCheckIn = addDays(demoDMatchDate, -1);
+  const demoHotelCheckOut = addDays(demoDMatchDate, 1);
+  const demoRoomMix = computeRequiredRoomMix(2);
+  const demoRoomingSnapshot = JSON.stringify(assignTravelersToRooms(2, demoRoomMix));
   const demoMiViajeBooking = await prisma.booking.create({
     data: {
       reference: "CDF-DEMOMAN1",
@@ -869,7 +878,15 @@ async function main() {
       packageType: "TICKET_HOTEL_FLIGHT",
       partySize: 2,
       ticketCount: 2,
-      hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "demo-hotel-central-manchester", name: "Hotel Central Manchester", nights: 2, perPersonPrice: 90 }),
+      hotelSelectionSnapshot: JSON.stringify({
+        hotelOfferId: "demo-hotel-central-manchester",
+        name: "Hotel Central Manchester",
+        nights: 2,
+        perPersonPrice: 90,
+        checkIn: demoHotelCheckIn,
+        checkOut: demoHotelCheckOut,
+      }),
+      roomingSnapshot: demoRoomingSnapshot,
       flightSelectionSnapshot: JSON.stringify({
         outboundLegId: "demo-leg-out",
         returnLegId: "demo-leg-ret",
@@ -932,6 +949,20 @@ async function main() {
       { bookingId: demoMiViajeBooking.id, title: "El horario del partido ha sido confirmado.", message: "Manchester City – Manchester United, 17:30 hora local.", createdAt: addDays(new Date(), -12) },
       { bookingId: demoMiViajeBooking.id, title: "Tu hotel está confirmado.", message: "Hotel Central Manchester, 2 noches.", createdAt: addDays(new Date(), -3) },
     ],
+  });
+  // Dev/demo only — a single clearly-fictitious pending action so the
+  // "Acciones necesarias" block has something real to render (correction
+  // microblock §11/§18). createAtuAireBooking never creates BookingAction
+  // rows on its own for a real purchase.
+  await prisma.bookingAction.create({
+    data: {
+      bookingId: demoMiViajeBooking.id,
+      type: "hotel_checkin",
+      title: "Completa el check-in del hotel",
+      description: "Hotel Central Manchester requiere completar el check-in online antes de tu llegada.",
+      status: "pending",
+      dueAt: demoHotelCheckIn,
+    },
   });
 
   // -----------------------------------------------------------------

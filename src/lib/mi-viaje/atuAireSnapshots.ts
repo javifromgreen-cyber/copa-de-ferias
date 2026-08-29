@@ -12,7 +12,14 @@ export type HotelSnapshot = {
   name: string;
   nights: number;
   perPersonPrice: number;
+  // Added by the correction microblock — a booking created before this
+  // change won't have these, so callers must fall back gracefully (see
+  // buildAtuAireView.ts) rather than assume they're always present.
+  checkIn?: string;
+  checkOut?: string;
 };
+
+export type RoomingSnapshotEntry = { type: "single" | "double" | "triple"; travelerIndices: number[] };
 
 export type FlightSnapshot = {
   outboundLegId: string;
@@ -50,4 +57,8 @@ export function parseFlightSnapshot(raw: string): FlightSnapshot | null {
 
 export function parsePriceBreakdownSnapshot(raw: string): PriceBreakdownSnapshot | null {
   return safeParse<PriceBreakdownSnapshot>(raw);
+}
+
+export function parseRoomingSnapshot(raw: string): RoomingSnapshotEntry[] | null {
+  return safeParse<RoomingSnapshotEntry[]>(raw);
 }

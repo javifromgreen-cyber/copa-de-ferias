@@ -17,6 +17,7 @@ const NAV = [
   { href: "/competiciones", label: "Competiciones" },
   { href: "/como-funciona", label: "Cómo funciona" },
   { href: "/faq", label: "FAQ" },
+  { href: "/mi-viaje", label: "Mi Viaje" },
 ];
 
 export function Header({ brand }: { brand: Brand }) {

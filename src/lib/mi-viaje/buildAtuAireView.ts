@@ -1,6 +1,6 @@
-import type { BookingStatus, BookingDocumentType, BookingDocumentStatus, PackageType, ScheduleStatus, PaymentProviderKind } from "@prisma/client";
+import type { BookingStatus, BookingDocumentType, BookingDocumentStatus, BookingActionType, BookingActionStatus, PackageType, ScheduleStatus, PaymentProviderKind } from "@prisma/client";
 import { PACKAGE_TYPE_COPY, packageRequiresHotel, packageRequiresFlight } from "@/lib/checkout-atu-aire/packageRequirements";
-import { parseHotelSnapshot, parseFlightSnapshot, parsePriceBreakdownSnapshot } from "./atuAireSnapshots";
+import { parseHotelSnapshot, parseFlightSnapshot, parsePriceBreakdownSnapshot, parseRoomingSnapshot } from "./atuAireSnapshots";
 import { deriveHotelWindow } from "./hotelWindow";
 import { eventScheduleCopy } from "./scheduleCopy";
 import { maskDocNumber } from "./masking";
@@ -24,6 +24,8 @@ export type AtuAireBookingInput = {
   hotelSelectionSnapshot: string;
   flightSelectionSnapshot: string;
   priceBreakdownSnapshot: string;
+  roomingSnapshot: string;
+  additionalDataRequestNote: string;
   trip: {
     name: string;
     subtitle: string;
@@ -54,6 +56,7 @@ export type AtuAireBookingInput = {
   }>;
   documents: Array<{ type: BookingDocumentType; eventId: string; status: BookingDocumentStatus; fileUrl: string }>;
   updates: Array<{ id: string; title: string; message: string; createdAt: Date }>;
+  actions: Array<{ id: string; type: BookingActionType; title: string; description: string; status: BookingActionStatus; actionUrl: string; dueAt: Date | null }>;
 };
 
 export type AtuAireMiViajeView = {
@@ -96,6 +99,23 @@ export type AtuAireMiViajeView = {
   documents: Array<{ label: string; statusLabel: string; fileUrl: string }>;
   updates: Array<{ id: string; title: string; message: string; createdAt: Date }>;
   payment: { total: number; currency: string; statusLabel: string; paidAtLabel: string; methodLabel: string };
+  necessaryActions: Array<{ id: string; title: string; description: string; dueAtLabel: string | null; actionHref: string }>;
+};
+
+const DOCUMENT_TYPE_ACTION_HREF: Record<BookingDocumentType, string> = {
+  ticket: "#entradas",
+  hotel: "#hotel",
+  flight: "#vuelos",
+  other: "#documentacion",
+};
+
+const ACTION_TYPE_FALLBACK_HREF: Record<BookingActionType, string> = {
+  hotel_checkin: "#hotel",
+  flight_checkin: "#vuelos",
+  data_correction: "#viajeros",
+  change_review: "#actualizaciones",
+  document: "#documentacion",
+  other: "#ayuda",
 };
 
 const PAYMENT_METHOD_LABELS: Record<PaymentProviderKind, string> = {
@@ -110,6 +130,17 @@ function eventDocument(documents: AtuAireBookingInput["documents"], eventId: str
 
 function typeDocument(documents: AtuAireBookingInput["documents"], type: BookingDocumentType) {
   return documents.find((d) => d.type === type) ?? null;
+}
+
+function documentLabel(doc: { type: BookingDocumentType; eventId: string }, events: AtuAireBookingInput["trip"]["events"]): string {
+  if (doc.type === "ticket") {
+    const event = events.find((e) => e.id === doc.eventId);
+    if (event) return `Entrada — ${event.homeTeam} – ${event.awayTeam}`;
+    return "Entrada";
+  }
+  if (doc.type === "hotel") return "Bono de hotel";
+  if (doc.type === "flight") return "Documentación de vuelo";
+  return "Información adicional";
 }
 
 /**
@@ -181,11 +212,23 @@ export function buildAtuAireMiViajeView(booking: AtuAireBookingInput): AtuAireMi
   if (hotelRequired) {
     const snapshot = parseHotelSnapshot(booking.hotelSelectionSnapshot);
     if (snapshot) {
-      const { checkIn, checkOut } = deriveHotelWindow(booking.trip.events.map((e) => e.matchDate));
+      // checkIn/checkOut come from the frozen snapshot — exactly what was
+      // booked, never re-derived from the Event's current schedule
+      // (correction microblock §12/§13). Older bookings created before
+      // this field existed fall back to the old live-derivation just once,
+      // for backward compatibility, not as the intended path going forward.
+      const { checkIn, checkOut } = snapshot.checkIn && snapshot.checkOut
+        ? { checkIn: new Date(snapshot.checkIn), checkOut: new Date(snapshot.checkOut) }
+        : deriveHotelWindow(booking.trip.events.map((e) => e.matchDate));
       const hotelDoc = typeDocument(booking.documents, "hotel");
       hotel = { name: snapshot.name, nights: snapshot.nights, checkIn, checkOut, statusLabel: hotelDoc ? hotelStatusLabel(hotelDoc.status) : "Reserva confirmada" };
 
-      const assignments = reconstructRoomAssignments(partySize);
+      // Same rule: the exact room assignment bought, from roomingSnapshot
+      // — never recomputed from today's computeRequiredRoomMix table
+      // (§14/§15). Falls back to reconstructing it only for bookings
+      // created before roomingSnapshot existed.
+      const persistedRooms = parseRoomingSnapshot(booking.roomingSnapshot);
+      const assignments = persistedRooms ?? reconstructRoomAssignments(partySize);
       const names = travelersSorted.map((t) => `${t.firstName} ${t.lastName}`.trim());
       const ROOM_TYPE_LABELS: Record<string, string> = { single: "Individual", double: "Doble", triple: "Triple" };
       rooms = assignments.map((room, i) => ({
@@ -208,14 +251,48 @@ export function buildAtuAireMiViajeView(booking: AtuAireBookingInput): AtuAireMi
     }
   }
 
-  const documents = booking.documents.map((d) => {
-    let label = d.type === "hotel" ? "Bono de hotel" : d.type === "flight" ? "Documentación de vuelo" : d.type === "other" ? "Información adicional" : "Entrada";
-    if (d.type === "ticket") {
-      const event = booking.trip.events.find((e) => e.id === d.eventId);
-      if (event) label = `Entrada — ${event.homeTeam} – ${event.awayTeam}`;
-    }
-    return { label, statusLabel: documentationStatusLabel(d.type, d.status), fileUrl: d.fileUrl };
-  });
+  const documents = booking.documents.map((d) => ({
+    label: documentLabel(d, booking.trip.events),
+    statusLabel: documentationStatusLabel(d.type, d.status),
+    fileUrl: d.fileUrl,
+  }));
+
+  // "Acciones necesarias" (correction microblock §6-11) — every entry
+  // comes from real persisted data: an explicit pending BookingAction, a
+  // BookingDocument already marked action_required by staff/provider, or
+  // Booking's own admin-set additionalDataRequestNote. Never derived from
+  // Event data or any heuristic, and never shown when there is nothing
+  // real to act on.
+  const necessaryActions: AtuAireMiViajeView["necessaryActions"] = [];
+  for (const action of booking.actions) {
+    if (action.status !== "pending") continue;
+    necessaryActions.push({
+      id: `action-${action.id}`,
+      title: action.title,
+      description: action.description,
+      dueAtLabel: action.dueAt ? formatDate(action.dueAt) : null,
+      actionHref: action.actionUrl || ACTION_TYPE_FALLBACK_HREF[action.type],
+    });
+  }
+  for (const doc of booking.documents) {
+    if (doc.status !== "action_required") continue;
+    necessaryActions.push({
+      id: `doc-${doc.type}-${doc.eventId}`,
+      title: documentLabel(doc, booking.trip.events),
+      description: "Este documento necesita revisión. Consulta el detalle para más información.",
+      dueAtLabel: null,
+      actionHref: DOCUMENT_TYPE_ACTION_HREF[doc.type],
+    });
+  }
+  if (booking.additionalDataRequestNote) {
+    necessaryActions.push({
+      id: "note",
+      title: "Falta información",
+      description: booking.additionalDataRequestNote,
+      dueAtLabel: null,
+      actionHref: "#viajeros",
+    });
+  }
 
   return {
     reference: booking.reference,
@@ -239,5 +316,6 @@ export function buildAtuAireMiViajeView(booking: AtuAireBookingInput): AtuAireMi
       paidAtLabel: formatDate(booking.createdAt),
       methodLabel: PAYMENT_METHOD_LABELS[booking.paymentProvider],
     },
+    necessaryActions,
   };
 }

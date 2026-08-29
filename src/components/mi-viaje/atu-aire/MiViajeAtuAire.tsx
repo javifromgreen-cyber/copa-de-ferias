@@ -1,6 +1,7 @@
 import { Container } from "@/components/ui/Container";
 import { MiViajeHeader } from "./MiViajeHeader";
 import { MiViajeNav } from "./MiViajeNav";
+import { NecessaryActionsSection } from "./NecessaryActionsSection";
 import { TicketsSection } from "./TicketsSection";
 import { TravelersSection } from "./TravelersSection";
 import { HotelSection } from "./HotelSection";
@@ -19,6 +20,7 @@ import type { AtuAireMiViajeView } from "@/lib/mi-viaje/buildAtuAireView";
  */
 export function MiViajeAtuAire({ view, accessToken, contactEmail }: { view: AtuAireMiViajeView; accessToken: string; contactEmail: string }) {
   const navItems = [
+    ...(view.necessaryActions.length > 0 ? [{ id: "acciones-necesarias", label: "Acciones necesarias" }] : []),
     { id: "entradas", label: "Entradas" },
     { id: "viajeros", label: "Viajeros" },
     ...(view.hotel ? [{ id: "hotel", label: "Hotel" }] : []),
@@ -32,6 +34,7 @@ export function MiViajeAtuAire({ view, accessToken, contactEmail }: { view: AtuA
   return (
     <Container className="max-w-4xl py-10 sm:py-14">
       <MiViajeHeader view={view} />
+      <NecessaryActionsSection view={view} />
       <div className="grid gap-8 lg:grid-cols-[160px_1fr]">
         <MiViajeNav items={navItems} />
         <div>
