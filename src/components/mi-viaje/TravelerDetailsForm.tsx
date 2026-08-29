@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { updateTravelerDetails } from "@/server/actions/mi-viaje";
 import { track } from "@/lib/analytics/events";
 import { isTravelerComplete } from "@/lib/mi-viaje/completeness";
+import { COUNTRIES } from "@/lib/checkout-atu-aire/countries";
 
 export type TravelerDetailsData = {
   id: string;
@@ -70,11 +71,18 @@ export function TravelerDetailsForm({ accessToken, traveler }: { accessToken: st
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-xs tracking-wide uppercase">Nacionalidad</span>
-              <input
+              <select
                 value={form.nationality}
                 onChange={(e) => setForm((f) => ({ ...f, nationality: e.target.value }))}
                 className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-              />
+              >
+                <option value="">Selecciona</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="block">
               <span className="mb-1 block text-xs tracking-wide uppercase">Sexo</span>

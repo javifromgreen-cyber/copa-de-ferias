@@ -99,6 +99,17 @@ export type FlightLegView = {
 
 export type PriceLabel = "from" | "estimated" | "total";
 
+/**
+ * One commercial line of the price breakdown shown to the customer
+ * (§ price detail). Every `amount` here is a customer-facing commercial
+ * figure that sums exactly to `price.totalCommercial` — never the raw
+ * supplier net cost or the organization fee broken out on its own (that
+ * split stays internal, per computeQuote's own contract); "Gastos de
+ * gestión" bundles the fee + buffer as one ordinary line, the same way
+ * any travel agency shows a service charge.
+ */
+export type PriceBreakdownItem = { label: string; amount: number };
+
 export type PackageTypeOption = {
   packageType: PackageType;
   label: string;
@@ -132,6 +143,8 @@ export type AtuAireQuote = {
     totalCommercial: number | null;
     perPerson: number | null;
     missing: string[];
+    /** [] whenever totalCommercial is null — there's nothing priced yet to break down. */
+    breakdown: PriceBreakdownItem[];
   };
   additionalMatchFeeApplies: boolean;
 };

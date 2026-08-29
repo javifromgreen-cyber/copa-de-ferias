@@ -32,3 +32,20 @@ test("reviews are hidden by default", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText(/ver reseñas/i)).toHaveCount(0);
 });
+
+test("Partidos destacados only shows real, active/bookable matches — never a Próximamente placeholder", async ({ page }) => {
+  await page.goto("/");
+
+  const destacados = page.locator("section", { has: page.getByRole("heading", { name: "Partidos destacados" }) });
+  await expect(destacados).toBeVisible();
+
+  const cards = destacados.locator("article");
+  await expect(cards).not.toHaveCount(0);
+  await expect(destacados).not.toContainText("Próximamente");
+  await expect(destacados).not.toContainText("Precio disponible próximamente");
+
+  const count = await cards.count();
+  for (let i = 0; i < count; i++) {
+    await expect(cards.nth(i)).toContainText("Desde");
+  }
+});

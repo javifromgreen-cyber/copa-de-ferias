@@ -10,7 +10,7 @@ import { buildAtuAireQuote } from "@/lib/checkout-atu-aire/quoteBuilder";
 import { computeStayWindowBounds } from "@/lib/pricing/flightWindow";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import type { NormalizedFlightLeg, NormalizedHotelOffer } from "@/lib/providers/types";
-import type { AtuAireQuoteData, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
+import type { AtuAireQuote, AtuAireQuoteData, AtuAireSelection } from "@/lib/checkout-atu-aire/types";
 import { DEFAULT_SELECTION } from "@/lib/checkout-atu-aire/types";
 
 describe("packageRequirements (§24)", () => {
@@ -447,6 +447,67 @@ describe("buildAtuAireQuote — total price reflects the selected hotel/flight, 
     // Each leg card shows only its own (much smaller) price — never the trip's resulting total.
     expect(outboundLeg.pricePerPerson).toBeLessThan(withLegs.price.perPerson!);
     expect(returnLeg.pricePerPerson).toBeLessThan(withLegs.price.perPerson!);
+  });
+});
+
+describe("buildAtuAireQuote — price.breakdown always sums to totalCommercial and never exposes internal cost/margin", () => {
+  it("TICKET_ONLY: breakdown has only Entrada + Gastos de gestión, summing to the total", () => {
+    const data = baseData();
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_ONLY", partySize: 2, ticketSelections: { ev1: "General" } });
+    expect(quote.price.breakdown.map((i) => i.label)).toEqual(["Entrada", "Gastos de gestión"]);
+    const sum = quote.price.breakdown.reduce((acc, i) => acc + i.amount, 0);
+    expect(sum).toBeCloseTo(quote.price.totalCommercial!, 5);
+  });
+
+  it("TICKET_HOTEL: breakdown adds Hotel, still summing to the total and omitting flight lines", () => {
+    const data = baseData();
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1, hotelOfferId: "hB" });
+    expect(quote.price.breakdown.map((i) => i.label)).toEqual(["Entrada", "Hotel", "Gastos de gestión"]);
+    const sum = quote.price.breakdown.reduce((acc, i) => acc + i.amount, 0);
+    expect(sum).toBeCloseTo(quote.price.totalCommercial!, 5);
+  });
+
+  it("TICKET_HOTEL_FLIGHT: breakdown includes both flight legs and still sums exactly to the total", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = {
+      ...DEFAULT_SELECTION,
+      buyerCountry: "ES",
+      packageType: "TICKET_HOTEL_FLIGHT",
+      partySize: 1,
+      ticketSelections: { ev1: "General" },
+      nights: 1,
+      hotelOfferId: "hB",
+      originAirport: "MAD",
+    };
+    const quote = buildAtuAireQuote(data, sel);
+    expect(quote.price.breakdown.map((i) => i.label)).toEqual(["Entrada", "Hotel", "Vuelo ida", "Vuelo vuelta", "Gastos de gestión"]);
+    const sum = quote.price.breakdown.reduce((acc, i) => acc + i.amount, 0);
+    expect(sum).toBeCloseTo(quote.price.totalCommercial!, 5);
+  });
+
+  it("never exposes the raw supplier cost or fee/buffer components as separate lines — only the bundled 'Gastos de gestión' commercial line", () => {
+    const data = baseData();
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_ONLY", partySize: 1, ticketSelections: { ev1: "General" } });
+    const labels = quote.price.breakdown.map((i) => i.label);
+    expect(labels).not.toContain("Fee");
+    expect(labels).not.toContain("Buffer");
+    expect(labels).not.toContain("Coste neto");
+    expect(labels.filter((l) => l === "Gastos de gestión")).toHaveLength(1);
+  });
+
+  it("changing the selected hotel or flight leg changes the corresponding breakdown line's amount", () => {
+    const data = baseData();
+    const sel: AtuAireSelection = { ...DEFAULT_SELECTION, buyerCountry: "ES", packageType: "TICKET_HOTEL", partySize: 2, ticketSelections: { ev1: "General" }, nights: 1 };
+    const withHa = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hA" });
+    const withHb = buildAtuAireQuote(data, { ...sel, hotelOfferId: "hB" });
+    const hotelLine = (q: AtuAireQuote) => q.price.breakdown.find((i) => i.label === "Hotel")!.amount;
+    expect(hotelLine(withHa)).not.toBe(hotelLine(withHb));
+  });
+
+  it("no selection yet: breakdown is empty (fallback price state)", () => {
+    const data = baseData();
+    const quote = buildAtuAireQuote(data, { ...DEFAULT_SELECTION, buyerCountry: "ES" });
+    expect(quote.price.breakdown).toEqual([]);
   });
 });
 

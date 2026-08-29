@@ -56,10 +56,22 @@ function isListed(trip: { status: CardQueryTrip["status"]; slug: string }) {
   return isPubliclyListed(trip) && !PUBLIC_LISTING_EXCLUDED_SLUGS.has(trip.slug);
 }
 
-/** "Partidos destacados" (§4) — reuses the existing homeFeatured flag, which already means exactly this. */
+/**
+ * "Partidos destacados" — `homeFeatured` (set from Admin) is the editorial
+ * source of truth for *which* trips are featured; this never picks by
+ * slug or any other automatic heuristic. It still guards against showing
+ * a "Próximamente"/unpublished placeholder here even if one is
+ * (mis)marked featured: only a published, currently open trip with a
+ * real active price counts as a destacado.
+ */
 export async function getHomeTrips(): Promise<TripCardData[]> {
-  const trips = await prisma.trip.findMany({ where: { homeFeatured: true }, orderBy: { order: "asc" }, ...CARD_QUERY_ARGS });
-  return toCardDataList(trips.filter(isListed));
+  const trips = await prisma.trip.findMany({
+    where: { homeFeatured: true, published: true, status: "open" },
+    orderBy: { order: "asc" },
+    ...CARD_QUERY_ARGS,
+  });
+  const cards = await toCardDataList(trips.filter(isListed));
+  return cards.filter((c) => c.fromPricePerPerson !== null);
 }
 
 /**

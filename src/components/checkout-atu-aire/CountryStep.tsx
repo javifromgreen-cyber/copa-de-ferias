@@ -10,7 +10,7 @@ export function CountryStep({ value, onSelect }: { value: string | null; onSelec
   return (
     <section aria-labelledby="country-heading" className="rounded-sm border border-carbon/15 bg-white p-5">
       <h2 id="country-heading" className="mb-3 text-lg font-semibold">
-        ¿Desde qué país reservas?
+        ¿Desde qué país viajas?
       </h2>
       <select
         aria-label="País"

@@ -229,24 +229,47 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
   const originRequired = flightRequiredByPackage && !flightBlocked;
 
   // --- Price --------------------------------------------------------------
-  let price: AtuAireQuote["price"] = { label: "from", totalCommercial: null, perPerson: chosenPackageOption?.fromPricePerPerson ?? null, missing: [] };
+  let price: AtuAireQuote["price"] = {
+    label: "from",
+    totalCommercial: null,
+    perPerson: chosenPackageOption?.fromPricePerPerson ?? null,
+    missing: [],
+    breakdown: [],
+  };
 
   if (selection.packageType && partySize && fee) {
+    const ticketTotal = ticketPerPersonTotal * partySize;
     const hotelTotal = hotelRequired ? (selectedHotel?.totalPrice ?? cheapestValidHotel?.totalPrice ?? 0) : 0;
 
-    let flightTotal = 0;
+    let outboundTotal = 0;
+    let returnTotal = 0;
     if (flightRequiredByPackage && !flightBlocked) {
       const perPersonOutbound = selectedOutboundLeg?.pricePerPerson ?? cheapestFilteredOutbound ?? (cheapestDirectLegPrice(data.outboundLegs) ?? 0);
       const perPersonReturn = selectedReturnLeg?.pricePerPerson ?? cheapestFilteredReturn ?? (cheapestDirectLegPrice(data.returnLegs) ?? 0);
-      flightTotal = (perPersonOutbound + perPersonReturn) * partySize;
+      outboundTotal = perPersonOutbound * partySize;
+      returnTotal = perPersonReturn * partySize;
     }
+    const flightTotal = outboundTotal + returnTotal;
 
     const quote = computeQuote({
-      costs: { ticketCostNetTotal: ticketPerPersonTotal * partySize, hotelCostNetTotal: hotelTotal, flightCostNetTotal: flightTotal, hostCostNetTotal: 0 },
+      costs: { ticketCostNetTotal: ticketTotal, hotelCostNetTotal: hotelTotal, flightCostNetTotal: flightTotal, hostCostNetTotal: 0 },
       orgFee: fee,
       buffer: 0,
       paymentMethodInternalCost: 0,
     });
+
+    // Customer-facing breakdown (§ price detail) — each line is a real
+    // commercial component already used above to build `quote`, so this
+    // always sums exactly to quote.commercialTotal. The fee/buffer stays
+    // bundled as one ordinary "gastos de gestión" line, never broken out
+    // as "our margin" (computeQuote's own contract — see quote.ts).
+    const breakdown: AtuAireQuote["price"]["breakdown"] = [{ label: "Entrada", amount: ticketTotal }];
+    if (hotelRequired) breakdown.push({ label: "Hotel", amount: hotelTotal });
+    if (flightRequiredByPackage && !flightBlocked) {
+      breakdown.push({ label: "Vuelo ida", amount: outboundTotal });
+      breakdown.push({ label: "Vuelo vuelta", amount: returnTotal });
+    }
+    breakdown.push({ label: "Gastos de gestión", amount: quote.orgFee.total + quote.buffer });
 
     const missing = missingSelectionLabels({
       ticketsSelected: allTicketsSelected,
@@ -276,6 +299,7 @@ export function buildAtuAireQuote(data: AtuAireQuoteData, selection: AtuAireSele
       totalCommercial: quote.commercialTotal,
       perPerson: quote.commercialTotal / partySize,
       missing,
+      breakdown,
     };
   }
 

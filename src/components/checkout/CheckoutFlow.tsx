@@ -16,6 +16,7 @@ import {
   type RoomChoice,
 } from "@/lib/checkout/rooms";
 import { TRAVELER_FIELD_LABELS } from "@/lib/checkout/travelerFields";
+import { COUNTRIES } from "@/lib/checkout-atu-aire/countries";
 import { RoomAssignmentStep } from "@/components/checkout/RoomAssignmentStep";
 import { ReviewStep } from "@/components/checkout/ReviewStep";
 
@@ -299,11 +300,18 @@ export function CheckoutFlow({ trip, isSimulation }: { trip: TripInfo; isSimulat
                           <span className="mb-1 block text-xs tracking-wide uppercase">
                             {TRAVELER_FIELD_LABELS.nationality} *
                           </span>
-                          <input
+                          <select
                             value={t.nationality}
                             onChange={(e) => updateTraveler(i, { nationality: e.target.value })}
                             className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                          />
+                          >
+                            <option value="">Selecciona</option>
+                            {COUNTRIES.map((c) => (
+                              <option key={c.code} value={c.name}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                       ) : null}
                     </div>

@@ -44,7 +44,7 @@ async function setChelseaArsenalSchedule(page: Page, label: "Confirmado" | "Fech
 }
 
 async function selectCountry(page: Page, countryLabel: string) {
-  await page.waitForSelector("text=¿Desde qué país reservas?");
+  await page.waitForSelector("text=¿Desde qué país viajas?");
   await page.getByLabel("País", { exact: true }).selectOption({ label: countryLabel });
 }
 
@@ -67,7 +67,7 @@ async function fillTraveler(page: Page, index: number, opts: { firstName: string
   const fieldset = travelerFieldset(page, index);
   await fieldset.getByLabel("Nombre").fill(opts.firstName);
   await fieldset.getByLabel("Apellidos").fill(opts.lastName);
-  await fieldset.getByLabel("Nacionalidad").fill(opts.nationality);
+  await fieldset.getByLabel("Nacionalidad").selectOption(opts.nationality);
   await fieldset.getByLabel("Tipo de documento").selectOption({ label: "DNI" });
   await fieldset.getByLabel("Número de documento").fill(opts.docNumber);
   await fieldset.getByLabel("Caducidad del documento").fill("2031-01-01");
@@ -571,8 +571,8 @@ test.describe("A_TU_AIRE checkout — Manchester (QA demo product, confirmed sch
     // Contact-only is never enough (§15) — payment stays disabled until traveler data exists too.
     await expect(payButton).toBeDisabled();
 
-    await fillTraveler(page, 1, { firstName: "QA", lastName: "Manchester", nationality: "Española", docNumber: "12345678A", docCountry: "España" });
-    await fillTraveler(page, 2, { firstName: "Compi", lastName: "DeViaje", nationality: "Española", docNumber: "87654321B", docCountry: "España" });
+    await fillTraveler(page, 1, { firstName: "QA", lastName: "Manchester", nationality: "España", docNumber: "12345678A", docCountry: "España" });
+    await fillTraveler(page, 2, { firstName: "Compi", lastName: "DeViaje", nationality: "España", docNumber: "87654321B", docCountry: "España" });
 
     // --- Rooming: visible, based on the real room mix for 2 travelers (a double, both named) (§16) ---
     await expect(page.getByText("Habitaciones", { exact: true })).toBeVisible();

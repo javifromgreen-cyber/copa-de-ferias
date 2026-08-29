@@ -119,6 +119,24 @@ export function SummarySidebar({ quote, selection }: { quote: AtuAireQuote; sele
           <p className="text-sm text-carbon/60">{formatCurrency(quote.price.perPerson ?? 0)} / persona</p>
         ) : null}
         {quote.price.missing.length > 0 ? <p className="mt-2 text-xs text-carbon/50">Falta por elegir: {quote.price.missing.join(", ")}.</p> : null}
+
+        {quote.price.breakdown.length > 0 ? (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer list-none text-xs text-carbon/50 underline">Ver detalle</summary>
+            <dl className="mt-2 space-y-1.5">
+              {quote.price.breakdown.map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <dt className="text-carbon/70">{item.label}</dt>
+                  <dd className="font-medium">{formatCurrency(item.amount)}</dd>
+                </div>
+              ))}
+              <div className="flex items-center justify-between border-t border-carbon/10 pt-1.5 font-display">
+                <dt>Total</dt>
+                <dd>{formatCurrency(quote.price.totalCommercial ?? 0)}</dd>
+              </div>
+            </dl>
+          </details>
+        ) : null}
       </div>
     </aside>
   );

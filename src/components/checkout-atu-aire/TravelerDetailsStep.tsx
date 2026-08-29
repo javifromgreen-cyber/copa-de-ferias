@@ -1,4 +1,5 @@
 import { TRAVELER_FIELD_LABELS } from "@/lib/checkout/travelerFields";
+import { COUNTRIES } from "@/lib/checkout-atu-aire/countries";
 
 export type AtuAireTravelerFormState = {
   firstName: string;
@@ -134,11 +135,18 @@ export function TravelerDetailsStep({
                 {req("nationality") ? (
                   <label className="block">
                     <span className="mb-1 block text-xs tracking-wide uppercase">{TRAVELER_FIELD_LABELS.nationality} *</span>
-                    <input
+                    <select
                       value={t.nationality}
                       onChange={(e) => onChange(i, { nationality: e.target.value })}
                       className="w-full rounded-sm border border-carbon/20 bg-white px-3 py-2 text-sm"
-                    />
+                    >
+                      <option value="">Selecciona</option>
+                      {COUNTRIES.map((c) => (
+                        <option key={c.code} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 ) : null}
               </div>

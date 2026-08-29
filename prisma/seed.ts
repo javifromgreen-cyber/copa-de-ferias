@@ -261,7 +261,9 @@ async function main() {
       durationNights: 2,
       status: "open",
       published: true,
-      homeFeatured: true,
+      // Belgrado is retired from public listings entirely (see
+      // PUBLIC_LISTING_EXCLUDED_SLUGS) — never featured on Home either.
+      homeFeatured: false,
       order: 0,
       isDemo: true,
       price: 549,
@@ -450,7 +452,9 @@ async function main() {
       durationNights: 2,
       status: "upcoming",
       published: false,
-      homeFeatured: true,
+      // Unpublished placeholder ("Próximamente") — never featured on Home
+      // (destacados only ever shows published, currently open trips).
+      homeFeatured: false,
       order: 1,
       isDemo: true,
       price: 0,
@@ -499,7 +503,9 @@ async function main() {
       durationNights: 2,
       status: "upcoming",
       published: false,
-      homeFeatured: true,
+      // Unpublished placeholder ("Próximamente") — never featured on Home
+      // (destacados only ever shows published, currently open trips).
+      homeFeatured: false,
       order: 2,
       isDemo: true,
       price: 0,
@@ -559,7 +565,7 @@ async function main() {
       durationNights: 1,
       status: "open",
       published: true,
-      homeFeatured: false,
+      homeFeatured: true,
       order: 3,
       isDemo: true,
       price: fromPrice(45),
@@ -794,7 +800,7 @@ async function main() {
       durationNights: 2,
       status: "open",
       published: true,
-      homeFeatured: false,
+      homeFeatured: true,
       order: 6,
       isDemo: true,
       price: fromPrice(55),

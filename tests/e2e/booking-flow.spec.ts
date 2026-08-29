@@ -13,7 +13,7 @@ test("completes a full demo booking through the mandatory Review screen and land
   await page.getByLabel("Nombre *", { exact: true }).fill("Test");
   await page.getByLabel("Apellidos *").fill("E2E");
   await expect(page.getByRole("button", { name: "Continuar" })).toBeDisabled();
-  await page.getByLabel(/Nacionalidad/).fill("Española");
+  await page.getByLabel(/Nacionalidad/).selectOption("España");
   await page.getByLabel(/Tipo de documento/).selectOption("dni");
   await page.getByLabel(/Número de documento/).fill("12345678A");
   await page.getByLabel(/Caducidad del documento/).fill("2030-01-01");
@@ -82,7 +82,7 @@ test("two travelers default to sharing a room together, no supplement", async ({
     const group = page.getByRole("group", { name: `Viajero ${n}` });
     await group.getByLabel("Nombre *", { exact: true }).fill(first);
     await group.getByLabel("Apellidos *").fill(last);
-    await group.getByLabel(/Nacionalidad/).fill("Española");
+    await group.getByLabel(/Nacionalidad/).selectOption("España");
     await group.getByLabel(/Tipo de documento/).selectOption("dni");
     await group.getByLabel(/Número de documento/).fill(doc);
     await group.getByLabel(/Caducidad del documento/).fill("2030-01-01");

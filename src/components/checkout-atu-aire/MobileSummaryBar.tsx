@@ -22,15 +22,33 @@ export function MobileSummaryBar({ quote }: { quote: AtuAireQuote }) {
         </span>
         <span className="text-xs text-carbon/50 underline">Ver detalle</span>
       </summary>
-      <div className="space-y-2 px-4 pb-4 text-sm">
-        {quote.events.map((event) => (
-          <p key={event.id}>
-            {event.homeTeam} – {event.awayTeam}
-            {scheduleStatusBadgeLabel(event.scheduleStatus) ? (
-              <span className="ml-1 text-xs text-stamp">({scheduleStatusBadgeLabel(event.scheduleStatus)})</span>
-            ) : null}
-          </p>
-        ))}
+      <div className="space-y-3 px-4 pb-4 text-sm">
+        <div className="space-y-2">
+          {quote.events.map((event) => (
+            <p key={event.id}>
+              {event.homeTeam} – {event.awayTeam}
+              {scheduleStatusBadgeLabel(event.scheduleStatus) ? (
+                <span className="ml-1 text-xs text-stamp">({scheduleStatusBadgeLabel(event.scheduleStatus)})</span>
+              ) : null}
+            </p>
+          ))}
+        </div>
+
+        {quote.price.breakdown.length > 0 ? (
+          <dl className="space-y-1.5 border-t border-carbon/10 pt-3">
+            {quote.price.breakdown.map((item) => (
+              <div key={item.label} className="flex items-center justify-between">
+                <dt className="text-carbon/70">{item.label}</dt>
+                <dd className="font-medium">{formatCurrency(item.amount)}</dd>
+              </div>
+            ))}
+            <div className="flex items-center justify-between border-t border-carbon/10 pt-1.5 font-display">
+              <dt>Total</dt>
+              <dd>{formatCurrency(quote.price.totalCommercial ?? 0)}</dd>
+            </div>
+          </dl>
+        ) : null}
+
         {quote.price.missing.length > 0 ? <p className="text-xs text-carbon/50">Falta por elegir: {quote.price.missing.join(", ")}.</p> : null}
       </div>
     </details>

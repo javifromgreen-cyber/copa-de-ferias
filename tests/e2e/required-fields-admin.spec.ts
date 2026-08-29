@@ -31,7 +31,7 @@ test("admin-configured emergency contact and shipping address are required befor
     // Datos de cada viajero: fill everything except the emergency contact.
     await page.getByLabel("Nombre *", { exact: true }).fill("Ana");
     await page.getByLabel("Apellidos *").fill("Emergencia");
-    await page.getByLabel(/Nacionalidad/).fill("Española");
+    await page.getByLabel(/Nacionalidad/).selectOption("España");
     await page.getByLabel(/Tipo de documento/).selectOption("dni");
     await page.getByLabel(/Número de documento/).fill("55555555Z");
     await page.getByLabel(/Caducidad del documento/).fill("2030-01-01");
