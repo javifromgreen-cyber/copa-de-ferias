@@ -10,6 +10,8 @@ import { WhatsAppLink } from "@/components/mi-viaje/WhatsAppLink";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon, PassportIcon, CalendarIcon, DocumentIcon } from "@/components/icons";
 import { groupBookedRooms } from "@/lib/checkout/rooms";
+import { MiViajeAtuAire } from "@/components/mi-viaje/atu-aire/MiViajeAtuAire";
+import { buildAtuAireMiViajeView } from "@/lib/mi-viaje/buildAtuAireView";
 
 // Must always reflect the traveler's live booking state (data just saved,
 // change requests, passport status) — never cache this per-token page.
@@ -23,13 +25,36 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
   const booking = await prisma.booking.findUnique({
     where: { accessToken: token },
     include: {
-      trip: { include: { planningDays: { orderBy: { order: "asc" } }, requirements: { orderBy: { order: "asc" } } } },
-      travelers: true,
+      trip: {
+        include: {
+          planningDays: { orderBy: { order: "asc" } },
+          requirements: { orderBy: { order: "asc" } },
+          events: { orderBy: { order: "asc" }, include: { competition: true, ticketOffers: true } },
+        },
+      },
+      travelers: { orderBy: { order: "asc" } },
+      documents: true,
+      updates: { orderBy: { createdAt: "desc" } },
     },
   });
   if (!booking) notFound();
 
   const brand = await getBrand();
+
+  // A_TU_AIRE bookings get the full, dedicated Mi Viaje experience built
+  // for this product (§1-52) — GROUP_CDF keeps the page as it already was,
+  // completely untouched below, since this block is scoped to A_TU_AIRE
+  // only and GROUP_CDF's own checkout/Mi Viaje flow must keep working
+  // exactly as before.
+  if (booking.trip.travelMode === "A_TU_AIRE") {
+    const view = buildAtuAireMiViajeView(booking);
+    return (
+      <>
+        <TrackOnMount event="my_trip_view" payload={{ bookingId: booking.id }} />
+        <MiViajeAtuAire view={view} accessToken={token} contactEmail={brand.contactEmail} />
+      </>
+    );
+  }
 
   const departureDate = new Date(booking.trip.matchDate);
   departureDate.setDate(departureDate.getDate() - 1);

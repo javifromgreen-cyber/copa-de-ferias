@@ -555,6 +555,8 @@ model Booking {
   travelers      Traveler[]
   changeRequests ChangeRequest[]
   emailLogs      EmailLog[]
+  documents      BookingDocument[]
+  updates        BookingUpdate[]
 }
 
 enum RoomPreference {
@@ -598,8 +600,76 @@ model Traveler {
   hasTicket     Boolean @default(true)
   originAirport String  @default("")
 
+  // Position within the booking's traveler list at checkout time (0-based).
+  // Mi Viaje's room breakdown is reconstructed by re-running the same pure
+  // assignTravelersToRooms(partySize, roomMix) the checkout used — which
+  // fills rooms strictly in list order — so this field is what lets that
+  // reconstruction land on the exact same room assignment shown at
+  // checkout, without ever inventing or re-deciding who shares a room.
+  order Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum BookingDocumentType {
+  ticket
+  hotel
+  flight
+  other
+}
+
+// A single, honest state per document — never invented per-provider
+// tracking. "pending": not issued/confirmed yet. "available": ready to
+// view, nothing to download yet (matches computeQuote's "no fake PDFs"
+// rule). "delivered": the actual file/URL has been attached and sent.
+// "action_required": something on this document needs the customer's
+// attention (see ChangeRequest for how they respond).
+enum BookingDocumentStatus {
+  pending
+  available
+  delivered
+  action_required
+}
+
+// Mi Viaje's "Documentación" block (§23/§24) reads these rows — one per
+// ticket/Event, plus one each for hotel/flight when contracted. Doubles as
+// the backing for "Tus entradas"/"Tus vuelos"'s own status line, so a
+// ticket's state is never represented two different ways in two different
+// places. fileUrl stays "" until a real document exists — Mi Viaje must
+// never fabricate a downloadable file.
+model BookingDocument {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  type BookingDocumentType
+  // Ties a `ticket` document to one specific Event, for multi-match
+  // bookings — "" for hotel/flight/other (one per booking, not per Event).
+  eventId String @default("")
+  label   String @default("")
+
+  status  BookingDocumentStatus @default(pending)
+  fileUrl String                @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Mi Viaje's "Actualizaciones" timeline (§20/§21/§22) — an append-only log
+// a human (Admin, in a future block) or a real trigger writes to; nothing
+// here is ever auto-generated from a template. No rows for a booking means
+// literally nothing to report yet, which Mi Viaje shows as a plain "No hay
+// novedades", never an invented entry.
+model BookingUpdate {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  title   String
+  message String @default("")
+
+  createdAt DateTime @default(now())
 }
 
 enum ChangeRequestType {

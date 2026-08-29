@@ -182,7 +182,7 @@ export async function createAtuAireBooking(
         },
       });
 
-      const travelers = travelersData.map((t) => ({
+      const travelers = travelersData.map((t, index) => ({
         bookingId: booking.id,
         firstName: t.firstName,
         lastName: t.lastName,
@@ -196,6 +196,7 @@ export async function createAtuAireBooking(
         emergencyContactName: t.emergencyContactName,
         emergencyContactPhone: t.emergencyContactPhone,
         originAirport: selection.originAirport ?? "",
+        order: index,
       }));
       await tx.traveler.createMany({ data: travelers });
 

@@ -103,6 +103,20 @@ export const travelerDetailsSchema = z.object({
 });
 export type TravelerDetailsInput = z.infer<typeof travelerDetailsSchema>;
 
+// A_TU_AIRE Mi Viaje (§15): contact fields only — phone/emergency contact
+// can be corrected freely after purchase, unlike name/nationality/document
+// data attached to an already-issued ticket. Deliberately a separate,
+// narrower schema/action rather than reusing travelerDetailsSchema with a
+// partial payload, since that schema's optional-with-default fields would
+// silently blank out any field left out of the call.
+export const travelerContactSchema = z.object({
+  travelerId: z.string().min(1),
+  phone: z.string().trim().max(30).optional().default(""),
+  emergencyContactName: z.string().trim().max(160).optional().default(""),
+  emergencyContactPhone: z.string().trim().max(30).optional().default(""),
+});
+export type TravelerContactInput = z.infer<typeof travelerContactSchema>;
+
 export const changeRequestSchema = z.object({
   bookingId: z.string().min(1),
   type: z.enum(["name_change", "important_change", "cancellation"]),

@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import { miViajeLookupSchema, travelerDetailsSchema, changeRequestSchema } from "@/lib/validation/schemas";
+import { miViajeLookupSchema, travelerDetailsSchema, travelerContactSchema, changeRequestSchema } from "@/lib/validation/schemas";
 
 export type LookupResult = { ok: true; accessToken: string } | { ok: false; error: string };
 
@@ -64,6 +64,37 @@ export async function updateTravelerDetails(
       docNumber: parsed.data.docNumber,
       docExpiry: parsed.data.docExpiry ? new Date(parsed.data.docExpiry) : null,
       docCountry: parsed.data.docCountry,
+      phone: parsed.data.phone,
+      emergencyContactName: parsed.data.emergencyContactName,
+      emergencyContactPhone: parsed.data.emergencyContactPhone,
+    },
+  });
+
+  return { ok: true as const };
+}
+
+/**
+ * A_TU_AIRE Mi Viaje's restricted counterpart to updateTravelerDetails
+ * above (§15) — contact fields only, so a customer can never inadvertently
+ * (or the UI never lets them) touch a name/nationality/document already
+ * tied to an issued ticket. Kept as its own action, not a partial call
+ * into updateTravelerDetails, because that schema defaults every omitted
+ * field to "" and would blank out the traveler's real document data.
+ */
+export async function updateTravelerContact(
+  accessToken: string,
+  input: { travelerId: string; phone?: string; emergencyContactName?: string; emergencyContactPhone?: string }
+) {
+  const booking = await requireBooking(accessToken);
+  const parsed = travelerContactSchema.safeParse(input);
+  if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0]?.message ?? "Datos no válidos" };
+
+  const traveler = await prisma.traveler.findUnique({ where: { id: parsed.data.travelerId } });
+  if (!traveler || traveler.bookingId !== booking.id) return { ok: false as const, error: "Viajero no válido" };
+
+  await prisma.traveler.update({
+    where: { id: traveler.id },
+    data: {
       phone: parsed.data.phone,
       emergencyContactName: parsed.data.emergencyContactName,
       emergencyContactPhone: parsed.data.emergencyContactPhone,

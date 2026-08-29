@@ -834,8 +834,103 @@ async function main() {
   });
   await prisma.ticketOffer.createMany({
     data: [
-      { eventId: demoDEvent.id, provider: "manual", category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
+      { eventId: demoDEvent.id, provider: "manual", category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital", active: true, restrictions: "Documento de identidad obligatorio en el acceso." },
       { eventId: demoDEvent.id, provider: "manual", category: "Members", sector: "Tier 1", costNet: 105, currency: "EUR", stock: 25, deliveryType: "digital", active: true },
+    ],
+  });
+
+  // -----------------------------------------------------------------
+  // Mi Viaje demo — a stable, fixed-token A_TU_AIRE booking on the
+  // Manchester demo product so this block's Mi Viaje experience can always
+  // be opened at the same URL (/mi-viaje/demo-manchester-atu-aire),
+  // reseed after reseed. Entrada + Hotel + Vuelo, 2 travelers, so every
+  // conditional section (hotel/rooming/vuelos) has something real to show.
+  // Clearly demo data throughout (buyer/traveler names, emails, documents).
+  // -----------------------------------------------------------------
+  await prisma.booking.deleteMany({ where: { reference: "CDF-DEMOMAN1" } });
+  const demoMiViajeOutbound = addDays(demoDMatchDate, -1);
+  const demoMiViajeReturn = addDays(demoDMatchDate, 1);
+  const demoMiViajeBooking = await prisma.booking.create({
+    data: {
+      reference: "CDF-DEMOMAN1",
+      tripId: demoD.id,
+      buyerFirstName: "Demo",
+      buyerLastName: "Mi Viaje",
+      buyerEmail: "demo.mi.viaje@example.com",
+      buyerPhone: "+34600000001",
+      originCity: "Madrid",
+      travelersCount: 2,
+      totalPrice: 830,
+      currency: "EUR",
+      paymentProvider: "demo",
+      paymentStatus: "paid",
+      bookingStatus: "confirmed",
+      accessToken: "demo-manchester-atu-aire",
+      packageType: "TICKET_HOTEL_FLIGHT",
+      partySize: 2,
+      ticketCount: 2,
+      hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "demo-hotel-central-manchester", name: "Hotel Central Manchester", nights: 2, perPersonPrice: 90 }),
+      flightSelectionSnapshot: JSON.stringify({
+        outboundLegId: "demo-leg-out",
+        returnLegId: "demo-leg-ret",
+        originAirport: "MAD",
+        destinationAirport: "MAN",
+        outboundDeparture: new Date(new Date(demoMiViajeOutbound).setHours(8, 20, 0, 0)),
+        returnDeparture: new Date(new Date(demoMiViajeReturn).setHours(17, 40, 0, 0)),
+        outboundPricePerPerson: 34,
+        returnPricePerPerson: 34,
+      }),
+      priceBreakdownSnapshot: JSON.stringify({ perPerson: 415, total: 830, ticketSelections: { [demoDEvent.id]: "General" } }),
+    },
+  });
+  await prisma.traveler.createMany({
+    data: [
+      {
+        bookingId: demoMiViajeBooking.id,
+        firstName: "Demo",
+        lastName: "Viajero Mi Viaje",
+        birthDate: new Date(1990, 4, 12),
+        nationality: "España",
+        docType: "dni",
+        docNumber: "12345678A",
+        docExpiry: new Date(2031, 0, 1),
+        docCountry: "España",
+        phone: "+34600000001",
+        emergencyContactName: "Contacto Emergencia Uno",
+        emergencyContactPhone: "+34600000099",
+        originAirport: "MAD",
+        order: 0,
+      },
+      {
+        bookingId: demoMiViajeBooking.id,
+        firstName: "Demo",
+        lastName: "Acompañante Mi Viaje",
+        birthDate: new Date(1992, 8, 3),
+        nationality: "España",
+        docType: "passport",
+        docNumber: "AB1234567",
+        docExpiry: new Date(2030, 5, 1),
+        docCountry: "España",
+        phone: "+34600000002",
+        emergencyContactName: "Contacto Emergencia Uno",
+        emergencyContactPhone: "+34600000099",
+        originAirport: "MAD",
+        order: 1,
+      },
+    ],
+  });
+  await prisma.bookingDocument.createMany({
+    data: [
+      { bookingId: demoMiViajeBooking.id, type: "ticket", eventId: demoDEvent.id, status: "delivered" },
+      { bookingId: demoMiViajeBooking.id, type: "hotel", status: "available" },
+      { bookingId: demoMiViajeBooking.id, type: "flight", status: "pending" },
+    ],
+  });
+  await prisma.bookingUpdate.createMany({
+    data: [
+      { bookingId: demoMiViajeBooking.id, title: "Tu entrada está disponible.", message: "", createdAt: addDays(new Date(), -20) },
+      { bookingId: demoMiViajeBooking.id, title: "El horario del partido ha sido confirmado.", message: "Manchester City – Manchester United, 17:30 hora local.", createdAt: addDays(new Date(), -12) },
+      { bookingId: demoMiViajeBooking.id, title: "Tu hotel está confirmado.", message: "Hotel Central Manchester, 2 noches.", createdAt: addDays(new Date(), -3) },
     ],
   });
 

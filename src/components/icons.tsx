@@ -219,6 +219,16 @@ export function GroupIcon(props: IconProps) {
   );
 }
 
+/** Pago — a card with its stripe and chip, evenodd */
+export function WalletIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path fillRule="evenodd" d="M2,6 L22,6 L22,19 L2,19 Z M2,10 L22,10 L22,12 L2,12 Z" />
+      <rect x="15" y="14" width="5" height="3" />
+    </IconBase>
+  );
+}
+
 /** Ruta / experiencia — stepped marker with a cut-out center, evenodd */
 export function MapPinIcon(props: IconProps) {
   return (
