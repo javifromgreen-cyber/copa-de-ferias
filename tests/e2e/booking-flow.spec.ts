@@ -8,7 +8,9 @@ test("completes a full demo booking through the mandatory Review screen and land
 
   // Step 2: datos de cada viajero — Belgrado requires nationality + document
   // fields; the required fields must genuinely block progress (checkout §56.J).
-  await page.getByLabel("Nombre *").fill("Test");
+  // exact: true — "Nombre *" is also a substring of the emergency-contact
+  // field's label ("Contacto de emergencia — nombre *") on this same step.
+  await page.getByLabel("Nombre *", { exact: true }).fill("Test");
   await page.getByLabel("Apellidos *").fill("E2E");
   await expect(page.getByRole("button", { name: "Continuar" })).toBeDisabled();
   await page.getByLabel(/Nacionalidad/).fill("Española");
@@ -25,7 +27,7 @@ test("completes a full demo booking through the mandatory Review screen and land
 
   // Going back must preserve everything already entered (checkout §56.H).
   await page.getByRole("button", { name: "Atrás" }).click();
-  await expect(page.getByLabel("Nombre *")).toHaveValue("Test");
+  await expect(page.getByLabel("Nombre *", { exact: true })).toHaveValue("Test");
   await page.getByRole("button", { name: "Continuar" }).click();
 
   await page.getByRole("radio", { name: /Habitación individual/ }).check();
@@ -78,7 +80,7 @@ test("two travelers default to sharing a room together, no supplement", async ({
     ["2", "Berto", "Dos", "22222222B"],
   ] as const) {
     const group = page.getByRole("group", { name: `Viajero ${n}` });
-    await group.getByLabel("Nombre *").fill(first);
+    await group.getByLabel("Nombre *", { exact: true }).fill(first);
     await group.getByLabel("Apellidos *").fill(last);
     await group.getByLabel(/Nacionalidad/).fill("Española");
     await group.getByLabel(/Tipo de documento/).selectOption("dni");

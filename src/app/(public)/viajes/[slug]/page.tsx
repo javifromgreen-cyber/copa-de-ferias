@@ -149,16 +149,25 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </dl>
           </section>
 
-          {/* Hotel */}
+          {/* Hotel — GROUP_CDF books one specific hotel for the whole
+              group (trip.hotelStars/hotelZone/hotelDescription describe
+              it exactly). A_TU_AIRE instead offers several hotels to pick
+              from during checkout, so a single fixed star rating here
+              would misrepresent it — this branch stays generic on
+              purpose (§7). */}
           <section>
             <h2 className="font-display mb-4 flex items-center gap-2 text-2xl uppercase">
               <BuildingIcon className="h-6 w-6 shrink-0" />
               Hotel
             </h2>
-            <p className="text-carbon/80">
-              Hotel {trip.hotelCentric ? "céntrico " : ""}de {trip.hotelStars} estrellas
-              {trip.hotelZone ? ` en ${trip.hotelZone}` : ""}. {trip.hotelDescription}
-            </p>
+            {isAtuAire ? (
+              <p className="text-carbon/80">Podrás elegir tu hotel durante la configuración de la reserva, entre varias opciones disponibles para este partido.</p>
+            ) : (
+              <p className="text-carbon/80">
+                Hotel {trip.hotelCentric ? "céntrico " : ""}de {trip.hotelStars} estrellas
+                {trip.hotelZone ? ` en ${trip.hotelZone}` : ""}. {trip.hotelDescription}
+              </p>
+            )}
           </section>
 
           {/* Partido / Entrada */}
@@ -257,12 +266,15 @@ export default async function TripPage({ params }: { params: Promise<{ slug: str
             </section>
           ) : null}
 
-          {/* Qué ocurre después */}
+          {/* Qué ocurre después — every traveler's core data is already
+              collected during checkout (§8), so this never frames "Mi
+              Viaje" as where the main data-gathering happens. */}
           <section>
             <h2 className="font-display mb-4 text-2xl uppercase">Qué ocurre después de reservar</h2>
             <p className="text-carbon/80">
-              Recibes la confirmación al instante. Poco a poco te iremos pidiendo el resto de datos desde tu área
-              &quot;Mi Viaje&quot;, y {trip.whatsappUrl ? "unos 15 días antes se activa el grupo de WhatsApp del viaje" : "te avisaremos con toda la información antes de salir"}.
+              Recibes la confirmación al instante. Desde tu área &quot;Mi Viaje&quot; puedes consultar toda la
+              información de tu reserva; cualquier actualización, cambio o dato adicional que pueda hacer falta se
+              gestiona desde ese mismo espacio{trip.whatsappUrl ? ", y unos 15 días antes se activa el grupo de WhatsApp del viaje" : ""}.
             </p>
           </section>
 

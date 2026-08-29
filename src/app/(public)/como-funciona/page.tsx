@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { Container } from "@/components/ui/Container";
 import { ButtonLink } from "@/components/ui/Button";
-import { StadiumIcon, TicketIcon, ClipboardIcon, ChatIcon, PlaneIcon, CalendarIcon, DocumentIcon } from "@/components/icons";
+import { StadiumIcon, TicketIcon, ClipboardIcon, CalendarIcon, DocumentIcon } from "@/components/icons";
 import type { ComponentType, SVGProps } from "react";
 
 export const metadata: Metadata = {
   title: "Cómo funciona",
-  description: "Cómo funcionan los viajes de Copa de Ferias: selección del partido, reserva, datos, WhatsApp y viaje.",
+  description: "Cómo funciona reservar con Copa de Ferias: selección del partido, reserva, datos y seguimiento desde Mi Viaje.",
 };
 
 const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVGElement>> }[] = [
@@ -31,30 +31,10 @@ const STEPS: { title: string; body: string; icon?: ComponentType<SVGProps<SVGSVG
     icon: DocumentIcon,
   },
   {
-    title: "5. Recibes información poco a poco",
-    body: "Documentación, información práctica y planning definitivo, según se acerca la fecha del viaje.",
+    title: "5. Sigues todo desde \"Mi Viaje\"",
+    body: "Ahí consultas la información de tu reserva. Cualquier actualización, cambio, información práctica o dato adicional que haga falta según se acerque la fecha del partido se gestiona desde ese mismo espacio.",
     icon: ClipboardIcon,
   },
-  {
-    title: "6. Te unes al grupo de WhatsApp",
-    body: "Unos 15 días antes se activa el grupo del viaje para que os vayáis conociendo antes de salir.",
-    icon: ChatIcon,
-  },
-  {
-    title: "7. Viajas y te encuentras con el grupo",
-    body: "En destino, el coordinador y el host local se encargan de que todo funcione. Tú solo tienes que disfrutar del partido.",
-    icon: PlaneIcon,
-  },
-];
-
-const DETAILS = [
-  { title: "Habitaciones", body: "Doble compartida por defecto. Durante la reserva eliges quién comparte con quién; si te quedas sin pareja, puedes compartir con otro participante de tu mismo sexo o pagar el suplemento de individual." },
-  { title: "Venir solo o acompañado", body: "Puedes apuntarte por tu cuenta, venir en pareja o reservar varias plazas con amigos. Al llegar formaréis parte del mismo grupo. El precio es por persona." },
-  { title: "Origen", body: "Cada viaje tiene unas ciudades de salida configuradas. En esta primera versión no es posible incorporarse directamente en destino." },
-  { title: "Pago", body: "Tarjeta, wallets y Bizum vía Stripe. Durante el pago pueden aparecer opciones de pago aplazado de Klarna o PayPal, según disponibilidad." },
-  { title: "Mínimo de viajeros", body: "Cada viaje necesita un número mínimo de participantes para operar. Si no se alcanza, se cancela con reembolso íntegro." },
-  { title: "Cambios", body: "Un cambio de horario dentro de las mismas fechas se actualiza en el planning. Un cambio importante se te comunica con las opciones disponibles." },
-  { title: "Documentación", body: "Los datos que tu viaje necesita (DNI o pasaporte, entre otros) se piden en el checkout, antes de pagar. Si hace falta algo más, te lo pedimos desde \"Mi Viaje\"." },
 ];
 
 export default function ComoFuncionaPage() {
@@ -74,16 +54,6 @@ export default function ComoFuncionaPage() {
           </li>
         ))}
       </ol>
-
-      <h2 className="font-display mb-6 text-2xl uppercase">Lo que más se pregunta</h2>
-      <div className="mb-12 grid gap-8 sm:grid-cols-2">
-        {DETAILS.map((d) => (
-          <div key={d.title}>
-            <p className="mb-1 font-medium text-carbon">{d.title}</p>
-            <p className="text-sm text-carbon/70">{d.body}</p>
-          </div>
-        ))}
-      </div>
 
       <div className="flex flex-wrap gap-3">
         <ButtonLink href="/viajes">Ver viajes</ButtonLink>

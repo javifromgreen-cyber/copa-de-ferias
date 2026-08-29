@@ -165,7 +165,7 @@ async function main() {
     [
       "hotel",
       "¿Qué pasa si viajo solo y elijo hotel?",
-      "Si tu reserva es de una sola persona, compartes habitación doble con otro viajero de tu mismo sexo, salvo que prefieras pagar el suplemento de individual cuando esté disponible.",
+      "Durante la reserva verás las opciones de alojamiento disponibles para ti, como habitación individual o habitación doble, según la disponibilidad y las condiciones de ese producto en concreto.",
     ],
     [
       "vuelos",
@@ -225,7 +225,7 @@ async function main() {
     [
       "por-que-copa-de-ferias",
       "¿Con qué proveedores trabajáis?",
-      "Las entradas se gestionan con proveedores de ticketing deportivo con acceso oficial a cada partido; el hotel y el vuelo, con partners especializados en viajes de fútbol.",
+      "Las entradas se gestionan con proveedores de ticketing deportivo con acceso oficial a cada partido; el hotel y el vuelo, con partners de viajes y proveedores del sector turístico.",
     ],
     [
       "por-que-copa-de-ferias",

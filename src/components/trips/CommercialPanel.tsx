@@ -16,7 +16,7 @@ const ATU_AIRE_OPTIONS = ["Entrada", "Entrada + Hotel", "Entrada + Hotel + Vuelo
 const TRUST_BULLETS = [
   "Entrada gestionada por proveedores oficiales de ticketing deportivo.",
   "Pago único y seguro al reservar, sin depósitos posteriores.",
-  "Hotel y vuelo, si los añades, con partners especializados en viajes de fútbol.",
+  "Hotel y vuelo, si los añades, con partners de viajes y proveedores del sector turístico.",
 ];
 
 type PanelTrip = {
