@@ -5,6 +5,7 @@ import { EventForm, type TripOption, type CompetitionOption } from "@/components
 import { TicketOfferManager, type TicketOfferRow } from "@/components/admin/TicketOfferManager";
 import type { EventFormInput } from "@/server/actions/admin-events";
 import { eventHasBookings } from "@/lib/events/bookingRefs";
+import { extractMatchTimeUTC } from "@/lib/events/matchDateTime";
 
 export const metadata: Metadata = { title: "Admin — Editar evento" };
 
@@ -52,6 +53,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
     country: event.country,
     timezone: event.timezone,
     matchDate: event.matchDate.toISOString().slice(0, 10),
+    matchTime: extractMatchTimeUTC(event.matchDate),
     kickoff: toDateTimeLocal(event.kickoff),
     scheduleStatus: event.scheduleStatus,
     status: event.status,

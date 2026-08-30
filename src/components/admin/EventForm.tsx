@@ -98,6 +98,9 @@ export function EventForm({
           <Field label="Fecha del partido">
             <input type="date" value={toDateInput(form.matchDate)} onChange={(e) => set("matchDate", e.target.value)} className={inputClass} required />
           </Field>
+          <Field label="Hora del partido">
+            <input type="time" value={form.matchTime} onChange={(e) => set("matchTime", e.target.value)} className={inputClass} />
+          </Field>
           <Field label="Hora / kickoff (opcional)">
             <input type="datetime-local" value={form.kickoff} onChange={(e) => set("kickoff", e.target.value)} className={inputClass} />
           </Field>

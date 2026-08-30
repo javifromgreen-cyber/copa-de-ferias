@@ -51,6 +51,48 @@ test.describe("Admin — Eventos", () => {
     await expect(page.getByLabel("Horario")).toHaveValue("confirmed");
   });
 
+  test("editing an Event preserves matchDate's existing time, and only changes it when the time field itself is edited", async ({ page }) => {
+    const prisma = new PrismaClient();
+    let eventId = "";
+    let originalMatchDate: Date;
+    try {
+      const event = await prisma.event.findFirstOrThrow({ where: { homeTeam: "Manchester City", awayTeam: "Manchester United" } });
+      eventId = event.id;
+      originalMatchDate = event.matchDate;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const originalTime = `${pad(originalMatchDate.getUTCHours())}:${pad(originalMatchDate.getUTCMinutes())}`;
+
+      await loginAsAdmin(page);
+      await page.goto(`/admin/eventos/${eventId}`);
+      await page.waitForLoadState("networkidle");
+
+      // §1: both date and time must be precracked correctly from the
+      // existing matchDate.
+      await expect(page.getByLabel("Hora del partido")).toHaveValue(originalTime);
+
+      // §2: saving after touching only an unrelated field must not move
+      // matchDate at all — not even to the same day at a different hour.
+      const orderInput = page.getByLabel("Orden");
+      const currentOrder = await orderInput.inputValue();
+      await orderInput.fill(currentOrder);
+      await clickAndWaitSave(page, "Guardar evento");
+      const afterUnrelatedSave = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+      expect(afterUnrelatedSave.matchDate.getTime()).toBe(originalMatchDate.getTime());
+
+      // §3: editing the time field must update matchDate to that exact
+      // new time, on the same date.
+      await page.getByLabel("Hora del partido").fill("09:15");
+      await clickAndWaitSave(page, "Guardar evento");
+      const afterTimeChange = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+      expect(afterTimeChange.matchDate.toISOString()).toBe(
+        `${originalMatchDate.toISOString().slice(0, 10)}T09:15:00.000Z`,
+      );
+    } finally {
+      if (eventId) await prisma.event.update({ where: { id: eventId }, data: { matchDate: originalMatchDate! } });
+      await prisma.$disconnect();
+    }
+  });
+
   test("filters the Eventos list by competition and by team", async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto("/admin/eventos");

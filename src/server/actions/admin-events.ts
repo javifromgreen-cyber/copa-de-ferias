@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import type { ScheduleStatus, EventStatus } from "@prisma/client";
 import { validateEventPublishable } from "@/lib/events/validation";
 import { eventHasBookings } from "@/lib/events/bookingRefs";
+import { combineMatchDateTime } from "@/lib/events/matchDateTime";
 
 export type EventFormInput = {
   id?: string;
@@ -17,7 +18,8 @@ export type EventFormInput = {
   city: string;
   country: string;
   timezone: string;
-  matchDate: string; // yyyy-mm-dd
+  matchDate: string; // yyyy-mm-dd (UTC)
+  matchTime: string; // HH:mm (UTC) — combined with matchDate to form the real matchDate; "" falls back to 00:00
   kickoff: string; // datetime-local value or ""
   scheduleStatus: ScheduleStatus;
   status: EventStatus;
@@ -52,7 +54,7 @@ export async function saveEvent(input: EventFormInput): Promise<{ ok: true; id: 
     city: input.city.trim(),
     country: input.country.trim(),
     timezone: input.timezone.trim() || "Europe/Madrid",
-    matchDate: new Date(input.matchDate),
+    matchDate: combineMatchDateTime(input.matchDate, input.matchTime),
     kickoff: input.kickoff ? new Date(input.kickoff) : null,
     scheduleStatus: input.scheduleStatus,
     status: input.status,
