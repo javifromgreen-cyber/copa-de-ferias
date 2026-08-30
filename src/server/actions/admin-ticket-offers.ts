@@ -53,10 +53,24 @@ export async function saveTicketOffer(input: TicketOfferFormInput): Promise<{ ok
     : await prisma.ticketOffer.create({ data });
 
   revalidatePath("/admin/eventos");
+  revalidatePath("/admin/entradas");
   return { ok: true, id: offer.id };
 }
 
 export async function deleteTicketOffer(id: string) {
   await prisma.ticketOffer.delete({ where: { id } });
   revalidatePath("/admin/eventos");
+  revalidatePath("/admin/entradas");
+}
+
+/**
+ * Quick active/inactive toggle from the global ticket-offers list (§7/§33)
+ * — a one-field update, distinct from saveTicketOffer's full-form save, so
+ * the list page never has to carry a whole TicketOfferFormInput just to
+ * flip this one flag.
+ */
+export async function toggleTicketOfferActive(id: string, active: boolean) {
+  await prisma.ticketOffer.update({ where: { id }, data: { active } });
+  revalidatePath("/admin/eventos");
+  revalidatePath("/admin/entradas");
 }

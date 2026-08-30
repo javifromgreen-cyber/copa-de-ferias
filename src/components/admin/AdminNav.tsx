@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/viajes", label: "Viajes" },
   { href: "/admin/eventos", label: "Eventos" },
+  { href: "/admin/entradas", label: "Entradas" },
   { href: "/admin/competiciones", label: "Competiciones" },
   { href: "/admin/reservas", label: "Reservas" },
   { href: "/admin/viajeros", label: "Viajeros" },

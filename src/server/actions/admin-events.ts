@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import type { ScheduleStatus, EventStatus } from "@prisma/client";
 import { validateEventPublishable } from "@/lib/events/validation";
+import { eventHasBookings } from "@/lib/events/bookingRefs";
 
 export type EventFormInput = {
   id?: string;
@@ -69,9 +70,24 @@ export async function saveEvent(input: EventFormInput): Promise<{ ok: true; id: 
   return { ok: true, id: event.id };
 }
 
-export async function deleteEvent(id: string) {
-  const event = await prisma.event.findUniqueOrThrow({ where: { id } });
+/**
+ * Never hard-deletes an Event that a real booking already references (via
+ * priceBreakdownSnapshot.ticketSelections) — deleting it would break that
+ * booking's "Mi Viaje" event lookup for good. Unpublish/cancel the event
+ * instead when it already has bookings.
+ */
+export async function deleteEvent(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const event = await prisma.event.findUniqueOrThrow({
+    where: { id },
+    include: { trip: { select: { bookings: { select: { priceBreakdownSnapshot: true } } } } },
+  });
+
+  if (eventHasBookings(id, event.trip.bookings)) {
+    return { ok: false, error: "Este evento tiene reservas asociadas y no se puede eliminar. Márcalo como cancelado o despublícalo en su lugar." };
+  }
+
   await prisma.event.delete({ where: { id } });
   revalidatePath("/admin/eventos");
   revalidatePath(`/admin/viajes/${event.tripId}`);
+  return { ok: true };
 }

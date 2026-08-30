@@ -6,17 +6,34 @@ import { formatCurrency } from "@/lib/utils";
 export const metadata: Metadata = { title: "Admin — Dashboard" };
 
 export default async function AdminDashboardPage() {
-  const [trips, bookings, leads, pendingChangeRequests, revenue] = await Promise.all([
-    prisma.trip.count(),
-    prisma.booking.count({ where: { bookingStatus: "confirmed" } }),
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const [
+    publishedEvents,
+    upcomingEvents,
+    recentBookings,
+    pendingActions,
+    pendingDocuments,
+    leads,
+    pendingChangeRequests,
+    revenue,
+  ] = await Promise.all([
+    prisma.event.count({ where: { status: "published" } }),
+    prisma.event.count({ where: { matchDate: { gte: new Date() } } }),
+    prisma.booking.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+    prisma.bookingAction.count({ where: { status: "pending" } }),
+    prisma.bookingDocument.count({ where: { status: { in: ["pending", "action_required"] } } }),
     prisma.lead.count(),
     prisma.changeRequest.count({ where: { status: { in: ["requested", "in_review"] } } }),
     prisma.booking.aggregate({ where: { bookingStatus: "confirmed" }, _sum: { totalPrice: true } }),
   ]);
 
   const cards = [
-    { label: "Viajes", value: trips, href: "/admin/viajes" },
-    { label: "Reservas confirmadas", value: bookings, href: "/admin/reservas" },
+    { label: "Partidos publicados", value: publishedEvents, href: "/admin/eventos?status=published" },
+    { label: "Próximos partidos", value: upcomingEvents, href: "/admin/eventos" },
+    { label: "Reservas (últimos 7 días)", value: recentBookings, href: "/admin/reservas" },
+    { label: "Acciones pendientes", value: pendingActions, href: "/admin/reservas" },
+    { label: "Documentos pendientes", value: pendingDocuments, href: "/admin/reservas" },
     { label: "Interesados", value: leads, href: "/admin/interesados" },
     { label: "Solicitudes pendientes", value: pendingChangeRequests, href: "/admin/reservas" },
   ];
@@ -38,6 +55,18 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="mt-10 grid gap-3 sm:grid-cols-3">
+        <Link href="/admin/eventos" className="rounded-sm border border-carbon/15 bg-white p-4 text-sm hover:border-carbon/40">
+          Partidos
+        </Link>
+        <Link href="/admin/competiciones" className="rounded-sm border border-carbon/15 bg-white p-4 text-sm hover:border-carbon/40">
+          Competiciones
+        </Link>
+        <Link href="/admin/entradas" className="rounded-sm border border-carbon/15 bg-white p-4 text-sm hover:border-carbon/40">
+          Entradas
+        </Link>
+        <Link href="/admin/reservas" className="rounded-sm border border-carbon/15 bg-white p-4 text-sm hover:border-carbon/40">
+          Reservas
+        </Link>
         <Link href="/admin/viajes/nuevo" className="rounded-sm border border-carbon/15 bg-white p-4 text-sm hover:border-carbon/40">
           + Crear nuevo viaje
         </Link>

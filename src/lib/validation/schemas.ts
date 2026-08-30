@@ -128,3 +128,53 @@ export const miViajeLookupSchema = z.object({
   reference: z.string().trim().min(3),
   email: z.string().trim().email("Email no válido"),
 });
+
+// Admin-only traveler correction (§14/§15 of the Admin audit block) — unlike
+// the customer-facing travelerDetailsSchema/travelerContactSchema above,
+// Admin is trusted to correct any field, including name/document data
+// already tied to an issued ticket. The UI carries its own cautionary copy;
+// this schema just validates shape.
+export const adminTravelerEditSchema = z.object({
+  travelerId: z.string().min(1),
+  firstName: z.string().trim().min(1, "Nombre requerido").max(80),
+  lastName: z.string().trim().min(1, "Apellidos requeridos").max(80),
+  birthDate: z.string().trim().max(10).optional().default(""),
+  originCity: z.string().trim().max(80).optional().default(""),
+  nationality: z.string().trim().max(80).optional().default(""),
+  sex: z.string().trim().max(40).optional().default(""),
+  docType: z.enum(["dni", "passport", ""]).optional().default(""),
+  docNumber: z.string().trim().max(60).optional().default(""),
+  docExpiry: z.string().trim().max(10).optional().default(""),
+  docCountry: z.string().trim().max(80).optional().default(""),
+  phone: z.string().trim().max(30).optional().default(""),
+  emergencyContactName: z.string().trim().max(160).optional().default(""),
+  emergencyContactPhone: z.string().trim().max(30).optional().default(""),
+});
+export type AdminTravelerEditInput = z.infer<typeof adminTravelerEditSchema>;
+
+export const bookingDocumentSchema = z.object({
+  bookingId: z.string().min(1),
+  type: z.enum(["ticket", "hotel", "flight", "other"]),
+  eventId: z.string().trim().max(80).optional().default(""),
+  label: z.string().trim().max(160).optional().default(""),
+  status: z.enum(["pending", "available", "delivered", "action_required"]).optional().default("pending"),
+  fileUrl: z.string().trim().max(500).optional().default(""),
+});
+export type BookingDocumentInput = z.infer<typeof bookingDocumentSchema>;
+
+export const bookingUpdateSchema = z.object({
+  bookingId: z.string().min(1),
+  title: z.string().trim().min(1, "Falta el título").max(160),
+  message: z.string().trim().max(2000).optional().default(""),
+});
+export type BookingUpdateInput = z.infer<typeof bookingUpdateSchema>;
+
+export const bookingActionSchema = z.object({
+  bookingId: z.string().min(1),
+  type: z.enum(["hotel_checkin", "flight_checkin", "data_correction", "change_review", "document", "other"]),
+  title: z.string().trim().min(1, "Falta el título").max(160),
+  description: z.string().trim().max(2000).optional().default(""),
+  actionUrl: z.string().trim().max(500).optional().default(""),
+  dueAt: z.string().trim().max(10).optional().default(""),
+});
+export type BookingActionInput = z.infer<typeof bookingActionSchema>;
