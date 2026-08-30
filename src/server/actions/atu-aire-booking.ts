@@ -5,8 +5,8 @@ import { atuAireBuyerSchema, atuAireTravelerSchema, type AtuAireBuyerInput, type
 import { parseRequiredFields } from "@/lib/checkout/travelerFields";
 import { getAtuAireCheckoutQuote } from "./atu-aire-checkout";
 import { getPaymentProvider } from "@/lib/payments";
-import { sendTemplatedEmail } from "@/lib/email";
-import { generateAccessToken, generateBookingReference, formatDate } from "@/lib/utils";
+import { sendTemplatedEmail, buildBookingEmailVariables } from "@/lib/email";
+import { generateAccessToken, generateBookingReference } from "@/lib/utils";
 import { packageRequiresHotel } from "@/lib/checkout-atu-aire/packageRequirements";
 import { assignTravelersToRooms } from "@/lib/checkout-atu-aire/rooming";
 import type { AtuAireSelection } from "@/lib/checkout-atu-aire/types";
@@ -256,22 +256,14 @@ export async function createAtuAireBooking(
 
   await prisma.booking.update({ where: { id: bookingId }, data: { paymentStatus: "paid", bookingStatus: "confirmed" } });
 
-  const departureDate = new Date(selectedOutboundLeg?.departure ?? trip.matchDate);
-  const returnDate = new Date(selectedReturnLeg?.departure ?? trip.matchDate);
-
   await sendTemplatedEmail({
     templateKey: "booking_confirmed",
     to: buyer.buyerEmail,
     bookingId,
-    variables: {
-      firstName: buyer.buyerFirstName,
-      tripName: trip.name,
-      tripNumber: `#${String(trip.number).padStart(3, "0")}`,
-      departureCity: selectedOrigin?.city ?? "",
-      departureDate: formatDate(departureDate),
-      returnDate: formatDate(returnDate),
-      whatsappUrl: trip.whatsappUrl || "",
-    },
+    variables: buildBookingEmailVariables(
+      { reference, accessToken, buyerFirstName: buyer.buyerFirstName, totalPrice, currency: trip.currency, travelersCount: partySize, partySize },
+      trip,
+    ),
   });
 
   return { ok: true, reference, accessToken, isSimulated: charge.isSimulated };

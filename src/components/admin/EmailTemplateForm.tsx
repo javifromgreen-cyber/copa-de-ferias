@@ -14,13 +14,18 @@ export function EmailTemplateForm({ template }: { template: Template }) {
   const [testStatus, setTestStatus] = useState("");
 
   const previewVars = {
-    firstName: "Nombre de prueba",
-    tripName: "Belgrado",
-    tripNumber: "#001",
-    departureCity: "Barcelona",
-    departureDate: "14 de noviembre de 2026",
-    returnDate: "16 de noviembre de 2026",
-    whatsappUrl: "https://chat.whatsapp.com/demo",
+    customerName: "Nombre de prueba",
+    tripName: "Manchester",
+    matchName: "Manchester City – Manchester United",
+    bookingReference: "CDF-DEMO1234",
+    total: "415 €",
+    partySize: "2",
+    travelMode: "A TU AIRE",
+    myTripUrl: "https://copadeferias.com/mi-viaje/token-de-ejemplo",
+    actionTitle: "Completa el check-in del hotel",
+    actionDescription: "El hotel requiere completar el check-in online antes de tu llegada.",
+    actionDueDate: "Fecha límite: 4 de diciembre de 2026",
+    updateTitle: "El horario del partido ha sido actualizado.",
   };
 
   async function handleSave(e: React.FormEvent) {

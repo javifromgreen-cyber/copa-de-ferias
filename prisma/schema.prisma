@@ -763,9 +763,16 @@ model EmailTemplate {
   body             String // supports {{variable}} placeholders, see docs/EMAILS.md
   active           Boolean @default(false)
   // Offset in days relative to the trip's departure/return date, or null
-  // for "immediate" (sent right after the triggering event, e.g. booking).
+  // for "immediate" (sent right after the triggering event, e.g. booking)
+  // or "event" (sent explicitly from Admin at the moment a real
+  // BookingAction/BookingUpdate is created — never swept by a calendar).
   timingDaysOffset Int?
-  timingReference  String  @default("immediate") // immediate | booking_plus_1 | before_departure | after_return
+  timingReference  String  @default("immediate") // immediate | event | booking_plus_1 | before_departure | after_return
+
+  // Retired templates (e.g. the old GROUP_CDF-era sequence) are kept for
+  // history rather than deleted, but hidden from Admin's normal template
+  // list and excluded from any future sending — see docs/EMAILS.md.
+  archived Boolean @default(false)
 
   updatedAt DateTime @updatedAt
 }

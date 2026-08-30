@@ -12,6 +12,8 @@ import {
   type BookingUpdateInput,
   type BookingActionInput,
 } from "@/lib/validation/schemas";
+import { sendTemplatedEmail, buildBookingEmailVariables } from "@/lib/email";
+import { formatDate } from "@/lib/utils";
 
 function parseFormDate(value: string): Date | null {
   return value ? new Date(value) : null;
@@ -117,6 +119,20 @@ export async function createBookingUpdate(input: BookingUpdateInput): Promise<{ 
     data: { bookingId: parsed.data.bookingId, title: parsed.data.title, message: parsed.data.message },
   });
 
+  // "Cambio importante" (§2.3) — never automatic for every update, only
+  // when Admin explicitly checks "notificar por email" for this one.
+  if (parsed.data.notifyCustomer) {
+    const booking = await prisma.booking.findUnique({ where: { id: parsed.data.bookingId }, include: { trip: true } });
+    if (booking) {
+      await sendTemplatedEmail({
+        templateKey: "important_update",
+        to: booking.buyerEmail,
+        bookingId: booking.id,
+        variables: { ...buildBookingEmailVariables(booking, booking.trip), updateTitle: parsed.data.title },
+      });
+    }
+  }
+
   revalidatePath(`/admin/reservas/${parsed.data.bookingId}`);
   return { ok: true };
 }
@@ -130,6 +146,8 @@ export async function createBookingAction(input: BookingActionInput): Promise<{ 
   const parsed = bookingActionSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos" };
 
+  const dueAt = parsed.data.dueAt ? new Date(parsed.data.dueAt) : null;
+
   await prisma.bookingAction.create({
     data: {
       bookingId: parsed.data.bookingId,
@@ -137,9 +155,26 @@ export async function createBookingAction(input: BookingActionInput): Promise<{ 
       title: parsed.data.title,
       description: parsed.data.description,
       actionUrl: parsed.data.actionUrl,
-      dueAt: parsed.data.dueAt ? new Date(parsed.data.dueAt) : null,
+      dueAt,
     },
   });
+
+  // "Acción necesaria" (§2.2) — never swept by a calendar, sent right here
+  // at the moment Admin creates a real pending action.
+  const booking = await prisma.booking.findUnique({ where: { id: parsed.data.bookingId }, include: { trip: true } });
+  if (booking) {
+    await sendTemplatedEmail({
+      templateKey: "action_required",
+      to: booking.buyerEmail,
+      bookingId: booking.id,
+      variables: {
+        ...buildBookingEmailVariables(booking, booking.trip),
+        actionTitle: parsed.data.title,
+        actionDescription: parsed.data.description,
+        actionDueDate: dueAt ? `Fecha límite: ${formatDate(dueAt)}` : "",
+      },
+    });
+  }
 
   revalidatePath(`/admin/reservas/${parsed.data.bookingId}`);
   return { ok: true };

@@ -3,10 +3,10 @@ import { getAppMode, resendConfig } from "@/lib/env";
 import { ConsoleEmailProvider } from "./console";
 import { ResendEmailProvider } from "./resend";
 import { renderTemplate, type EmailVariables } from "./render";
-import { formatDate } from "@/lib/utils";
+import { buildBookingEmailVariables } from "./bookingVariables";
 import type { EmailProvider } from "./types";
 
-export { renderTemplate };
+export { renderTemplate, buildBookingEmailVariables };
 export type { EmailVariables };
 
 function getEmailProvider(): EmailProvider {
@@ -54,17 +54,23 @@ export async function sendTemplatedEmail(opts: {
 }
 
 /**
- * Runs the day-based email sequence for all confirmed bookings (spec §43).
- * Idempotent: never re-sends a (bookingId, templateKey) pair that already
- * has an EmailLog entry. Call manually from Admin ("procesar emails
- * pendientes") or from the protected /api/cron/process-emails route.
+ * Runs the day-based email sequence for all confirmed bookings — today
+ * just "Recordatorio antes del viaje" (before_departure) and "Gracias /
+ * valoración" (after_return). Idempotent: never re-sends a (bookingId,
+ * templateKey) pair that already has an EmailLog entry. Call manually from
+ * Admin ("procesar emails pendientes") or from the protected
+ * /api/cron/process-emails route.
+ *
+ * "immediate" and "event" templates (Reserva confirmada, Acción necesaria,
+ * Cambio importante) are never swept here — they're sent directly from the
+ * code at the moment of the real event, never by calendar.
  *
  * Trip return date is approximated as matchDate + 1 day (fits the standard
  * Fri travel / Sat match / Sun return shape used across demo trips). See
  * docs/EMAILS.md for how to make this precise per trip in a future version.
  */
 export async function processPendingEmails(): Promise<{ sent: number }> {
-  const templates = await prisma.emailTemplate.findMany({ where: { active: true } });
+  const templates = await prisma.emailTemplate.findMany({ where: { active: true, archived: false } });
   const bookings = await prisma.booking.findMany({
     where: { bookingStatus: "confirmed" },
     include: { trip: true },
@@ -91,8 +97,9 @@ export async function processPendingEmails(): Promise<{ sent: number }> {
         targetDate = new Date(returnDate);
         targetDate.setDate(targetDate.getDate() + template.timingDaysOffset);
       } else {
-        // "immediate" templates (booking_confirmed, pending_data, ...) are
-        // triggered directly at the relevant action, not by this sweep.
+        // "immediate" (booking_confirmed) and "event" (action_required,
+        // important_update) templates are triggered directly at the
+        // relevant action, never by this sweep.
         continue;
       }
 
@@ -107,15 +114,7 @@ export async function processPendingEmails(): Promise<{ sent: number }> {
         templateKey: template.key,
         to: booking.buyerEmail,
         bookingId: booking.id,
-        variables: {
-          firstName: booking.buyerFirstName,
-          tripName: booking.trip.name,
-          tripNumber: `#${String(booking.trip.number).padStart(3, "0")}`,
-          departureCity: booking.originCity,
-          departureDate: formatDate(departureDate),
-          returnDate: formatDate(returnDate),
-          whatsappUrl: booking.trip.whatsappUrl || "",
-        },
+        variables: buildBookingEmailVariables(booking, booking.trip),
       });
       sent++;
     }

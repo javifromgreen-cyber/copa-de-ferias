@@ -16,6 +16,7 @@ export function BookingUpdatesManager({ bookingId, updates }: { bookingId: strin
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
+  const [notifyCustomer, setNotifyCustomer] = useState(false);
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -23,10 +24,11 @@ export function BookingUpdatesManager({ bookingId, updates }: { bookingId: strin
     e.preventDefault();
     setError("");
     startTransition(async () => {
-      const result = await createBookingUpdate({ bookingId, title, message });
+      const result = await createBookingUpdate({ bookingId, title, message, notifyCustomer });
       if (result.ok) {
         setTitle("");
         setMessage("");
+        setNotifyCustomer(false);
         setShowForm(false);
         router.refresh();
       } else {
@@ -61,6 +63,10 @@ export function BookingUpdatesManager({ bookingId, updates }: { bookingId: strin
           <Field label="Mensaje (opcional)">
             <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className={inputClass} />
           </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={notifyCustomer} onChange={(e) => setNotifyCustomer(e.target.checked)} />
+            Es un cambio importante — enviar email al cliente
+          </label>
           {error ? <p className="text-sm text-stamp">{error}</p> : null}
           <div className="flex gap-3">
             <Button type="submit" disabled={pending}>

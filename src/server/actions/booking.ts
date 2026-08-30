@@ -4,8 +4,8 @@ import { prisma } from "@/lib/db";
 import { checkoutSchema, type CheckoutInput } from "@/lib/validation/schemas";
 import { calculateBookingPrice } from "@/lib/trips/pricing";
 import { getPaymentProvider } from "@/lib/payments";
-import { sendTemplatedEmail } from "@/lib/email";
-import { generateAccessToken, generateBookingReference, formatDate } from "@/lib/utils";
+import { sendTemplatedEmail, buildBookingEmailVariables } from "@/lib/email";
+import { generateAccessToken, generateBookingReference } from "@/lib/utils";
 import { isDemoMode } from "@/lib/env";
 import { parseRequiredFields } from "@/lib/checkout/travelerFields";
 
@@ -189,24 +189,14 @@ export async function createBooking(input: CheckoutInput): Promise<CreateBooking
     data: { paymentStatus: "paid", bookingStatus: "confirmed" },
   });
 
-  const departureDate = new Date(trip.matchDate);
-  departureDate.setDate(departureDate.getDate() - 1);
-  const returnDate = new Date(trip.matchDate);
-  returnDate.setDate(returnDate.getDate() + 1);
-
   await sendTemplatedEmail({
     templateKey: "booking_confirmed",
     to: data.buyerEmail,
     bookingId,
-    variables: {
-      firstName: data.buyerFirstName,
-      tripName: trip.name,
-      tripNumber: `#${String(trip.number).padStart(3, "0")}`,
-      departureCity: originCity,
-      departureDate: formatDate(departureDate),
-      returnDate: formatDate(returnDate),
-      whatsappUrl: trip.whatsappUrl || "",
-    },
+    variables: buildBookingEmailVariables(
+      { reference, accessToken, buyerFirstName: data.buyerFirstName, totalPrice: price.total, currency: trip.currency, travelersCount, partySize: null },
+      trip,
+    ),
   });
 
   return { ok: true, reference, accessToken, isSimulated: charge.isSimulated };

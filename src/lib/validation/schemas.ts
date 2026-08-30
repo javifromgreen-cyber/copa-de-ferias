@@ -166,6 +166,10 @@ export const bookingUpdateSchema = z.object({
   bookingId: z.string().min(1),
   title: z.string().trim().min(1, "Falta el título").max(160),
   message: z.string().trim().max(2000).optional().default(""),
+  // Opt-in — most updates (§ "no enviar automáticamente por cualquier
+  // cambio interno") are timeline-only; Admin explicitly checks this when
+  // the update is genuinely a "cambio importante" worth an email.
+  notifyCustomer: z.boolean().optional().default(false),
 });
 export type BookingUpdateInput = z.infer<typeof bookingUpdateSchema>;
 

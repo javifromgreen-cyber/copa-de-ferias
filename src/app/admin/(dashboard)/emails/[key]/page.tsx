@@ -15,7 +15,9 @@ export default async function AdminEmailTemplatePage({ params }: { params: Promi
       <h1 className="font-display mb-2 text-2xl uppercase">{template.name}</h1>
       <p className="mb-6 text-sm text-carbon/60">{template.description}</p>
       <p className="mb-6 text-xs text-carbon/40">
-        Variables disponibles: {"{{firstName}} {{tripName}} {{tripNumber}} {{departureCity}} {{departureDate}} {{returnDate}} {{whatsappUrl}}"}
+        Variables disponibles: {"{{customerName}} {{tripName}} {{matchName}} {{bookingReference}} {{total}} {{partySize}} {{travelMode}} {{myTripUrl}}"}
+        {" "}
+        — y, según la plantilla: {"{{actionTitle}} {{actionDescription}} {{actionDueDate}} {{updateTitle}}"}
       </p>
       <EmailTemplateForm template={{ key: template.key, name: template.name, subject: template.subject, body: template.body, active: template.active }} />
     </div>

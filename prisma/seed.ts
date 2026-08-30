@@ -1084,135 +1084,202 @@ async function main() {
   // -----------------------------------------------------------------
   await prisma.emailTemplate.deleteMany();
   const templates = [
+    // -----------------------------------------------------------------
+    // Sistema de emails actual (bloque de limpieza) — 5 comunicaciones
+    // base, ninguna orientada al antiguo formato de viaje en grupo. El email avisa; Mi Viaje
+    // contiene el detalle (§4).
+    // -----------------------------------------------------------------
+    {
+      key: "booking_confirmed",
+      name: "Reserva confirmada",
+      description: "Reserva confirmada + acceso a Mi Viaje, en un único email. Se envía justo después de completar el pago.",
+      subject: "Tu reserva está confirmada — {{bookingReference}}",
+      body:
+        "Hola {{customerName}},\n\nTu reserva está confirmada.\n\n{{matchName}}\nModalidad: {{travelMode}}\nViajeros: {{partySize}}\nReferencia: {{bookingReference}}\nTotal pagado: {{total}}\n\nTodo lo relacionado con tu reserva estará disponible en Mi Viaje: entradas, hotel, vuelos, documentación, cambios y cualquier acción necesaria.\n\nVER MI VIAJE\n{{myTripUrl}}\n\nCopa de Ferias — Fútbol que merece el viaje.",
+      active: true,
+      archived: false,
+      timingReference: "immediate",
+      timingDaysOffset: null,
+    },
+    {
+      key: "action_required",
+      name: "Acción necesaria",
+      description: "Solo se envía cuando Admin crea una acción pendiente real en una reserva (BookingAction). Nunca por calendario.",
+      subject: "Necesitamos que revises algo de tu reserva — {{bookingReference}}",
+      body:
+        "Hola {{customerName}},\n\nNecesitamos que revises algo de tu reserva ({{matchName}}).\n\n{{actionTitle}}\n{{actionDescription}}\n{{actionDueDate}}\n\nVER MI VIAJE\n{{myTripUrl}}\n\nCopa de Ferias",
+      active: true,
+      archived: false,
+      timingReference: "event",
+      timingDaysOffset: null,
+    },
+    {
+      key: "important_update",
+      name: "Cambio importante",
+      description: "Plantilla genérica para una modificación importante (horario, cambio de reserva, incidencia). Admin la activa explícitamente al crear una actualización — nunca por cada cambio interno.",
+      subject: "Cambio importante en tu reserva — {{bookingReference}}",
+      body:
+        "Hola {{customerName}},\n\nHay una actualización importante sobre tu reserva ({{matchName}}).\n\n{{updateTitle}}\n\nVER ACTUALIZACIÓN EN MI VIAJE\n{{myTripUrl}}\n\nCopa de Ferias",
+      active: true,
+      archived: false,
+      timingReference: "event",
+      timingDaysOffset: null,
+    },
+    {
+      key: "trip_reminder",
+      name: "Recordatorio antes del viaje",
+      description: "Único recordatorio previo al viaje, 48 horas antes. Invita a revisar Mi Viaje, no reenvía el planning por email.",
+      subject: "Tu viaje está cerca — {{matchName}}",
+      body:
+        "Hola {{customerName}},\n\nTu viaje está cerca.\n\nEs buen momento para revisar tu documentación en Mi Viaje y comprobar si tienes alguna acción necesaria pendiente.\n\nREVISAR MI VIAJE\n{{myTripUrl}}\n\nCopa de Ferias",
+      active: true,
+      archived: false,
+      timingReference: "before_departure",
+      timingDaysOffset: 2,
+    },
+    {
+      key: "thanks_review",
+      name: "Gracias / valoración",
+      description: "Único email posterior al viaje: agradecimiento y petición de valoración.",
+      subject: "Gracias por viajar con Copa de Ferias",
+      body:
+        "Hola {{customerName}},\n\nGracias por haber reservado con nosotros para {{matchName}}. Esperamos que lo hayas disfrutado.\n\nSi tienes un minuto, nos encantaría conocer tu opinión.\n\nCopa de Ferias",
+      active: true,
+      archived: false,
+      timingReference: "after_return",
+      timingDaysOffset: 1,
+    },
+    // -----------------------------------------------------------------
+    // Independiente de la reserva/viaje — formulario "Avísame" de un
+    // partido próximamente. No es una plantilla del antiguo formato de viaje en grupo, se deja
+    // tal cual (desactivada por defecto).
+    // -----------------------------------------------------------------
     {
       key: "notify_confirmation",
       name: "Confirmación de Avísame",
-      description: "Se envía al dejar el email en el formulario \"Avísame\" de un viaje próximamente. Desactivado por defecto.",
+      description: "Se envía al dejar el email en el formulario \"Avísame\" de un partido próximamente. Desactivado por defecto.",
       subject: "Te avisaremos sobre {{tripName}}",
       body:
         "Hola {{firstName}},\n\nApuntado. En cuanto abramos plazas para {{tripName}} serás de los primeros en saberlo.\n\nUn abrazo futbolero,\nCopa de Ferias",
       active: false,
+      archived: false,
       timingReference: "immediate",
       timingDaysOffset: null,
     },
-    {
-      key: "booking_confirmed",
-      name: "1. Reserva confirmada",
-      description: "Se envía justo después de completar el pago.",
-      subject: "Tu plaza en {{tripName}} está confirmada — {{tripNumber}}",
-      body:
-        "Hola {{firstName}},\n\nYa estás dentro. Tu reserva para {{tripName}} ({{tripNumber}}) está confirmada.\n\nSalida desde {{departureCity}}: {{departureDate}}\nRegreso: {{returnDate}}\n\nEn los próximos días te iremos pidiendo algunos datos y compartiendo la información práctica. De momento, solo queda una cosa: contar los días.\n\nCopa de Ferias — Fútbol que merece el viaje.",
-      active: true,
-      timingReference: "immediate",
-      timingDaysOffset: null,
-    },
+    // -----------------------------------------------------------------
+    // Archivadas — secuencia antigua orientada al viaje en grupo guiado (WhatsApp,
+    // planning, coordinador/host). Desactivadas e imposibilitadas para
+    // envío (processPendingEmails excluye archived=true); se conservan
+    // solo como histórico, fuera del listado operativo de Admin.
+    // -----------------------------------------------------------------
     {
       key: "welcome",
-      name: "2. Bienvenida (+1 día)",
-      description: "Un día después de la compra: qué ocurre a partir de ahora.",
+      name: "[Archivada] Bienvenida (+1 día)",
+      description: "Plantilla retirada — mencionaba el grupo de WhatsApp del viaje. Sustituida por \"Reserva confirmada\", que ya incluye el acceso a Mi Viaje.",
       subject: "Bienvenido a Copa de Ferias",
       body:
-        "Hola {{firstName}},\n\nBienvenido a Copa de Ferias. A partir de ahora iremos completando entre todos el viaje a {{tripName}}: primero algunos datos tuyos, después el grupo de WhatsApp, y por último toda la información práctica antes de salir.\n\nPuedes ver el estado de tu reserva en cualquier momento en tu área \"Mi Viaje\".\n\nUn abrazo,\nCopa de Ferias",
-      active: true,
+        "Hola {{firstName}},\n\nBienvenido a Copa de Ferias. A partir de ahora iremos completando entre todos el viaje a {{tripName}}: primero algunos datos tuyos, después el grupo de WhatsApp, y por último toda la información práctica antes de salir.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "booking_plus_1",
       timingDaysOffset: 1,
     },
     {
       key: "pending_data",
-      name: "3. Datos pendientes",
-      description: "Recordatorio cuando falten datos de algún viajero.",
+      name: "[Archivada] Datos pendientes",
+      description: "Plantilla retirada — sustituida por \"Acción necesaria\", creada explícitamente por Admin en la reserva.",
       subject: "Nos faltan algunos datos para {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nPara dejar cerrado el viaje a {{tripName}} nos faltan algunos datos de uno o varios viajeros. Puedes completarlos desde tu área \"Mi Viaje\" cuando tengas un momento.\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nPara dejar cerrado el viaje a {{tripName}} nos faltan algunos datos de uno o varios viajeros.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "immediate",
       timingDaysOffset: null,
     },
     {
       key: "reminder_30_days",
-      name: "4. 30 días antes",
-      description: "Documentación y requisitos del viaje.",
+      name: "[Archivada] 30 días antes",
+      description: "Plantilla retirada — parte de la secuencia larga del antiguo viaje en grupo, sustituida por un único recordatorio 48h antes.",
       subject: "Faltan 30 días para {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nEn un mes viajas a {{tripName}}. Es un buen momento para revisar la documentación y los requisitos del viaje desde tu área \"Mi Viaje\".\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nEn un mes viajas a {{tripName}}.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "before_departure",
       timingDaysOffset: 30,
     },
     {
       key: "reminder_21_days",
-      name: "5. 21 días antes",
-      description: "Información práctica del viaje.",
+      name: "[Archivada] 21 días antes",
+      description: "Plantilla retirada — parte de la secuencia larga del antiguo viaje en grupo, sustituida por un único recordatorio 48h antes.",
       subject: "21 días para {{tripName}}: información práctica",
-      body:
-        "Hola {{firstName}},\n\nQueda poco. Te dejamos por aquí la información práctica de {{tripName}}: alojamiento, punto de encuentro y lo que necesitas saber antes de salir. Todo disponible en \"Mi Viaje\".\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nQueda poco para {{tripName}}.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "before_departure",
       timingDaysOffset: 21,
     },
     {
       key: "whatsapp_15_days",
-      name: "6. Grupo de WhatsApp (15 días antes)",
-      description: "Se activa el enlace al grupo de WhatsApp del viaje.",
+      name: "[Archivada] Grupo de WhatsApp (15 días antes)",
+      description: "Plantilla retirada — específica del antiguo viaje en grupo, ya no corresponde al producto actual.",
       subject: "Únete al grupo de {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nYa puedes unirte al grupo de WhatsApp de {{tripName}} para conocer al resto del grupo antes de viajar:\n\n{{whatsappUrl}}\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nYa puedes unirte al grupo de WhatsApp de {{tripName}} para conocer al resto del grupo antes de viajar:\n\n{{whatsappUrl}}\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "before_departure",
       timingDaysOffset: 15,
     },
     {
       key: "planning_7_days",
-      name: "7. Planning definitivo (7 días antes)",
-      description: "Planning definitivo y checklist final.",
+      name: "[Archivada] Planning definitivo (7 días antes)",
+      description: "Plantilla retirada — específica del antiguo viaje en grupo, ya no corresponde al producto actual.",
       subject: "Planning definitivo de {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nQueda una semana. Aquí tienes el planning definitivo de {{tripName}} y la checklist de qué llevar, disponibles en \"Mi Viaje\".\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nQueda una semana. Aquí tienes el planning definitivo de {{tripName}}.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "before_departure",
       timingDaysOffset: 7,
     },
     {
       key: "final_48h",
-      name: "8. Últimos detalles (48h antes)",
-      description: "Punto de encuentro y últimos detalles.",
+      name: "[Archivada] Últimos detalles (48h antes)",
+      description: "Plantilla retirada — sustituida por \"Recordatorio antes del viaje\".",
       subject: "Últimos detalles antes de {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nCasi. Punto de encuentro, hora y últimos detalles de {{tripName}} en \"Mi Viaje\". Nos vemos allí.\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nCasi. Punto de encuentro, hora y últimos detalles de {{tripName}}.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "before_departure",
       timingDaysOffset: 2,
     },
     {
       key: "thanks_after_return",
-      name: "9. Gracias (+1 día tras el regreso)",
-      description: "Mensaje de agradecimiento y recuerdo del viaje.",
+      name: "[Archivada] Gracias (+1 día tras el regreso)",
+      description: "Plantilla retirada — sustituida por \"Gracias / valoración\".",
       subject: "Gracias por venir a {{tripName}}",
-      body:
-        "Hola {{firstName}},\n\nGracias por haber venido. Esperamos que {{tripName}} haya sido de esos viajes que se recuerdan. Nos encantaría verte en el próximo.\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nGracias por haber venido. Esperamos que {{tripName}} haya sido de esos viajes que se recuerdan.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "after_return",
       timingDaysOffset: 1,
     },
     {
       key: "review_request",
-      name: "10. Solicitud de reseña (+3-5 días)",
-      description: "Petición de reseña tras el viaje.",
+      name: "[Archivada] Solicitud de reseña (+3-5 días)",
+      description: "Plantilla retirada — sustituida por \"Gracias / valoración\".",
       subject: "¿Nos cuentas qué tal {{tripName}}?",
-      body:
-        "Hola {{firstName}},\n\nSi tienes un minuto, nos ayudaría mucho que nos dejaras tu opinión sobre {{tripName}}. Gracias por confiar en nosotros.\n\nCopa de Ferias",
-      active: true,
+      body: "Hola {{firstName}},\n\nSi tienes un minuto, nos ayudaría mucho que nos dejaras tu opinión sobre {{tripName}}.\n\nCopa de Ferias",
+      active: false,
+      archived: true,
       timingReference: "after_return",
       timingDaysOffset: 4,
     },
     {
       key: "future_trips",
-      name: "11. Futuros viajes",
-      description: "Solo se envía si existe consentimiento comercial explícito.",
+      name: "[Archivada] Futuros viajes",
+      description: "Plantilla retirada — concepto de futuros viajes en grupo, requería consentimiento comercial explícito.",
       subject: "El próximo viaje ya está en marcha",
-      body:
-        "Hola {{firstName}},\n\nEstamos preparando el próximo viaje. Si quieres ser de los primeros en enterarte, échale un ojo a copadeferias.com.\n\nCopa de Ferias",
+      body: "Hola {{firstName}},\n\nEstamos preparando el próximo viaje.\n\nCopa de Ferias",
       active: false,
+      archived: true,
       timingReference: "immediate",
       timingDaysOffset: null,
     },
