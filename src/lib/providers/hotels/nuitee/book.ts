@@ -3,6 +3,19 @@ import { isSandboxProviderBookingAllowed, nuiteeConfig } from "@/lib/env";
 import { ProviderError } from "@/lib/providers/errors";
 import type { HotelBookingGuest, HotelBookingResult } from "./types";
 
+/**
+ * §7 — deliberately does NOT model `bookedRooms[]` at all. Real sandbox
+ * BOOK responses have returned bookedRooms with occupancy_number stuck at
+ * 1 for every room and a repeated first-room guest, even though the
+ * booking's own top-level `adults`/room-count were correct — so this type
+ * only reads the top-level fields, never anything per-room from BOOK.
+ * Rooming comes exclusively from roomingSnapshot.ts, built from Copa de
+ * Ferias' own RoomAssignment[] before BOOK is ever called. Also note
+ * retailRate.total inside bookedRooms (if it were read) is an OBJECT
+ * ({amount, currency}) here — a different shape than the array form
+ * SEARCH/PREBOOK use (see normalize.ts's extractAmountFromArray) — one
+ * more reason this file never reuses that parser.
+ */
 type RawBookingResult = {
   bookingId: string;
   supplierBookingId?: string | null;

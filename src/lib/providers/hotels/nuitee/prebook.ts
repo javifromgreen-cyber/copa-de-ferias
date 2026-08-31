@@ -1,12 +1,24 @@
 import { nuiteeRequest } from "./client";
+import { normalizeRoom, type RawRate } from "./normalize";
 import { ProviderError } from "@/lib/providers/errors";
-import type { HotelPrebook, PrebookChangeEvaluation } from "./types";
+import type { HotelPrebook, HotelRoom, PrebookChangeEvaluation } from "./types";
 
+/**
+ * Real PREBOOK shape: { data: { prebookId, offerId, hotelId, currency,
+ * roomTypes: [{ rates: [...] }], price, priceDifferencePercent,
+ * cancellationChanged, boardChanged, paymentTypes, checkin, checkout,
+ * sellingPriceToUser }, sandbox }. `price` here is a plain number — NOT
+ * the array-shaped retailRate.total (that only appears nested inside
+ * roomTypes[].rates[].retailRate, same array shape as SEARCH, normalized
+ * via the shared normalizeRoom()).
+ */
 type RawPrebook = {
   prebookId: string;
+  offerId: string;
   hotelId: string;
-  price: number;
   currency: string;
+  roomTypes?: { rates: RawRate[] }[];
+  price: number;
   priceDifferencePercent?: number | null;
   cancellationChanged?: boolean;
   boardChanged?: boolean;
@@ -16,12 +28,24 @@ type RawPrebook = {
 };
 
 function normalizePrebook(raw: RawPrebook): HotelPrebook {
-  if (!raw?.prebookId || !raw?.hotelId || !raw?.price || !raw?.currency || !raw?.checkin || !raw?.checkout) {
+  if (!raw?.prebookId || !raw?.offerId || !raw?.hotelId || typeof raw?.price !== "number" || !raw?.currency || !raw?.checkin || !raw?.checkout) {
     throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", "Nuitee prebook response is missing required fields.");
+  }
+  const rooms: HotelRoom[] = [];
+  for (const roomType of raw.roomTypes ?? []) {
+    for (const rawRate of roomType.rates ?? []) {
+      try {
+        rooms.push(normalizeRoom(rawRate));
+      } catch {
+        // Skip a single malformed room rather than failing the whole prebook.
+      }
+    }
   }
   return {
     prebookId: raw.prebookId,
+    offerId: raw.offerId,
     hotelId: raw.hotelId,
+    rooms,
     price: { total: raw.price, currency: raw.currency },
     priceDifferencePercent: raw.priceDifferencePercent ?? null,
     cancellationChanged: Boolean(raw.cancellationChanged),

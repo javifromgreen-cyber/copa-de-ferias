@@ -18,22 +18,37 @@ export type TaxAndFee = {
   included: boolean;
 };
 
+/**
+ * One physical room within a rate combination, identified by
+ * occupancyNumber (1, 2, 3...) — this is the same numbering Copa de
+ * Ferias' own occupancies[] request used to ask for it (see
+ * occupancies.ts), and later what BOOK expects per-guest. Per-room price
+ * and taxesAndFees are kept here too since Nuitee nests them per-room,
+ * not only at the combination level.
+ */
 export type HotelRoom = {
-  roomType: string;
+  occupancyNumber: number;
+  roomName: string;
   maxOccupancy: number;
   adultCount: number;
   board: string | null;
-};
-
-export type HotelRate = {
-  /** The value PREBOOK needs — represents the WHOLE multi-room combination for the requested occupancies, never one room at a time. */
-  offerId: string;
-  room: HotelRoom;
   price: { total: number; currency: string };
   includedTaxesAndFees: TaxAndFee[];
   excludedTaxesAndFees: TaxAndFee[];
   refundable: boolean;
-  cancellationPolicies: { amount: number; currency: string; type: string }[];
+};
+
+export type HotelRate = {
+  /**
+   * From roomTypes[].offerId — NOT one per room. Represents the WHOLE
+   * multi-room combination for the requested occupancies; this is the
+   * single value PREBOOK needs. Never generate one offer per room.
+   */
+  offerId: string;
+  /** Every physical room in this combination, one per occupancyNumber. */
+  rooms: HotelRoom[];
+  /** The combined total for the whole offer (roomTypes[].offerRetailRate) — not a sum we compute ourselves. */
+  price: { total: number; currency: string };
 };
 
 export type HotelOption = {
@@ -57,7 +72,10 @@ export type HotelSearchResult = {
 
 export type HotelPrebook = {
   prebookId: string;
+  offerId: string;
   hotelId: string;
+  /** roomTypes[].rates[] — same per-room shape SEARCH returns, from the SAME nested structure. */
+  rooms: HotelRoom[];
   price: { total: number; currency: string };
   priceDifferencePercent: number | null;
   cancellationChanged: boolean;

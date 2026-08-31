@@ -21,40 +21,75 @@ function fakeFetch(status: number, body: unknown): typeof fetch {
   return vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
 }
 
+// ---------------------------------------------------------------------
+// Fixtures below reproduce the REAL Nuitee sandbox payload shapes, as
+// captured manually by the user — not an approximation. See this file's
+// tests for what each shape quirk (array-vs-object retailRate.total,
+// offerId on roomTypes not on individual rates, data[]/hotels[] split,
+// bookedRooms inconsistency) is specifically guarding against.
+// ---------------------------------------------------------------------
+
 function rawRate(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    offerId: "rate_1",
-    roomType: "Double Room",
+    rateId: "rate_1",
+    occupancyNumber: 1,
+    name: "Premium Room",
     maxOccupancy: 2,
     adultCount: 2,
-    board: "Room Only",
-    retailRate: { total: 240, currency: "EUR" },
-    refundableTag: "RFN",
-    taxesAndFees: [
-      { included: true, description: "Resort fee", amount: 10, currency: "EUR" },
-      { included: false, description: "City tax", amount: 6, currency: "EUR" },
-      { included: false, description: "Daily Facilities Fee due and payable direct to the property at check in", amount: 15, currency: "EUR" },
-    ],
-    cancellationPolicies: [{ amount: 240, currency: "EUR", type: "full" }],
+    childCount: 0,
+    boardType: "RO",
+    boardName: "Room Only",
+    retailRate: {
+      total: [{ amount: 590.51, currency: "EUR" }],
+      suggestedSellingPrice: [{ amount: 689.43, currency: "EUR", source: "" }],
+      initialPrice: [{ amount: 590.51, currency: "EUR" }],
+      taxesAndFees: [
+        { included: true, description: "Resort fee", amount: 23.02, currency: "EUR" },
+        { included: false, description: "City tax", amount: 2.01, currency: "EUR" },
+      ],
+    },
+    cancellationPolicies: { cancelPolicyInfos: [], hotelRemarks: [], refundableTag: "NRFN" },
+    paymentTypes: ["NUITEE_PAY"],
     ...overrides,
   };
 }
 
-function rawHotel(overrides: Partial<Record<string, unknown>> = {}) {
+function rawRoomType(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    hotelId: "hotel_1",
-    name: "Hotel Test",
-    address: "Calle Falsa 123",
-    city: "Manchester",
-    stars: 4,
-    rating: 8.5,
-    reviewCount: 120,
-    latitude: 53.48,
-    longitude: -2.24,
-    photo: "https://example.com/photo.jpg",
+    roomTypeId: "rt_1",
+    offerId: "offer_1",
+    supplier: "nuitee",
+    supplierId: 2,
     rates: [rawRate()],
+    offerRetailRate: { amount: 590.51, currency: "EUR" },
     ...overrides,
   };
+}
+
+function rawDataHotel(overrides: Partial<Record<string, unknown>> = {}) {
+  return { hotelId: "lp1897", roomTypes: [rawRoomType()], ...overrides };
+}
+
+function rawHotelContent(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "lp1897",
+    name: "The Manhattan at Times Square Hotel",
+    main_photo: "https://static.cupid.travel/hotels/524489007.jpg",
+    thumbnail: "https://static.cupid.travel/hotels/thumbnail/524489007.jpg",
+    address: "790 7th Avenue",
+    country_code: "us",
+    city_name: "New York",
+    latitude: 40.762172,
+    longitude: -73.983056,
+    rating: 7.2,
+    stars: 4,
+    review_count: 9754,
+    ...overrides,
+  };
+}
+
+function rawSearchResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return { data: [rawDataHotel()], hotels: [rawHotelContent()], sandbox: true, ...overrides };
 }
 
 describe("roomMixToOccupancies (§4 — direct translation, no new algorithm)", () => {
@@ -63,7 +98,7 @@ describe("roomMixToOccupancies (§4 — direct translation, no new algorithm)", 
     [2, [{ adults: 2 }]],
     [3, [{ adults: 3 }]],
     [4, [{ adults: 2 }, { adults: 2 }]],
-    [5, [{ adults: 3 }, { adults: 2 }]],
+    [5, [{ adults: 2 }, { adults: 3 }]],
     [6, [{ adults: 2 }, { adults: 2 }, { adults: 2 }]],
   ];
   for (const [partySize, expected] of cases) {
@@ -71,13 +106,93 @@ describe("roomMixToOccupancies (§4 — direct translation, no new algorithm)", 
       expect(roomMixToOccupancies(computeRequiredRoomMix(partySize))).toEqual(expected);
     });
   }
+
+  it("5 travelers is exactly [{adults:2},{adults:3}] — a double at occupancyNumber 1, a triple at occupancyNumber 2, never [3,2]", () => {
+    expect(roomMixToOccupancies(computeRequiredRoomMix(5))).toEqual([{ adults: 2 }, { adults: 3 }]);
+  });
 });
 
-describe("normalizeTaxesAndFees (§8 — included vs excluded, never assume excluded == chargeable by us)", () => {
-  it("splits included and excluded fees, preserving description/amount/currency", () => {
-    const { included, excluded } = normalizeTaxesAndFees(rawRate().taxesAndFees as never);
-    expect(included).toEqual([{ description: "Resort fee", amount: 10, currency: "EUR", included: true }]);
-    expect(excluded.map((e) => e.description)).toEqual(["City tax", "Daily Facilities Fee due and payable direct to the property at check in"]);
+describe("normalizeSearchResult — real Nuitee SEARCH shape (data[] + hotels[])", () => {
+  it("joins data[].hotelId with hotels[].id, and reads offerId from roomTypes[] (not per-rate)", () => {
+    const result = normalizeSearchResult(rawSearchResponse());
+    expect(result.hotels).toHaveLength(1);
+    const hotel = result.hotels[0];
+    expect(hotel).toMatchObject({ hotelId: "lp1897", name: "The Manhattan at Times Square Hotel", stars: 4, rating: 7.2, reviewCount: 9754, address: "790 7th Avenue", city: "New York", coordinates: { lat: 40.762172, lng: -73.983056 }, photoUrl: "https://static.cupid.travel/hotels/524489007.jpg" });
+    expect(hotel.rates).toHaveLength(1);
+    expect(hotel.rates[0].offerId).toBe("offer_1");
+  });
+
+  it("reads retailRate.total as an ARRAY (SEARCH shape) — rates[].price and the roomType's own offerRetailRate", () => {
+    const result = normalizeSearchResult(rawSearchResponse());
+    const rate = result.hotels[0].rates[0];
+    expect(rate.price).toEqual({ total: 590.51, currency: "EUR" }); // offerRetailRate
+    expect(rate.rooms[0].price).toEqual({ total: 590.51, currency: "EUR" }); // retailRate.total[0]
+  });
+
+  it("a data[] entry with no matching hotels[] content is skipped, not fabricated", () => {
+    const result = normalizeSearchResult(rawSearchResponse({ data: [rawDataHotel({ hotelId: "unknown_hotel" })] }));
+    expect(result.hotels).toHaveLength(0);
+  });
+
+  it("throws INVALID_PROVIDER_RESPONSE if data[]/hotels[] arrays are missing entirely", () => {
+    expect(() => normalizeSearchResult({ nothing: "here" })).toThrow(ProviderError);
+  });
+});
+
+describe("multi-room SEARCH offer — one offerId, multiple rooms, never one offer per room", () => {
+  it("a single roomType with 3 rates (occupancyNumber 1/2/3) normalizes to ONE offerId with 3 rooms", () => {
+    const raw = rawSearchResponse({
+      data: [
+        rawDataHotel({
+          roomTypes: [
+            rawRoomType({
+              offerId: "offer_multi",
+              rates: [rawRate({ occupancyNumber: 1, adultCount: 2 }), rawRate({ occupancyNumber: 2, adultCount: 2 }), rawRate({ occupancyNumber: 3, adultCount: 2 })],
+            }),
+          ],
+        }),
+      ],
+    });
+    const result = normalizeSearchResult(raw);
+    expect(result.hotels[0].rates).toHaveLength(1);
+    const rate = result.hotels[0].rates[0];
+    expect(rate.offerId).toBe("offer_multi");
+    expect(rate.rooms.map((r) => r.occupancyNumber)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("taxesAndFees (§8 — included vs excluded, never assume excluded is chargeable by us or summed into price)", () => {
+  it("real SEARCH example (1 traveler): Occupancy Tax + Hotel Tax Rate included, Daily Facilities Fee excluded, and the 79.26 EUR is never added to price", () => {
+    const raw = rawSearchResponse({
+      data: [
+        rawDataHotel({
+          roomTypes: [
+            rawRoomType({
+              offerRetailRate: { amount: 590.65, currency: "EUR" },
+              rates: [
+                rawRate({
+                  retailRate: {
+                    total: [{ amount: 590.65, currency: "EUR" }],
+                    taxesAndFees: [
+                      { included: true, description: "Occupancy Tax", amount: 6.21, currency: "EUR" },
+                      { included: true, description: "Hotel Tax Rate", amount: 72.57, currency: "EUR" },
+                      { included: false, description: "Daily Facilities Fee due and payable direct to the property at check in ", amount: 79.26, currency: "EUR" },
+                    ],
+                  },
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+    const result = normalizeSearchResult(raw);
+    const room = result.hotels[0].rates[0].rooms[0];
+    expect(room.includedTaxesAndFees.map((t) => t.description)).toEqual(["Occupancy Tax", "Hotel Tax Rate"]);
+    expect(room.excludedTaxesAndFees.map((t) => t.description)).toEqual(["Daily Facilities Fee due and payable direct to the property at check in "]);
+    // Price stays exactly 590.65 — the 79.26 excluded fee is never summed in.
+    expect(room.price.total).toBe(590.65);
+    expect(result.hotels[0].rates[0].price.total).toBe(590.65);
   });
 
   it("returns empty arrays when no taxesAndFees are present", () => {
@@ -85,47 +200,55 @@ describe("normalizeTaxesAndFees (§8 — included vs excluded, never assume excl
   });
 });
 
-describe("normalizeSearchResult — hotel/rate normalization", () => {
-  it("normalizes a hotel with stars/rating/coordinates/photo and its rate", () => {
-    const result = normalizeSearchResult({ data: [rawHotel()] });
-    expect(result.hotels).toHaveLength(1);
-    const hotel = result.hotels[0];
-    expect(hotel).toMatchObject({ hotelId: "hotel_1", stars: 4, rating: 8.5, coordinates: { lat: 53.48, lng: -2.24 } });
-    expect(hotel.rates[0].refundable).toBe(true);
-    // suggestedSellingPrice is never read anywhere in this module — the
-    // normalized type has no such field, so there's nothing to assert
-    // beyond: only price.total (from retailRate) appears.
-    expect(hotel.rates[0].price).toEqual({ total: 240, currency: "EUR" });
+describe("suggestedSellingPrice — never used as our price, even when present with a source (§9)", () => {
+  it("real example: suggestedSellingPrice 873.21 EUR (source booking.com) is ignored — normalized price stays 590.65 EUR", () => {
+    const raw = rawSearchResponse({
+      data: [
+        rawDataHotel({
+          roomTypes: [
+            rawRoomType({
+              offerRetailRate: { amount: 590.65, currency: "EUR" },
+              rates: [
+                rawRate({
+                  retailRate: {
+                    total: [{ amount: 590.65, currency: "EUR" }],
+                    suggestedSellingPrice: [{ amount: 873.21, currency: "EUR", source: "booking.com" }],
+                    taxesAndFees: [],
+                  },
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+    const result = normalizeSearchResult(raw);
+    const rate = result.hotels[0].rates[0];
+    expect(rate.price.total).toBe(590.65);
+    expect(rate.rooms[0].price.total).toBe(590.65);
+    // No field on any normalized type can even carry 873.21 — there's no
+    // suggestedSellingPrice property in HotelRate/HotelRoom at all.
+    expect(JSON.stringify(rate)).not.toContain("873.21");
   });
+});
 
-  it("normalizes an NRFN (non-refundable) rate", () => {
-    const result = normalizeSearchResult({ data: [rawHotel({ rates: [rawRate({ refundableTag: "NRFN" })] })] });
-    expect(result.hotels[0].rates[0].refundable).toBe(false);
-  });
-
-  it("accepts a bare array response as well as a {data: [...]} envelope", () => {
-    const result = normalizeSearchResult([rawHotel()]);
-    expect(result.hotels).toHaveLength(1);
-  });
-
-  it("skips a malformed rate but keeps the hotel", () => {
-    const result = normalizeSearchResult({ data: [rawHotel({ rates: [rawRate(), { offerId: "broken" }] })] });
+describe("normalizeSearchResult — skips malformed entries rather than failing the whole search", () => {
+  it("skips a malformed roomType (offer) but keeps the hotel", () => {
+    const raw = rawSearchResponse({ data: [rawDataHotel({ roomTypes: [rawRoomType(), { offerId: "broken" }] })] });
+    const result = normalizeSearchResult(raw);
     expect(result.hotels[0].rates).toHaveLength(1);
   });
 
-  it("skips a malformed hotel rather than failing the whole search", () => {
-    const result = normalizeSearchResult({ data: [rawHotel(), { hotelId: "broken" }] });
+  it("skips a malformed hotel (data[] entry) rather than failing the whole search", () => {
+    const raw = rawSearchResponse({ data: [rawDataHotel(), { hotelId: "broken" }] });
+    const result = normalizeSearchResult(raw);
     expect(result.hotels).toHaveLength(1);
-  });
-
-  it("throws INVALID_PROVIDER_RESPONSE on a completely malformed top-level response", () => {
-    expect(() => normalizeSearchResult({ nothing: "here" })).toThrow(ProviderError);
   });
 });
 
 describe("searchHotels", () => {
   it("translates the room mix into occupancies and passes starRating through when provided", async () => {
-    const fetchImpl = fakeFetch(200, { data: [rawHotel()] });
+    const fetchImpl = fakeFetch(200, rawSearchResponse());
     await searchHotels({
       cityName: "Manchester",
       countryCode: "GB",
@@ -174,40 +297,84 @@ describe("searchHotels", () => {
   });
 });
 
+// ---------------------------------------------------------------------
+// PREBOOK — real shape: { data: { prebookId, offerId, hotelId, currency,
+// roomTypes: [{ rates: [...] }], price (plain number), ... }, sandbox }.
+// price is a plain number; the nested roomTypes[].rates[].retailRate.total
+// is the SAME array shape as SEARCH.
+// ---------------------------------------------------------------------
+
+function rawPrebookResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    data: {
+      prebookId: "pb_1",
+      offerId: "offer_1",
+      hotelId: "lp1897",
+      currency: "EUR",
+      roomTypes: [
+        {
+          rates: [
+            {
+              occupancyNumber: 1,
+              adultCount: 2,
+              retailRate: {
+                total: [{ amount: 590.51, currency: "EUR" }],
+                taxesAndFees: [{ included: true, description: "Resort fee", amount: 23.02, currency: "EUR" }],
+              },
+            },
+          ],
+        },
+      ],
+      price: 590.51,
+      priceDifferencePercent: 0,
+      cancellationChanged: false,
+      boardChanged: false,
+      paymentTypes: ["NUITEE_PAY", "ACC_CREDIT_CARD", "WALLET"],
+      checkin: "2026-10-15",
+      checkout: "2026-10-17",
+      sellingPriceToUser: 590.51,
+      ...overrides,
+    },
+    sandbox: true,
+  };
+}
+
 describe("evaluatePrebookChange (§5 — never continue silently past a changed condition)", () => {
-  const basePrebook = { prebookId: "pb_1", hotelId: "hotel_1", price: { total: 240, currency: "EUR" }, priceDifferencePercent: 0, cancellationChanged: false, boardChanged: false, paymentTypes: ["ACC_CREDIT_CARD"], checkin: "2026-10-15", checkout: "2026-10-17" };
+  function prebook(overrides: Partial<Record<string, unknown>> = {}) {
+    return { prebookId: "pb_1", offerId: "offer_1", hotelId: "hotel_1", rooms: [], price: { total: 240, currency: "EUR" }, priceDifferencePercent: 0, cancellationChanged: false, boardChanged: false, paymentTypes: ["ACC_CREDIT_CARD"], checkin: "2026-10-15", checkout: "2026-10-17", ...overrides } as Parameters<typeof evaluatePrebookChange>[1];
+  }
 
   it("reports no change when price/cancellation/board all match the search", () => {
-    const result = evaluatePrebookChange(240, basePrebook);
+    const result = evaluatePrebookChange(240, prebook());
     expect(result).toEqual({ priceChanged: false, cancellationChanged: false, boardChanged: false, requiresAcceptance: false });
   });
 
   it("requires acceptance when the price differs from what SEARCH showed", () => {
-    const result = evaluatePrebookChange(200, basePrebook);
+    const result = evaluatePrebookChange(200, prebook());
     expect(result.priceChanged).toBe(true);
     expect(result.requiresAcceptance).toBe(true);
   });
 
   it("requires acceptance when cancellation policy changed, even with the same price", () => {
-    const result = evaluatePrebookChange(240, { ...basePrebook, cancellationChanged: true });
-    expect(result.requiresAcceptance).toBe(true);
+    expect(evaluatePrebookChange(240, prebook({ cancellationChanged: true })).requiresAcceptance).toBe(true);
   });
 
   it("requires acceptance when board changed, even with the same price", () => {
-    const result = evaluatePrebookChange(240, { ...basePrebook, boardChanged: true });
-    expect(result.requiresAcceptance).toBe(true);
+    expect(evaluatePrebookChange(240, prebook({ boardChanged: true })).requiresAcceptance).toBe(true);
   });
 });
 
-describe("prebookOffer", () => {
-  it("normalizes a successful prebook response", async () => {
-    const fetchImpl = fakeFetch(200, { data: { prebookId: "pb_1", hotelId: "hotel_1", price: 240, currency: "EUR", priceDifferencePercent: 0, cancellationChanged: false, boardChanged: false, paymentTypes: ["ACC_CREDIT_CARD"], checkin: "2026-10-15", checkout: "2026-10-17" } });
-    const result = await prebookOffer("rate_1", fetchImpl);
-    expect(result.prebookId).toBe("pb_1");
-    expect(result.price).toEqual({ total: 240, currency: "EUR" });
+describe("prebookOffer — real Nuitee PREBOOK shape", () => {
+  it("reads price as a plain number (not array/object) and rooms[].price from the nested array-shaped retailRate.total", async () => {
+    const fetchImpl = fakeFetch(200, rawPrebookResponse());
+    const result = await prebookOffer("offer_1", fetchImpl);
+    expect(result).toMatchObject({ prebookId: "pb_1", offerId: "offer_1", hotelId: "lp1897", price: { total: 590.51, currency: "EUR" } });
+    expect(result.rooms).toHaveLength(1);
+    expect(result.rooms[0].price).toEqual({ total: 590.51, currency: "EUR" });
+    expect(result.rooms[0].includedTaxesAndFees).toEqual([{ description: "Resort fee", amount: 23.02, currency: "EUR", included: true }]);
   });
 
-  it("throws OFFER... INVALID_PROVIDER_RESPONSE when the offer is missing/expired and Nuitee returns a malformed body", async () => {
+  it("throws INVALID_PROVIDER_RESPONSE when the prebook body is malformed", async () => {
     const fetchImpl = fakeFetch(200, { data: {} });
     await expect(prebookOffer("rate_gone", fetchImpl)).rejects.toMatchObject({ code: "INVALID_PROVIDER_RESPONSE" });
   });
@@ -215,6 +382,59 @@ describe("prebookOffer", () => {
   it("maps a 404 (offer no longer exists) to NO_AVAILABILITY", async () => {
     const fetchImpl = fakeFetch(404, {});
     await expect(prebookOffer("rate_gone", fetchImpl)).rejects.toMatchObject({ code: "NO_AVAILABILITY" });
+  });
+});
+
+// ---------------------------------------------------------------------
+// BOOK — real shape: retailRate.total inside bookedRooms is an OBJECT
+// ({amount, currency}), unlike SEARCH/PREBOOK's array. bookedRooms is
+// deliberately never read by bookPrebook() (§7) — see book.ts.
+// ---------------------------------------------------------------------
+
+function rawBookResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    data: {
+      bookingId: "bk_1",
+      status: "CONFIRMED",
+      hotelConfirmationCode: "test",
+      // Deliberately inconsistent, matching a real observed sandbox BOOK
+      // response: occupancy_number stuck at 1 for every room, and the
+      // "adults" per room stuck at 1 even though the booking is for more
+      // travelers — this must never leak into our own rooming.
+      bookedRooms: [
+        { rate: { retailRate: { total: { amount: 295.25, currency: "EUR" }, taxesAndFees: [] } }, occupancy_number: 1, adults: 1, guests: [{ firstName: "Test", lastName: "Sandbox" }], amount: 295.25, currency: "EUR" },
+        { rate: { retailRate: { total: { amount: 295.26, currency: "EUR" }, taxesAndFees: [] } }, occupancy_number: 1, adults: 1, guests: [{ firstName: "Test", lastName: "Sandbox" }], amount: 295.26, currency: "EUR" },
+      ],
+      price: 590.51,
+      currency: "EUR",
+      adults: 4, // the booking-level total IS correct, unlike the per-room fields above
+      paymentStatus: "succeeded",
+      processingFee: 6.85,
+      sandbox: 1,
+      ...overrides,
+    },
+    sandbox: true,
+  };
+}
+
+describe("bookPrebook — real BOOK shape, retailRate.total as an object (not array)", () => {
+  it("normalizes the top-level fields correctly, ignoring bookedRooms entirely", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = fakeFetch(200, rawBookResponse());
+    const result = await bookPrebook("pb_1", "ref_1", { firstName: "Test", lastName: "Sandbox", email: "test@example.com" }, [{ occupancyNumber: 1, firstName: "Test", lastName: "Sandbox", email: "test@example.com" }], fetchImpl);
+    expect(result).toMatchObject({ bookingId: "bk_1", status: "CONFIRMED", hotelConfirmationCode: "test", paymentStatus: "succeeded", currency: "EUR", totalPrice: 590.51, processingFee: 6.85 });
+  });
+
+  it("§3 — never exposes bookedRooms/occupancy_number/adults-per-room/guests from BOOK, even though they were present and inconsistent in the raw response", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = fakeFetch(200, rawBookResponse());
+    const result = await bookPrebook("pb_1", "ref_1", { firstName: "Test", lastName: "Sandbox", email: "test@example.com" }, [], fetchImpl);
+    expect(result).not.toHaveProperty("bookedRooms");
+    expect(result).not.toHaveProperty("rooms");
+    expect(result).not.toHaveProperty("rooming");
+    expect(result).not.toHaveProperty("guests");
+    // Only the whole-booking totals are surfaced — never a per-room breakdown.
+    expect(Object.keys(result).sort()).toEqual(["bookingId", "currency", "hotelConfirmationCode", "paymentStatus", "processingFee", "status", "supplierBookingId", "totalPrice"]);
   });
 });
 
@@ -237,9 +457,9 @@ describe("bookPrebook — hard gate against accidental real bookings", () => {
 
   it("succeeds when explicitly enabled, outside production, with a sandbox key, and always uses ACC_CREDIT_CARD", async () => {
     vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
-    const fetchImpl = fakeFetch(200, { data: { bookingId: "bk_1", status: "CONFIRMED", paymentStatus: "succeeded", price: 240, currency: "EUR", processingFee: 6.85 } });
+    const fetchImpl = fakeFetch(200, rawBookResponse());
     const result = await bookPrebook("pb_1", "ref_1", { firstName: "Test", lastName: "Sandbox", email: "test@example.com" }, [{ occupancyNumber: 1, firstName: "Test", lastName: "Sandbox", email: "test@example.com" }], fetchImpl);
-    expect(result).toMatchObject({ bookingId: "bk_1", status: "CONFIRMED", processingFee: 6.85 });
+    expect(result.bookingId).toBe("bk_1");
     const [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(init.body as string);
     expect(body.payment).toEqual({ method: "ACC_CREDIT_CARD" });
@@ -256,8 +476,8 @@ describe("generateClientReference (§16 — idempotency, generated+persisted bef
   });
 });
 
-describe("buildRoomingSnapshot (§7 — our own record, never derived from Nuitee's BOOK response)", () => {
-  it("freezes room->traveler assignments exactly as Copa de Ferias computed them", () => {
+describe("buildRoomingSnapshot (§7/§3 — our own record, never derived from Nuitee's BOOK response)", () => {
+  it("freezes room->traveler assignments exactly as Copa de Ferias computed them, from RoomAssignment[] only", () => {
     const snapshot = buildRoomingSnapshot([
       { type: "double", travelerIndices: [0, 1] },
       { type: "triple", travelerIndices: [2, 3, 4] },
@@ -268,5 +488,25 @@ describe("buildRoomingSnapshot (§7 — our own record, never derived from Nuite
         { roomIndex: 1, travelerIndices: [2, 3, 4] },
       ],
     });
+  });
+
+  it("a snapshot built for a 5-traveler booking (2+3) is unaffected by whatever a real BOOK response's bookedRooms says — buildRoomingSnapshot's signature can't even accept it", () => {
+    // The inconsistent real BOOK payload from rawBookResponse() is never
+    // passed to buildRoomingSnapshot at all — its only input is our own
+    // RoomAssignment[], computed before BOOK is ever called.
+    const ourOwnAssignments = [
+      { type: "double" as const, travelerIndices: [0, 1] },
+      { type: "triple" as const, travelerIndices: [2, 3, 4] },
+    ];
+    const snapshot = buildRoomingSnapshot(ourOwnAssignments);
+    expect(snapshot.rooms[0].travelerIndices).toEqual([0, 1]);
+    expect(snapshot.rooms[1].travelerIndices).toEqual([2, 3, 4]);
+    // Never occupancy_number: 1 for both rooms, never adults: 1, never a
+    // repeated guest — those are exactly the inconsistencies real BOOK
+    // responses have shown, and none of them exist anywhere in this
+    // snapshot's shape.
+    expect(snapshot).not.toHaveProperty("occupancy_number");
+    expect(snapshot).not.toHaveProperty("adults");
+    expect(snapshot).not.toHaveProperty("guests");
   });
 });
