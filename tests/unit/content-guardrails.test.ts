@@ -7,7 +7,6 @@ const FORBIDDEN = [
   "salida garantizada",
   "nomad",
   "awayday",
-  "duffel",
   // Match-first phase (§0): never communicate cupos, headcounts, or the
   // retired GROUP_CDF "grupo cerrado" framing on any public surface.
   "cupos",

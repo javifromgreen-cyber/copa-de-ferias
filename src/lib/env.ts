@@ -83,10 +83,10 @@ export const resendConfig = {
 
 /**
  * Real flight-search API credentials — deliberately generic (no vendor
- * name baked into the app), gated the same way as payments: even with a
- * key configured, RealFlightProvider is only ever reached in
- * APP_MODE=production for a non-demo trip. See
- * src/lib/providers/flights/realFlightProvider.ts.
+ * name baked into the app). Superseded by duffelConfig below now that a
+ * specific vendor (Duffel TEST) is actually wired up; kept only so an
+ * unset FLIGHT_API_KEY doesn't become a silent dead reference elsewhere.
+ * See src/lib/providers/flights/realFlightProvider.ts.
  */
 export const flightApiConfig = {
   get apiKey() {
@@ -96,6 +96,76 @@ export const flightApiConfig = {
     return Boolean(this.apiKey);
   },
 };
+
+/**
+ * Duffel (flights) — server-side only, TEST/sandbox for now. Never read
+ * from client code; never logged. See
+ * src/lib/providers/flights/duffel/client.ts.
+ */
+export const duffelConfig = {
+  get accessToken() {
+    return process.env.DUFFEL_ACCESS_TOKEN || "";
+  },
+  get isConfigured() {
+    return Boolean(this.accessToken);
+  },
+  /** True when the token itself is Duffel's own test-mode prefix — a second, independent signal (not a substitute for live_mode on the actual API response) that we're not pointed at a live token. */
+  get looksLikeTestToken() {
+    return this.accessToken.startsWith("duffel_test_");
+  },
+};
+
+/**
+ * Nuitee / LiteAPI (hotels) — server-side only, sandbox for now. Never
+ * read from client code; never logged. See
+ * src/lib/providers/hotels/nuitee/client.ts.
+ */
+export const nuiteeConfig = {
+  get apiKey() {
+    return process.env.NUITEE_API_KEY || "";
+  },
+  get isConfigured() {
+    return Boolean(this.apiKey);
+  },
+  /** True when the key itself has Nuitee's own sandbox prefix — a second, independent signal, not a substitute for a real API check. */
+  get looksLikeSandboxKey() {
+    return this.apiKey.startsWith("sand_");
+  },
+};
+
+export type ProviderMode = "mock" | "real";
+
+/**
+ * Explicit opt-in to exercise the real Duffel/Nuitee sandbox adapters
+ * outside APP_MODE=production (§14) — e.g. FLIGHT_PROVIDER=real while
+ * developing locally against Duffel TEST. Defaults to "mock". Has no
+ * effect in APP_MODE=production, where the existing triple-gate
+ * (see src/lib/providers/flights/index.ts) is the only path to a real
+ * provider, and no effect at all on hotels' getHotelProviders() — see
+ * src/lib/providers/hotels/nuitee/index.ts for why hotels use a separate
+ * accessor instead of this legacy factory.
+ */
+export function getFlightProviderMode(): ProviderMode {
+  return process.env.FLIGHT_PROVIDER === "real" ? "real" : "mock";
+}
+
+export function getHotelProviderMode(): ProviderMode {
+  return process.env.HOTEL_PROVIDER === "real" ? "real" : "mock";
+}
+
+/**
+ * Hard gate for anything that can create a real (even if sandbox) booking
+ * with a provider — a Duffel Order or a Nuitee rates/book. Requires an
+ * explicit, separate opt-in on top of provider credentials being present;
+ * never true in APP_MODE=production, so a misconfigured production
+ * deployment can never place accidental provider bookings. Nothing in the
+ * checkout/UI/server-action layer calls the functions this gates yet —
+ * see src/lib/providers/flights/duffel/order.ts and
+ * src/lib/providers/hotels/nuitee/book.ts.
+ */
+export function isSandboxProviderBookingAllowed(): boolean {
+  return getAppMode() !== "production" && process.env.ALLOW_SANDBOX_PROVIDER_BOOKING === "true";
+}
 
 export const analyticsConfig = {
   get ga4Id() {
