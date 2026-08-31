@@ -78,7 +78,8 @@ function classifySliceDaypart(departingAt: Date): "morning" | "midday" | "aftern
   return "night";
 }
 
-function sliceMatchesDaypart(slice: RoundTripFlightSlice, preference: RoundTripDaypartPreference): boolean {
+/** Exported so the selection layer (roundTripSelection.ts) can apply outbound/return preferences independently while building slice options — see its own header comment. */
+export function sliceMatchesDaypart(slice: RoundTripFlightSlice, preference: RoundTripDaypartPreference): boolean {
   if (preference === "ANY") return true;
   return classifySliceDaypart(slice.segments[0].departingAt) === preference.toLowerCase();
 }

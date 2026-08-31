@@ -8,7 +8,17 @@ export {
   filterDirectRoundTripOffers,
   offerMatchesDaypartPreferences,
   filterRoundTripOffersByDaypart,
+  sliceMatchesDaypart,
   type RoundTripSearchParams,
   type RoundTripDaypartPreference,
 } from "./roundTripSearch";
+export {
+  flightSliceKey,
+  buildOutboundSliceOptions,
+  buildReturnSliceOptionsForOutbound,
+  resolveRoundTripOffer,
+  revalidatedOfferMatchesSelectedItinerary,
+  type FlightSliceOption,
+  type ResolveRoundTripOfferResult,
+} from "./roundTripSelection";
 export type * from "./types";

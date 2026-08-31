@@ -64,7 +64,7 @@ export function assertGlobalTransition(from: CheckoutAttemptStatus, to: Checkout
  *
  * Accepts an optional Prisma transaction client so callers already
  * inside a $transaction (e.g. finalize.ts) can compose this without
- * nesting transactions.
+ * nesting transactions — see the `db === prisma` branch below.
  *
  * Fase 1.5 §1 — reaching either terminal failure state also releases any
  * TicketHold still HELD for this attempt (releaseHeldTicketHoldsForAttempt,
@@ -83,8 +83,36 @@ export function assertGlobalTransition(from: CheckoutAttemptStatus, to: Checkout
  * and COMPENSATING are deliberately NOT included here — a hold reaching
  * this function while the attempt lands in either of those still-active
  * states must stay HELD (see EXPIRABLE_ATTEMPT_STATUSES's own doc comment).
+ *
+ * Fase 1.6 §1 — everything below (the status read+write, the state_changed
+ * event, and — for a terminal transition — the hold release plus its own
+ * ticket_hold_released events) now runs atomically. When this function is
+ * called at the top level (the default `db = prisma`, i.e. the caller has
+ * NOT already opened a transaction), the whole sequence is wrapped in ONE
+ * `prisma.$transaction`: a crash or thrown error anywhere in the middle —
+ * e.g. right after the status write but before the hold release runs —
+ * rolls back EVERYTHING, leaving CheckoutAttempt at its PREVIOUS status and
+ * every TicketHold at its previous status, safely retryable. There is no
+ * window where CheckoutAttempt=FAILED can be observed with a TicketHold
+ * still HELD. When called with an explicit `db` that is already a
+ * transaction client (`db !== prisma`, e.g. finalize.ts's own
+ * `transitionCheckoutAttempt(id, "confirmed", tx)`), this function does
+ * NOT open a nested transaction — Prisma doesn't support nesting
+ * `$transaction` calls — it simply runs the same sequence directly against
+ * the caller's `tx`, which is already atomic as part of whatever larger
+ * transaction the caller is composing. No external call (provider API,
+ * email, etc.) is ever made from within this transaction — see
+ * releaseHeldTicketHoldsForAttempt/releaseTicketHold's own doc comments:
+ * releasing a hold is purely local.
  */
 export async function transitionCheckoutAttempt(checkoutAttemptId: string, to: CheckoutAttemptStatus, db: Db = prisma) {
+  if (db === prisma) {
+    return prisma.$transaction((tx) => transitionCheckoutAttemptSteps(checkoutAttemptId, to, tx));
+  }
+  return transitionCheckoutAttemptSteps(checkoutAttemptId, to, db);
+}
+
+async function transitionCheckoutAttemptSteps(checkoutAttemptId: string, to: CheckoutAttemptStatus, db: Db) {
   const current = await db.checkoutAttempt.findUniqueOrThrow({ where: { id: checkoutAttemptId }, select: { status: true } });
   assertGlobalTransition(current.status, to);
 
