@@ -234,15 +234,16 @@ model Trip {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  origins      TripOrigin[]
-  planningDays TripPlanningDay[]
-  activities   TripActivity[]
-  inclusions   TripInclusion[]
-  requirements TripRequirement[]
-  faqs         TripFaq[]
-  leads        Lead[]
-  bookings     Booking[]
-  events       Event[]
+  origins          TripOrigin[]
+  planningDays     TripPlanningDay[]
+  activities       TripActivity[]
+  inclusions       TripInclusion[]
+  requirements     TripRequirement[]
+  faqs             TripFaq[]
+  leads            Lead[]
+  bookings         Booking[]
+  events           Event[]
+  checkoutAttempts CheckoutAttempt[]
 }
 
 // The classification unit for a match's league/cup/tournament — entered
@@ -351,6 +352,8 @@ model TicketOffer {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  ticketHolds TicketHold[]
 }
 
 // ---------------------------------------------------------------------
@@ -563,12 +566,13 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  travelers      Traveler[]
-  changeRequests ChangeRequest[]
-  emailLogs      EmailLog[]
-  documents      BookingDocument[]
-  updates        BookingUpdate[]
-  actions        BookingAction[]
+  travelers       Traveler[]
+  changeRequests  ChangeRequest[]
+  emailLogs       EmailLog[]
+  documents       BookingDocument[]
+  updates         BookingUpdate[]
+  actions         BookingAction[]
+  checkoutAttempt CheckoutAttempt?
 }
 
 enum RoomPreference {
@@ -624,6 +628,185 @@ model Traveler {
   updatedAt DateTime @updatedAt
 }
 
+// ---------------------------------------------------------------------
+// Checkout saga foundation (Fase 1) — CheckoutAttempt is the persistent
+// root identity of a real-money checkout in progress, independent of
+// Booking. Booking is created only once, at finalization (see
+// finalizeConfirmedCheckoutAttempt in src/lib/checkout-saga/finalize.ts) —
+// never during DRAFT/REVALIDATING/FULFILLING, so Mi Viaje/Admin can never
+// show an incomplete operation as a real reservation. Nothing here is
+// wired into the live A_TU_AIRE checkout yet; createAtuAireBooking and the
+// mock providers are untouched. See docs/CHECKOUT_SAGA.md — no, there is
+// no such doc yet; the design rationale lives in this session's own
+// architecture report/addenda, not duplicated here.
+// ---------------------------------------------------------------------
+
+enum CheckoutAttemptStatus {
+  draft
+  revalidating
+  ready_to_pay
+  payment_authorizing
+  payment_authorized
+  fulfilling
+  payment_capturing
+  finalizing
+  confirmed
+  compensating
+  recovery_required
+  failed
+  cancelled
+}
+
+enum TicketComponentStatus {
+  not_started
+  held
+  confirmed
+  released
+  expired
+}
+
+// Nullable on CheckoutAttempt when this modality has no hotel at all —
+// null IS the "not applicable" signal; there is no separate enum value
+// for it, so nothing ever has to fake a status for a component that
+// doesn't exist on this attempt.
+enum HotelComponentStatus {
+  validated
+  prebooked
+  booking
+  confirmed
+  unknown
+  failed
+  cancelling
+  cancelled
+}
+
+// Same nullable convention as HotelComponentStatus above.
+enum FlightComponentStatus {
+  validated
+  booking
+  confirmed
+  unknown
+  failed
+  cancelling
+  cancelled
+}
+
+enum PaymentComponentStatus {
+  not_started
+  authorizing
+  authorized
+  capturing
+  captured
+  unknown
+  voiding
+  voided
+  failed
+}
+
+enum TicketHoldStatus {
+  held
+  confirmed
+  released
+  expired
+}
+
+enum CheckoutAttemptEventType {
+  checkout_created
+  state_changed
+  ticket_hold_created
+  ticket_hold_released
+  ticket_hold_expired
+  ticket_hold_confirmed
+  finalization_started
+  finalization_completed
+  finalization_failed
+}
+
+model CheckoutAttempt {
+  id String @id @default(cuid())
+
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
+
+  // Mirrors Booking.packageType/partySize (A_TU_AIRE) — known from the
+  // moment the attempt is created, never inferred later.
+  packageType PackageType
+  partySize   Int
+
+  status CheckoutAttemptStatus @default(draft)
+
+  ticketStatus  TicketComponentStatus  @default(not_started)
+  hotelStatus   HotelComponentStatus?
+  flightStatus  FlightComponentStatus?
+  paymentStatus PaymentComponentStatus @default(not_started)
+
+  // Congelado en REVALIDATING (see src/lib/checkout-saga/finalQuoteSnapshot.ts).
+  // "" hasta que existe — mismo convenio que los *Snapshot de Booking.
+  finalQuoteSnapshot String @default("")
+
+  bookingId String?  @unique
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+
+  // Opaque provider reference strings — populated in a future phase once
+  // Stripe/Nuitee/Duffel are actually wired. "" until then.
+  paymentProviderReference String @default("")
+  hotelProviderReference   String @default("")
+  flightProviderReference  String @default("")
+
+  failureCode String @default("")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  expiresAt DateTime?
+
+  ticketHolds TicketHold[]
+  events      CheckoutAttemptEvent[]
+}
+
+// Belongs to exactly one CheckoutAttempt, always — never a "loose" hold.
+// One row per (checkoutAttemptId, ticketOfferId): quantity carries the
+// count, so a party needing several units of the same TicketOffer never
+// needs several hold rows for it.
+model TicketHold {
+  id String @id @default(cuid())
+
+  checkoutAttemptId String
+  checkoutAttempt   CheckoutAttempt @relation(fields: [checkoutAttemptId], references: [id], onDelete: Cascade)
+
+  ticketOfferId String
+  ticketOffer   TicketOffer @relation(fields: [ticketOfferId], references: [id], onDelete: Restrict)
+
+  quantity Int
+  status   TicketHoldStatus @default(held)
+
+  // Only meaningful while status = held — see releaseExpiredTicketHolds();
+  // a CONFIRMED hold is never expired regardless of this value.
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([checkoutAttemptId, ticketOfferId])
+}
+
+// Append-only event log for one CheckoutAttempt — NOT event sourcing;
+// CheckoutAttempt's own columns remain the live state. This is for
+// auditoría/recovery/debugging only. sanitizedDetail must never carry a
+// raw provider payload, a secret, or traveler PII — small JSON only.
+model CheckoutAttemptEvent {
+  id String @id @default(cuid())
+
+  checkoutAttemptId String
+  checkoutAttempt   CheckoutAttempt @relation(fields: [checkoutAttemptId], references: [id], onDelete: Cascade)
+
+  type CheckoutAttemptEventType
+
+  providerReference String @default("")
+  sanitizedDetail   String @default("")
+
+  createdAt DateTime @default(now())
+}
+
 enum BookingDocumentType {
   ticket
   hotel
@@ -655,11 +838,11 @@ model BookingDocument {
   bookingId String
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  type BookingDocumentType
+  type    BookingDocumentType
   // Ties a `ticket` document to one specific Event, for multi-match
   // bookings — "" for hotel/flight/other (one per booking, not per Event).
-  eventId String @default("")
-  label   String @default("")
+  eventId String              @default("")
+  label   String              @default("")
 
   status  BookingDocumentStatus @default(pending)
   fileUrl String                @default("")
