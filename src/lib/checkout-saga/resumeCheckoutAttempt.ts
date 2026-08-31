@@ -7,6 +7,8 @@ export type ResumeCheckoutAttemptView = {
   finalQuoteSnapshot: FinalQuoteSnapshot;
   buyer: { firstName: string; lastName: string; email: string };
   travelers: { firstName: string; lastName: string }[];
+  /** Fase 2.6 §3/§5 — persisted separately from FinalQuoteSnapshot, same treatment as buyer. */
+  travelOriginCountry: string;
 };
 
 /**
@@ -33,5 +35,6 @@ export async function getReadyToPayView(accessToken: string): Promise<ResumeChec
     finalQuoteSnapshot: snapshot,
     buyer: { firstName: attempt.buyerFirstName, lastName: attempt.buyerLastName, email: attempt.buyerEmail },
     travelers: travelers.map((t) => ({ firstName: t.firstName, lastName: t.lastName })),
+    travelOriginCountry: attempt.travelOriginCountry,
   };
 }

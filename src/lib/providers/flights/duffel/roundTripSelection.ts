@@ -16,8 +16,8 @@ import { sliceMatchesDaypart, type RoundTripDaypartPreference } from "./roundTri
 /**
  * §5 — a stable identity for one physical flight (a slice), built from the
  * itinerary facts that actually define it: origin, destination, the exact
- * departure/arrival instants, both carriers, and the flight number for
- * every segment, in order. Deliberately NOT schedule-only (e.g. just
+ * departure/arrival instants, the marketing carrier, and the flight number
+ * for every segment, in order. Deliberately NOT schedule-only (e.g. just
  * "departingAt") — two different physical flights can depart at the same
  * minute on different carriers/routes, and Duffel can also return the same
  * physical flight framed at slightly different granularity across offers;
@@ -25,26 +25,28 @@ import { sliceMatchesDaypart, type RoundTripDaypartPreference } from "./roundTri
  * makes two RoundTripFlightOffers agree this is "the same slice" rather
  * than two merely-similar ones.
  *
- * A round-trip offer's slice is direct-only by construction in this MVP
- * (isDirectRoundTripOffer already discards anything else upstream), so in
- * practice this hashes a single segment — but it walks every segment so it
- * degrades safely rather than silently mis-keying if that assumption ever
- * changes.
+ * Fase 2.6 §6 — deliberately the SAME six-field composition (never a
+ * separate operating-carrier field) as
+ * src/lib/checkout-saga/flightSearchSession.ts's `dtoSliceKey` and
+ * src/components/checkout-real/flightSelectionClient.ts's own `sliceKey`:
+ * the browser only ever has marketingCarrier (RealFlightSegmentDTO has no
+ * operatingCarrier field), and prepareCheckoutAttempt's security check
+ * compares a client-claimed slice key against a server-computed one — if
+ * the two algorithms didn't agree field-for-field on ordinary (non-
+ * codeshare) flights, that check would reject every genuine selection.
+ * Direct-only in this MVP (isDirectRoundTripOffer already discards
+ * anything else upstream) makes the marketing/operating distinction moot
+ * for the near-totality of real offers; a genuine codeshare where only the
+ * operating carrier differs is treated as the same slice as its marketed
+ * equivalent — a deliberate simplification, not an oversight.
+ *
+ * A round-trip offer's slice is direct-only by construction in this MVP,
+ * so in practice this hashes a single segment — but it walks every
+ * segment so it degrades safely rather than silently mis-keying if that
+ * assumption ever changes.
  */
 export function flightSliceKey(slice: RoundTripFlightSlice): string {
-  return slice.segments
-    .map((s) =>
-      [
-        s.originIata,
-        s.destinationIata,
-        s.departingAt.toISOString(),
-        s.arrivingAt.toISOString(),
-        s.marketingCarrier.iata,
-        (s.operatingCarrier ?? s.marketingCarrier).iata,
-        s.flightNumber ?? "",
-      ].join("|"),
-    )
-    .join(">>");
+  return slice.segments.map((s) => [s.originIata, s.destinationIata, s.departingAt.toISOString(), s.arrivingAt.toISOString(), s.marketingCarrier.iata, s.flightNumber ?? ""].join("|")).join(">>");
 }
 
 export type FlightSliceOption = {

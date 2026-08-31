@@ -22,6 +22,8 @@ export type PrepareRealCheckoutInput = {
   tripSlug: string;
   packageType: PackageType;
   partySize: number;
+  /** Fase 2.6 §3 — "¿Desde qué país viajas?", never confused with a traveler's nationality. */
+  travelOriginCountry: string;
   buyer: CheckoutAttemptBuyerInput;
   travelers: CheckoutAttemptTravelerInput[];
   ticketOfferId: string;
@@ -49,6 +51,7 @@ export async function prepareRealCheckoutAttempt(input: PrepareRealCheckoutInput
     tripId: trip.id,
     packageType: input.packageType,
     partySize: input.partySize,
+    travelOriginCountry: input.travelOriginCountry,
     buyer: input.buyer,
     travelers: input.travelers,
     ticket: { ticketOfferId: input.ticketOfferId, quantity: input.ticketQuantity },

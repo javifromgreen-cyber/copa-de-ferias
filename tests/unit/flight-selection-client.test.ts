@@ -15,8 +15,6 @@ function slice(originIata: string, destinationIata: string, departingAt: string,
 function offer(id: string, amount: number, opts: { outboundDep?: string; returnDep?: string; outboundFlightNo?: string; returnFlightNo?: string; fareBrand?: string; refundAllowed?: boolean } = {}): RealRoundTripOfferDTO {
   return {
     offerId: id,
-    offerRequestId: "orq_1",
-    passengerIds: ["pas_1"],
     totalAmount: amount,
     currency: "EUR",
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -83,5 +81,38 @@ describe("T — a different commercial product on the same itinerary never colla
     const returnKey = buildReturnOptions([basic, flex], outboundKey, "ANY")[0].key;
     const result = resolveOffer([basic, flex], outboundKey, returnKey);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("Fase 2.6 §1/§9 A/B/C — not_comparable surfaces every candidate for an explicit Tarifa/Condiciones choice", () => {
+  it("A — a single commercial product for the itinerary resolves automatically (no Tarifa step needed)", () => {
+    const only = offer("off_only", 118, { fareBrand: "Basic", refundAllowed: false });
+    const outboundKey = buildOutboundOptions([only], "ANY")[0].key;
+    const returnKey = buildReturnOptions([only], outboundKey, "ANY")[0].key;
+    const result = resolveOffer([only], outboundKey, returnKey);
+    expect(result).toEqual({ ok: true, offer: only });
+  });
+
+  it("B — worked example: Economy Basic (118€, no bag) vs Economy Flex (143€, bag) both stay selectable, never a dead end", () => {
+    const basic = offer("off_A", 118, { fareBrand: "Basic", refundAllowed: false });
+    const flex = offer("off_B", 143, { fareBrand: "Flex", refundAllowed: true });
+    const outboundKey = buildOutboundOptions([basic, flex], "ANY")[0].key;
+    const returnKey = buildReturnOptions([basic, flex], outboundKey, "ANY")[0].key;
+    const result = resolveOffer([basic, flex], outboundKey, returnKey);
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== "not_comparable") throw new Error("expected not_comparable with candidates");
+    expect(result.candidates.map((c) => c.offerId).sort()).toEqual(["off_A", "off_B"]);
+  });
+
+  it("C — explicitly choosing candidate B (from the surfaced list) yields offerId off_B, never the cheaper A", () => {
+    const basic = offer("off_A", 118, { fareBrand: "Basic", refundAllowed: false });
+    const flex = offer("off_B", 143, { fareBrand: "Flex", refundAllowed: true });
+    const outboundKey = buildOutboundOptions([basic, flex], "ANY")[0].key;
+    const returnKey = buildReturnOptions([basic, flex], outboundKey, "ANY")[0].key;
+    const result = resolveOffer([basic, flex], outboundKey, returnKey);
+    if (result.ok || result.reason !== "not_comparable") throw new Error("expected not_comparable with candidates");
+    const chosen = result.candidates.find((c) => c.offerId === "off_B");
+    expect(chosen?.offerId).toBe("off_B");
+    expect(chosen?.totalAmount).toBe(143);
   });
 });

@@ -33,6 +33,7 @@ async function baseInput(): Promise<PrepareCheckoutAttemptInput> {
     tripId,
     packageType: "TICKET_ONLY",
     partySize: 2,
+    travelOriginCountry: "ES",
     buyer: { firstName: "Grace", lastName: "Hopper", email: "grace@example.com", phone: "+34600000002" },
     travelers: [
       { firstName: "Grace", lastName: "Hopper" },
@@ -56,6 +57,8 @@ describe("X — refreshing at READY_TO_PAY reconstructs the screen from persiste
     expect(view.buyer.email).toBe("grace@example.com");
     expect(view.travelers.map((t) => `${t.firstName} ${t.lastName}`)).toEqual(["Grace Hopper", "Alan Turing"]);
     expect(view.finalQuoteSnapshot.commercial.pvpTotal).toBe(result.finalQuoteSnapshot.commercial.pvpTotal);
+    // N (Fase 2.6 §9) — travelOriginCountry also survives a refresh.
+    expect(view.travelOriginCountry).toBe("ES");
   });
 
   it("an unknown accessToken never reconstructs anything", async () => {

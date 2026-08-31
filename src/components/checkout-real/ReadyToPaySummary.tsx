@@ -1,8 +1,13 @@
 import { Button } from "@/components/ui/Button";
 import type { FinalQuoteSnapshot } from "@/lib/checkout-saga/finalQuoteSnapshot";
 import type { RoomType } from "@/lib/pricing/roomMix";
+import { COUNTRIES } from "@/lib/checkout-atu-aire/countries";
 
 const ROOM_TYPE_LABEL: Record<RoomType, string> = { single: "individual", double: "doble", triple: "triple" };
+
+function countryName(code: string): string {
+  return COUNTRIES.find((c) => c.code === code)?.name ?? code;
+}
 
 /**
  * Fase 2.5 §16/§17/§22 — the real READY_TO_PAY screen. Shown both right
@@ -21,11 +26,14 @@ export function ReadyToPaySummary({
   matchLabel,
   snapshot,
   travelers,
+  travelOriginCountry,
 }: {
   tripName: string;
   matchLabel: string;
   snapshot: FinalQuoteSnapshot;
   travelers: { firstName: string; lastName: string }[];
+  /** Fase 2.6 §5 — "¿Desde qué país viajas?", persisted on CheckoutAttempt (never a traveler's nationality). */
+  travelOriginCountry?: string;
 }) {
   const ticket = snapshot.ticket[0];
   return (
@@ -41,6 +49,7 @@ export function ReadyToPaySummary({
             Entrada: {ticket.category} × {ticket.quantity}
           </p>
         )}
+        {travelOriginCountry && <p className="text-carbon/70">Viajas desde: {countryName(travelOriginCountry)}</p>}
       </section>
 
       {snapshot.hotel && (

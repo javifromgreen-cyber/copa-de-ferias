@@ -42,7 +42,7 @@ export default async function ReservarRealPage({ params, searchParams }: { param
           <h1 className="font-display mb-8 text-3xl uppercase sm:text-4xl">
             {trip.name} — {trip.subtitle}
           </h1>
-          <ReadyToPaySummary tripName={trip.name} matchLabel={matchLabelFor(trip)} snapshot={view.finalQuoteSnapshot} travelers={view.travelers} />
+          <ReadyToPaySummary tripName={trip.name} matchLabel={matchLabelFor(trip)} snapshot={view.finalQuoteSnapshot} travelers={view.travelers} travelOriginCountry={view.travelOriginCountry} />
         </Container>
       );
     }

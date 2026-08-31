@@ -8,13 +8,22 @@ import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roun
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
 import { CANDIDATE_SPANISH_ORIGINS } from "@/lib/providers/flights/realFlightProvider";
 import type { OriginOption } from "@/lib/providers/types";
+import { toStoredFlightOffer, type RealFlightSegmentDTO, type RealFlightSliceDTO, type RealCommercialProductDTO, type StoredFlightOffer } from "@/lib/checkout-saga/flightSearchSession";
 
 /**
- * Fase 2.5 §8/§10 — the new real flow's own SEARCH-only server actions
- * (never PREBOOK/BOOK/Order — those only ever run inside
- * prepareCheckoutAttempt at CONTINUAR, see prepareCheckoutAttempt.ts's own
- * header comment). This file exists purely so the UI can browse real
- * Nuitee/Duffel availability before the customer commits to anything.
+ * Fase 2.5 §8/§10, corrected in Fase 2.6 §2/§4 — the new real flow's own
+ * SEARCH-only server actions (never PREBOOK/BOOK/Order — those only ever
+ * run inside prepareCheckoutAttempt at CONTINUAR).
+ *
+ * Fase 2.6 §2 — the flight side no longer hands passengerIds (or even
+ * offerRequestId) to the browser at all. A Duffel round-trip search's
+ * results are persisted server-side as a FlightSearchSession the moment
+ * they're fetched; the browser only ever holds that session's opaque id.
+ * searchViableFlightOrigins() does the actual Duffel calls (one per
+ * candidate Spanish origin) and creates one session per origin that
+ * turned out viable; getFlightSessionOffers() is a DB-only read used
+ * once the customer picks an origin, so picking an origin never re-hits
+ * Duffel — the search already happened.
  */
 
 function addDays(date: Date, days: number): Date {
@@ -48,8 +57,15 @@ export type RealHotelSearchResult = { ok: true; hotels: RealHotelOption[]; check
  * (computeRequiredRoomMix, same mix prepareCheckoutAttempt/rooming use
  * everywhere else) so what the UI shows is exactly the combination a
  * later PREBOOK will be asked to match — never a hand-built rooming guess.
+ *
+ * Fase 2.6 §3 — `guestNationality` is Nuitee's own API parameter (guest
+ * tax/pricing nationality), fed here with `travelOriginCountry` as a
+ * pragmatic proxy since this checkout doesn't collect a separate buyer
+ * nationality field. This is NOT the flight-eligibility decision — that
+ * is decided exclusively by isFlightPackageEligible(travelOriginCountry)
+ * in the UI, never by this parameter or by Traveler.nationality.
  */
-export async function searchRealHotelOptions(input: { tripSlug: string; partySize: number; buyerCountryCode: string; fetchImpl?: typeof fetch }): Promise<RealHotelSearchResult> {
+export async function searchRealHotelOptions(input: { tripSlug: string; partySize: number; travelOriginCountry: string; fetchImpl?: typeof fetch }): Promise<RealHotelSearchResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug }, include: { events: true } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
     return { ok: false, error: "Este producto no está disponible." };
@@ -74,7 +90,7 @@ export async function searchRealHotelOptions(input: { tripSlug: string; partySiz
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
       currency: trip.currency,
-      guestNationality: input.buyerCountryCode,
+      guestNationality: input.travelOriginCountry,
       mix,
       starRatings: [trip.hotelStars, trip.hotelStars + 1],
       fetchImpl: input.fetchImpl,
@@ -101,43 +117,27 @@ export async function searchRealHotelOptions(input: { tripSlug: string; partySiz
   }
 }
 
-export async function getRealFlightOriginOptions(): Promise<OriginOption[]> {
-  return CANDIDATE_SPANISH_ORIGINS;
-}
+export type { RealFlightSegmentDTO, RealFlightSliceDTO, RealCommercialProductDTO, StoredFlightOffer };
 
-export type RealFlightSegmentDTO = { originIata: string; destinationIata: string; departingAt: string; arrivingAt: string; carrierIata: string; carrierName: string; flightNumber: string | null };
-export type RealFlightSliceDTO = { segments: RealFlightSegmentDTO[] };
-export type RealRoundTripOfferDTO = {
-  offerId: string;
-  offerRequestId: string;
-  passengerIds: string[];
-  totalAmount: number;
-  currency: string;
-  expiresAt: string;
-  outbound: RealFlightSliceDTO;
-  return: RealFlightSliceDTO;
-  commercialProduct: {
-    outbound: { cabinClass: string | null; fareBrandName: string | null; baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null };
-    return: { cabinClass: string | null; fareBrandName: string | null; baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null };
-    refundBeforeDeparture: { allowed: boolean; penaltyAmount: number | null; penaltyCurrency: string | null } | null;
-    changeBeforeDeparture: { allowed: boolean; penaltyAmount: number | null; penaltyCurrency: string | null } | null;
-  };
-};
+/** The browser-facing shape — identical to StoredFlightOffer, named separately so a future field only added for one side doesn't leak into the other by accident. */
+export type RealRoundTripOfferDTO = StoredFlightOffer;
 
-export type RealFlightSearchResult = { ok: true; offers: RealRoundTripOfferDTO[] } | { ok: false; error: string };
+const FLIGHT_SEARCH_SESSION_TTL_MS = 20 * 60 * 1000; // conservative bound under Duffel's own offer expiry, same discipline as TICKET_HOLD_TTL_MS.
+
+export type ViableFlightOrigin = OriginOption & { sessionId: string };
+export type SearchViableFlightOriginsResult = { ok: true; origins: ViableFlightOrigin[]; outboundDate: string; returnDate: string } | { ok: false; error: string };
 
 /**
- * §10/§12 — ONE Duffel Offer Request with TWO slices, exactly what
- * searchDirectRoundTripOffers already builds — never two independent
- * one-way searches. Returns every direct round-trip offer for this
- * origin, serialized to plain DTOs (Date -> ISO string) for the client
- * component; the client derives PASO IDA / PASO VUELTA options and the
- * final resolved offer from this SAME array (see roundTripSelection.ts's
- * own pure functions, mirrored client-side for UI grouping only — the
- * real enforcement happens again, server-side, inside
- * prepareCheckoutAttempt's Duffel revalidation).
+ * §4 — the ONLY place that decides which Spanish airports are actually
+ * offered: one real direct round-trip search per candidate origin (never
+ * a fixed/hidden airport), and an origin only appears in the result when
+ * that search actually returned offers. Each viable search's results are
+ * persisted as a FlightSearchSession in the same pass — picking that
+ * origin afterward (getFlightSessionOffers) never re-hits Duffel, which
+ * is the "no búsquedas duplicadas" requirement: the minimal fix is doing
+ * the search once and keeping it, not adding a separate cache layer.
  */
-export async function searchRealRoundTripFlightOptions(input: { tripSlug: string; originIata: string; partySize: number; fetchImpl?: typeof fetch }): Promise<RealFlightSearchResult> {
+export async function searchViableFlightOrigins(input: { tripSlug: string; partySize: number; fetchImpl?: typeof fetch }): Promise<SearchViableFlightOriginsResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug }, include: { events: true } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
     return { ok: false, error: "Este producto no está disponible." };
@@ -146,32 +146,67 @@ export async function searchRealRoundTripFlightOptions(input: { tripSlug: string
     return { ok: false, error: "Este producto todavía no tiene partidos configurados." };
   }
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
-  const outboundDate = addDays(sortedEvents[0].matchDate, -1);
-  const returnDate = addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1);
+  const outboundDate = toIsoDate(addDays(sortedEvents[0].matchDate, -1));
+  const returnDate = toIsoDate(addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1));
   const destinationAirport = airportForCity(trip.city);
 
-  try {
-    const result = await searchDirectRoundTripOffers({
-      originIata: input.originIata,
-      destinationIata: destinationAirport,
-      outboundDate: toIsoDate(outboundDate),
-      returnDate: toIsoDate(returnDate),
-      passengers: input.partySize,
-      fetchImpl: input.fetchImpl,
+  const origins: ViableFlightOrigin[] = [];
+  for (const candidate of CANDIDATE_SPANISH_ORIGINS) {
+    let result;
+    try {
+      result = await searchDirectRoundTripOffers({
+        originIata: candidate.iata,
+        destinationIata: destinationAirport,
+        outboundDate,
+        returnDate,
+        passengers: input.partySize,
+        fetchImpl: input.fetchImpl,
+      });
+    } catch {
+      continue; // a single origin failing (timeout, no route) never fails the whole search
+    }
+    if (result.offers.length === 0) continue;
+
+    const storedOffers = result.offers.map(toStoredFlightOffer);
+    const earliestExpiry = result.offers.reduce((min, o) => (o.expiresAt.getTime() < min.getTime() ? o.expiresAt : min), result.offers[0].expiresAt);
+    const expiresAt = new Date(Math.min(earliestExpiry.getTime(), Date.now() + FLIGHT_SEARCH_SESSION_TTL_MS));
+
+    const session = await prisma.flightSearchSession.create({
+      data: {
+        tripId: trip.id,
+        partySize: input.partySize,
+        originIata: candidate.iata,
+        destinationIata: destinationAirport,
+        outboundDate,
+        returnDate,
+        offerRequestId: result.offers[0].offerRequestId,
+        passengerIds: JSON.stringify(result.offers[0].passengerIds),
+        offersJson: JSON.stringify(storedOffers),
+        expiresAt,
+      },
     });
-    const offers: RealRoundTripOfferDTO[] = result.offers.map((o) => ({
-      offerId: o.offerId,
-      offerRequestId: o.offerRequestId,
-      passengerIds: o.passengerIds,
-      totalAmount: o.totalAmount,
-      currency: o.currency,
-      expiresAt: o.expiresAt.toISOString(),
-      outbound: { segments: o.outbound.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt.toISOString(), arrivingAt: s.arrivingAt.toISOString(), carrierIata: s.marketingCarrier.iata, carrierName: s.marketingCarrier.name, flightNumber: s.flightNumber })) },
-      return: { segments: o.return.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt.toISOString(), arrivingAt: s.arrivingAt.toISOString(), carrierIata: s.marketingCarrier.iata, carrierName: s.marketingCarrier.name, flightNumber: s.flightNumber })) },
-      commercialProduct: o.commercialProduct,
-    }));
-    return { ok: true, offers };
-  } catch (err) {
-    return { ok: false, error: `Búsqueda de vuelos no disponible: ${err instanceof Error ? err.message : String(err)}` };
+    origins.push({ ...candidate, sessionId: session.id });
   }
+
+  if (origins.length === 0) {
+    return { ok: false, error: "No hay ningún aeropuerto español con vuelo directo de ida y vuelta disponible para estas fechas." };
+  }
+  return { ok: true, origins, outboundDate, returnDate };
+}
+
+export type GetFlightSessionOffersResult = { ok: true; offers: RealRoundTripOfferDTO[] } | { ok: false; error: string };
+
+/**
+ * §2/§4 — a pure DB read (no Duffel call): the offers a viable-origin
+ * search already found and persisted. Called once the customer picks an
+ * origin from searchViableFlightOrigins()'s result, so choosing an
+ * origin is instant and never issues a second, duplicate search.
+ */
+export async function getFlightSessionOffers(input: { sessionId: string }): Promise<GetFlightSessionOffersResult> {
+  const session = await prisma.flightSearchSession.findUnique({ where: { id: input.sessionId } });
+  if (!session || session.expiresAt.getTime() <= Date.now()) {
+    return { ok: false, error: "La búsqueda de vuelos ha caducado — vuelve a buscar." };
+  }
+  const offers = JSON.parse(session.offersJson) as StoredFlightOffer[];
+  return { ok: true, offers };
 }

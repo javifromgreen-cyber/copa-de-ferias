@@ -7,6 +7,7 @@ import { recordCheckoutAttemptEvent } from "./events";
 import { validateCheckoutAttemptTravelers, type CheckoutAttemptTravelerInput } from "./travelerValidation";
 import { persistCheckoutAttemptTravelers } from "./checkoutAttemptTravelers";
 import { validateCheckoutAttemptBuyer, persistCheckoutAttemptBuyer, type CheckoutAttemptBuyerInput } from "./checkoutAttemptBuyer";
+import { isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { computeLatestSafePaymentAt } from "./quoteValidity";
 import { classifyHotelReversibility, classifyFlightReversibility, isNoViableReversibilityCombination, type ReversibilityLevel } from "./reversibility";
 import { serializeFinalQuoteSnapshot, type FinalQuoteSnapshot, type FinalQuoteSnapshotFlightSegment } from "./finalQuoteSnapshot";
@@ -19,6 +20,7 @@ import type { HotelPrebook } from "@/lib/providers/hotels/nuitee/types";
 import { revalidateRoundTripOffer } from "@/lib/providers/flights/duffel/revalidate";
 import { revalidatedOfferMatchesSelectedItinerary } from "@/lib/providers/flights/duffel/roundTripSelection";
 import type { FlightSegment, RoundTripFlightOffer } from "@/lib/providers/flights/duffel/types";
+import { dtoSliceKey, type StoredFlightOffer } from "./flightSearchSession";
 
 /**
  * Fase 2 — the new, real pre-payment saga: CONFIGURACIÓN -> CONTINUAR ->
@@ -47,13 +49,19 @@ export type PrepareCheckoutAttemptHotelInput = {
   hotelName: string;
 };
 
+/**
+ * Fase 2.6 §2/§6 — the client sends only an opaque searchSessionId (from
+ * searchViableFlightOrigins, see real-checkout-search.ts) plus the single
+ * offerId/slice keys it resolved in the UI — never offerRequestId,
+ * passengerIds, or the original price. All of those are looked up
+ * server-side from the FlightSearchSession row and cross-checked against
+ * what the client claims (see the flight branch below) before anything
+ * is trusted.
+ */
 export type PrepareCheckoutAttemptFlightInput = {
-  /** The single round-trip offerId already resolved by resolveRoundTripOffer() in an earlier UI step — never two independent offerIds. */
+  searchSessionId: string;
+  /** The single round-trip offerId already resolved (or explicitly chosen from a Tarifa/Condiciones step) in an earlier UI step — never two independent offerIds. */
   offerId: string;
-  offerRequestId: string;
-  passengerIds: string[];
-  /** The totalAmount originally quoted — revalidateRoundTripOffer needs it to detect a price change. */
-  originalTotalAmount: number;
   outboundSliceKey: string;
   returnSliceKey: string;
 };
@@ -62,6 +70,14 @@ export type PrepareCheckoutAttemptInput = {
   tripId: string;
   packageType: PackageType;
   partySize: number;
+  /**
+   * Fase 2.6 §3 — the ISO country code the traveler is flying FROM
+   * ("¿Desde qué país viajas?"), a distinct concept from
+   * CheckoutAttemptTravelerInput.nationality (a per-traveler document
+   * fact). This is the ONLY input isFlightPackageEligible() is ever
+   * evaluated against, both here (server-side gate below) and in the UI.
+   */
+  travelOriginCountry: string;
   buyer: CheckoutAttemptBuyerInput;
   travelers: CheckoutAttemptTravelerInput[];
   ticket: { ticketOfferId: string; quantity: number };
@@ -111,6 +127,14 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
   if (requiresFlight && !input.flight) {
     return { ok: false, checkoutAttemptId: null, status: "failed", error: "Falta la selección de vuelo para esta modalidad." };
   }
+  if (!input.travelOriginCountry?.trim()) {
+    return { ok: false, checkoutAttemptId: null, status: "failed", error: "Falta indicar el país desde el que viajas." };
+  }
+  // §3/§6 — server-side re-check of the exact same rule the UI already
+  // gates on: never trust the client's own eligibility decision alone.
+  if (requiresFlight && !isFlightPackageEligible(input.travelOriginCountry)) {
+    return { ok: false, checkoutAttemptId: null, status: "failed", error: "El paquete con vuelo no está disponible para el país de origen indicado." };
+  }
 
   // §1 step 2 — create CheckoutAttempt (DRAFT).
   const attempt = await createCheckoutAttempt({ tripId: input.tripId, packageType: input.packageType, partySize: input.partySize });
@@ -127,9 +151,14 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
     return { ok: false, checkoutAttemptId, status: "failed", error: reason };
   }
 
-  // §5/§6 — persist buyer + travelers now, inside REVALIDATING, before any Booking exists.
+  // §5/§6, extended in Fase 2.6 §3/§8 — persist buyer + travelers +
+  // travelOriginCountry now, inside REVALIDATING, before any Booking
+  // exists — travelOriginCountry is part of the revalidated
+  // configuration, same treatment as buyer, and READY_TO_PAY reads it
+  // back from here (getReadyToPayView), never from client state.
   await persistCheckoutAttemptBuyer(checkoutAttemptId, input.buyer);
   await persistCheckoutAttemptTravelers(checkoutAttemptId, input.travelers);
+  await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { travelOriginCountry: input.travelOriginCountry } });
   await recordCheckoutAttemptEvent(checkoutAttemptId, "travelers_validated", { sanitizedDetail: JSON.stringify({ count: input.travelers.length }) });
 
   const trip = await prisma.trip.findUnique({ where: { id: input.tripId }, include: { events: true } });
@@ -176,11 +205,35 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
     });
   }
 
-  // §1 step 5/6 / §14/§15 — revalidate the Duffel round-trip offer and
-  // confirm it still represents the itinerary the customer selected.
+  // §1 step 5/6 / §14/§15, corrected in Fase 2.6 §2/§6 — the client never
+  // supplies offerRequestId/passengerIds/originalTotalAmount directly.
+  // Instead it names the FlightSearchSession it browsed and the single
+  // offerId/slice keys it resolved; everything Duffel-sensitive is looked
+  // up server-side from that session row and cross-checked against the
+  // client's claim before revalidation even runs.
   let flightOffer: RoundTripFlightOffer | null = null;
   if (input.flight) {
-    const revalidation = await revalidateRoundTripOffer(input.flight.offerId, input.flight.originalTotalAmount, input.flight.offerRequestId, input.flight.passengerIds, input.fetchImpl);
+    const session = await prisma.flightSearchSession.findUnique({ where: { id: input.flight.searchSessionId } });
+    if (!session || session.expiresAt.getTime() <= Date.now()) {
+      return failAttempt("La búsqueda de vuelos ha caducado — vuelve a elegir aeropuerto de salida.");
+    }
+    if (session.tripId !== input.tripId) {
+      return failAttempt("La búsqueda de vuelos no corresponde a este viaje.");
+    }
+    if (session.partySize !== input.partySize) {
+      return failAttempt(`El número de viajeros (${input.partySize}) no coincide con la búsqueda de vuelos original (${session.partySize}).`);
+    }
+    const storedOffers = JSON.parse(session.offersJson) as StoredFlightOffer[];
+    const storedOffer = storedOffers.find((o) => o.offerId === input.flight!.offerId);
+    if (!storedOffer) {
+      return failAttempt("La oferta de vuelo seleccionada no pertenece a la búsqueda realizada — vuelve a elegir.");
+    }
+    if (dtoSliceKey(storedOffer.outbound) !== input.flight.outboundSliceKey || dtoSliceKey(storedOffer.return) !== input.flight.returnSliceKey) {
+      return failAttempt("La selección de ida/vuelta no coincide con la oferta indicada — vuelve a elegir.");
+    }
+    const passengerIds = JSON.parse(session.passengerIds) as string[];
+
+    const revalidation = await revalidateRoundTripOffer(storedOffer.offerId, storedOffer.totalAmount, session.offerRequestId, passengerIds, input.fetchImpl);
     if (revalidation.status === "expired" || revalidation.status === "not_found" || !revalidation.offer) {
       return failAttempt("La oferta de vuelo ya no está disponible — es necesario volver a buscar.");
     }

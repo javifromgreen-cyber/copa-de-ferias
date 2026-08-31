@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db";
-import { searchRealHotelOptions, searchRealRoundTripFlightOptions } from "@/server/actions/real-checkout-search";
+import { searchRealHotelOptions, searchViableFlightOrigins, getFlightSessionOffers } from "@/server/actions/real-checkout-search";
+import { CANDIDATE_SPANISH_ORIGINS } from "@/lib/providers/flights/realFlightProvider";
 
 // Fase 2.5 §25 J/K/M (hotel SEARCH-only UI wiring) and N (one Offer
 // Request, two slices) — the new real-checkout SEARCH server actions
@@ -37,6 +38,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.flightSearchSession.deleteMany({ where: { tripId } });
   await prisma.event.deleteMany({ where: { tripId } });
   await prisma.trip.delete({ where: { id: tripId } });
   await prisma.$disconnect();
@@ -71,7 +73,7 @@ describe("J — TICKET_HOTEL search returns real hotel options, no individual pr
       return new Response(JSON.stringify(nuiteeSearchBody()), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const result = await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 5, buyerCountryCode: "ES", fetchImpl });
+    const result = await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 5, travelOriginCountry: "ES", fetchImpl });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hotels).toHaveLength(1);
@@ -93,7 +95,7 @@ describe("M — the hotel search action only ever calls SEARCH, never PREBOOK", 
       return new Response(JSON.stringify(nuiteeSearchBody()), { status: 200 });
     }) as unknown as typeof fetch;
 
-    await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 1, buyerCountryCode: "ES", fetchImpl });
+    await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
     expect(calls.some((u) => /rates\/prebook/.test(u))).toBe(false);
     expect(calls.some((u) => /hotels\/rates/.test(u))).toBe(true);
   });
@@ -134,31 +136,101 @@ function duffelOfferRequestBody() {
   };
 }
 
-describe("N — one Duffel Offer Request with two slices, never two independent one-way searches", () => {
-  it("issues exactly one POST to /air/offer_requests with both an outbound and a return slice in the same body", async () => {
+describe("N — one Duffel Offer Request with two slices per candidate origin, never two independent one-way searches", () => {
+  it("issues one POST to /air/offer_requests per candidate Spanish origin, each with both an outbound and a return slice", async () => {
     const calls: { url: string; body: unknown }[] = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: typeof input === "string" ? input : input.toString(), body: init?.body ? JSON.parse(init.body as string) : null });
       return new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 });
     }) as unknown as typeof fetch;
 
-    const result = await searchRealRoundTripFlightOptions({ tripSlug: RUN_ID, originIata: "MAD", partySize: 1, fetchImpl });
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
     expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toMatch(/air\/offer_requests/);
-    const slices = (calls[0].body as { data: { slices: { origin: string; destination: string }[] } }).data.slices;
-    expect(slices).toHaveLength(2);
-    expect(slices[0].origin).toBe("MAD");
-    expect(slices[1].destination).toBe("MAD");
+    expect(calls).toHaveLength(CANDIDATE_SPANISH_ORIGINS.length);
+    for (const call of calls) {
+      expect(call.url).toMatch(/air\/offer_requests/);
+      const slices = (call.body as { data: { slices: { origin: string; destination: string }[] } }).data.slices;
+      expect(slices).toHaveLength(2);
+    }
   });
 
-  it("the returned DTO never carries a separate per-leg price — only one totalAmount for the whole round trip", async () => {
+  it("the stored offers never carry a separate per-leg price — only one totalAmount for the whole round trip", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 })) as unknown as typeof fetch;
-    const result = await searchRealRoundTripFlightOptions({ tripSlug: RUN_ID, originIata: "MAD", partySize: 1, fetchImpl });
+    const originsResult = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
+    expect(originsResult.ok).toBe(true);
+    if (!originsResult.ok) return;
+    const offersResult = await getFlightSessionOffers({ sessionId: originsResult.origins[0].sessionId });
+    expect(offersResult.ok).toBe(true);
+    if (!offersResult.ok) return;
+    expect(offersResult.offers[0]).not.toHaveProperty("outboundPrice");
+    expect(offersResult.offers[0]).not.toHaveProperty("returnPrice");
+    expect(typeof offersResult.offers[0].totalAmount).toBe("number");
+  });
+});
+
+describe("Fase 2.6 §2/§4 — flight session security and origin viability", () => {
+  it("D — passengerIds and offerRequestId never appear on the browser-facing offer DTOs", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 })) as unknown as typeof fetch;
+    const originsResult = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
+    expect(originsResult.ok).toBe(true);
+    if (!originsResult.ok) return;
+    const offersResult = await getFlightSessionOffers({ sessionId: originsResult.origins[0].sessionId });
+    expect(offersResult.ok).toBe(true);
+    if (!offersResult.ok) return;
+    expect(offersResult.offers[0]).not.toHaveProperty("passengerIds");
+    expect(offersResult.offers[0]).not.toHaveProperty("offerRequestId");
+  });
+
+  it("J — only origins with a real viable direct round trip are returned; passengerIds/offerRequestId are persisted server-side on the session row", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 })) as unknown as typeof fetch;
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.offers[0]).not.toHaveProperty("outboundPrice");
-    expect(result.offers[0]).not.toHaveProperty("returnPrice");
-    expect(typeof result.offers[0].totalAmount).toBe("number");
+    expect(result.origins.length).toBe(CANDIDATE_SPANISH_ORIGINS.length); // every candidate returned an offer in this fixture
+    for (const origin of result.origins) {
+      expect(CANDIDATE_SPANISH_ORIGINS.some((c) => c.iata === origin.iata)).toBe(true);
+      const session = await prisma.flightSearchSession.findUniqueOrThrow({ where: { id: origin.sessionId } });
+      expect(session.offerRequestId).toBe("orq_1");
+      expect(JSON.parse(session.passengerIds)).toEqual(["pas_1"]);
+    }
+  });
+
+  it("no viable origin -> a clear ok:false result, no session rows created", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: { id: "orq_empty", live_mode: false, passengers: [{ id: "pas_1" }], offers: [] } }), { status: 201 })) as unknown as typeof fetch;
+    const before = await prisma.flightSearchSession.count();
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
+    expect(result.ok).toBe(false);
+    const after = await prisma.flightSearchSession.count();
+    expect(after).toBe(before);
+  });
+
+  it("K — the origin the customer picks feeds the same session that was actually searched for that origin (originIata matches)", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 })) as unknown as typeof fetch;
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const chosen = result.origins[1];
+    const session = await prisma.flightSearchSession.findUniqueOrThrow({ where: { id: chosen.sessionId } });
+    expect(session.originIata).toBe(chosen.iata);
+  });
+
+  it("M — a session that has expired is rejected by getFlightSessionOffers", async () => {
+    const trip = await prisma.trip.findUniqueOrThrow({ where: { slug: RUN_ID } });
+    const expired = await prisma.flightSearchSession.create({
+      data: {
+        tripId: trip.id,
+        partySize: 1,
+        originIata: "MAD",
+        destinationIata: "MAN",
+        outboundDate: "2026-11-14",
+        returnDate: "2026-11-16",
+        offerRequestId: "orq_expired",
+        passengerIds: JSON.stringify(["pas_1"]),
+        offersJson: JSON.stringify([]),
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+    const result = await getFlightSessionOffers({ sessionId: expired.id });
+    expect(result.ok).toBe(false);
   });
 });

@@ -58,14 +58,25 @@ export function buildReturnOptions(offers: RealRoundTripOfferDTO[], outboundKey:
   return [...byKey.entries()].map(([key, slice]) => ({ key, slice }));
 }
 
-export type ResolveOfferResult = { ok: true; offer: RealRoundTripOfferDTO } | { ok: false; reason: "not_found" | "not_comparable" };
+export type ResolveOfferResult =
+  | { ok: true; offer: RealRoundTripOfferDTO }
+  | { ok: false; reason: "not_found" }
+  /**
+   * Fase 2.6 §1 — several genuinely different commercial products exist
+   * for the exact same physical ida/vuelta (e.g. Economy Basic vs Economy
+   * Flex): never auto-collapsed by price. `candidates` carries every
+   * matching offer so the UI can render a Tarifa/Condiciones picker
+   * instead of a dead end — the customer explicitly chooses one, and that
+   * choice becomes the single resolved RoundTripFlightOffer/offerId.
+   */
+  | { ok: false; reason: "not_comparable"; candidates: RealRoundTripOfferDTO[] };
 
 export function resolveOffer(offers: RealRoundTripOfferDTO[], outboundKey: string, returnKey: string): ResolveOfferResult {
   const matches = offers.filter((o) => sliceKey(o.outbound) === outboundKey && sliceKey(o.return) === returnKey);
   if (matches.length === 0) return { ok: false, reason: "not_found" };
   const currencies = new Set(matches.map((o) => o.currency));
   const productKeys = new Set(matches.map((o) => JSON.stringify(o.commercialProduct)));
-  if (currencies.size > 1 || productKeys.size > 1) return { ok: false, reason: "not_comparable" };
+  if (currencies.size > 1 || productKeys.size > 1) return { ok: false, reason: "not_comparable", candidates: matches };
   const cheapest = [...matches].sort((a, b) => a.totalAmount - b.totalAmount || a.offerId.localeCompare(b.offerId))[0];
   return { ok: true, offer: cheapest };
 }

@@ -781,6 +781,18 @@ model CheckoutAttempt {
   buyerOriginCity     String @default("")
   buyerBillingAddress String @default("")
 
+  // Fase 2.6 §3 — the ISO country code the traveler is flying FROM
+  // ("¿Desde qué país viajas?"), persisted because it's part of the
+  // configuration that was revalidated/quoted, same as buyer/travelers.
+  // Deliberately NOT the same concept as CheckoutAttemptTraveler.nationality
+  // (a document/identity fact, collected per traveler, unrelated to where
+  // this trip departs from) — an Italian resident in Barcelona travels
+  // FROM Spain regardless of their nationality, and a Spaniard traveling
+  // from Argentina does not. isFlightPackageEligible() (countries.ts) is
+  // driven ONLY by this field — never by nationality or any Nuitee
+  // "guestNationality" value.
+  travelOriginCountry String @default("")
+
   // Not PII — an operational choice, not yet collected from a real
   // payment-method UI in this phase (no Stripe integration exists yet).
   // "demo" signals "no real payment provider chosen" until Fase 3 wires
@@ -909,6 +921,47 @@ model CheckoutAttemptEvent {
   sanitizedDetail   String @default("")
 
   createdAt DateTime @default(now())
+}
+
+// Fase 2.6 §2 — server-side home for one Duffel round-trip Offer
+// Request's results, keyed by an opaque id the browser can hold onto
+// without ever seeing offerRequestId or passengerIds directly. Created
+// once per (trip, partySize, origin) search — before any CheckoutAttempt
+// exists, since the customer may browse several origins before choosing
+// one modality/hotel/traveler combination. `offersJson` is a compact,
+// non-PII array of {offerId, totalAmount, currency, outbound, return,
+// commercialProduct} — everything prepareCheckoutAttempt needs to
+// revalidate a client-selected offerId against what this search actually
+// returned, without re-fetching Duffel or trusting the client's own copy.
+// No FK to CheckoutAttempt: a session may be searched, browsed, and
+// abandoned without ever producing one, and one search can in principle
+// back more than one attempt (e.g. the customer changes their mind and
+// restarts CONFIGURACIÓN) — a straight foreign key would force a 1:1 that
+// doesn't hold. Deliberately no cleanup job in this phase (MVP) — an
+// expired row is simply rejected by prepareCheckoutAttempt at read time.
+model FlightSearchSession {
+  id String @id @default(cuid())
+
+  tripId          String
+  partySize       Int
+  originIata      String
+  destinationIata String
+  outboundDate    String // yyyy-mm-dd
+  returnDate      String // yyyy-mm-dd
+
+  offerRequestId String
+  // JSON string[] — Duffel's own passenger placeholder ids for this Offer
+  // Request. Never sent to the browser; read server-side only, at
+  // prepareCheckoutAttempt time, from this row.
+  passengerIds   String
+
+  // JSON StoredFlightOffer[] — see real-checkout-search.ts's own type.
+  offersJson String
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([tripId, originIata, partySize])
 }
 
 enum BookingDocumentType {
