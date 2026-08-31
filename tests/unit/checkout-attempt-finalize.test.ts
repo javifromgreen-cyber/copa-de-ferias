@@ -43,11 +43,17 @@ function snapshot(overrides: Partial<FinalQuoteSnapshot> = {}): FinalQuoteSnapsh
 }
 
 const BUYER: FinalizeInput["buyer"] = { buyerFirstName: "Test", buyerLastName: "Sandbox", buyerEmail: "test.sandbox@example.com", buyerPhone: "+34600000000", paymentProvider: "demo" };
-const ONE_TRAVELER: FinalizeInput["travelers"] = [{ firstName: "Test", lastName: "Sandbox" }];
+
+/** Fase 2 §6/§26 — travelers now come exclusively from CheckoutAttemptTraveler, never from FinalizeInput. */
+async function persistTravelers(checkoutAttemptId: string, names: { firstName: string; lastName: string }[]) {
+  await prisma.checkoutAttemptTraveler.createMany({
+    data: names.map((n, index) => ({ checkoutAttemptId, order: index, firstName: n.firstName, lastName: n.lastName })),
+  });
+}
 
 /** Walks a fresh attempt through the real transition graph up to (but not through) FINALIZING, with a HELD ticket hold and a snapshot in place — mirrors what a real orchestrator would have done by that point. */
-async function buildAttemptReadyToFinalize(opts: { partySize?: number; paymentStatus?: "captured" | "authorized"; withHeldHold?: boolean; withSnapshot?: boolean } = {}) {
-  const { partySize = 1, paymentStatus = "captured", withHeldHold = true, withSnapshot = true } = opts;
+async function buildAttemptReadyToFinalize(opts: { partySize?: number; paymentStatus?: "captured" | "authorized"; withHeldHold?: boolean; withSnapshot?: boolean; travelerCount?: number } = {}) {
+  const { partySize = 1, paymentStatus = "captured", withHeldHold = true, withSnapshot = true, travelerCount = partySize } = opts;
   const attempt = await createCheckoutAttempt({ tripId, packageType: "TICKET_ONLY", partySize });
   for (const step of ["revalidating", "ready_to_pay", "payment_authorizing", "payment_authorized", "fulfilling", "payment_capturing", "finalizing"] as const) {
     await transitionCheckoutAttempt(attempt.id, step);
@@ -58,6 +64,13 @@ async function buildAttemptReadyToFinalize(opts: { partySize?: number; paymentSt
   if (withHeldHold) {
     const hold = await acquireTicketHold({ checkoutAttemptId: attempt.id, ticketOfferId: ticketOffer.id, quantity: 1, expiresAt: new Date(Date.now() + 60_000) });
     if (!hold.ok) throw new Error("test setup: hold failed");
+  }
+
+  if (travelerCount > 0) {
+    await persistTravelers(
+      attempt.id,
+      Array.from({ length: travelerCount }, (_, i) => ({ firstName: `Test${i}`, lastName: "Sandbox" })),
+    );
   }
 
   await prisma.checkoutAttempt.update({
@@ -74,7 +87,7 @@ async function buildAttemptReadyToFinalize(opts: { partySize?: number; paymentSt
 describe("K — finalization rejected when payment is not CAPTURED", () => {
   it("refuses and makes no writes", async () => {
     const attemptId = await buildAttemptReadyToFinalize({ paymentStatus: "authorized" });
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(false);
     const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     expect(attempt.status).toBe("finalizing");
@@ -86,7 +99,7 @@ describe("L — finalization rejected when a required external component isn't C
   it("refuses when hotelStatus is set but not confirmed", async () => {
     const attemptId = await buildAttemptReadyToFinalize();
     await prisma.checkoutAttempt.update({ where: { id: attemptId }, data: { hotelStatus: "booking" } });
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(false);
     const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     expect(attempt.bookingId).toBeNull();
@@ -95,7 +108,7 @@ describe("L — finalization rejected when a required external component isn't C
   it("refuses when flightStatus is set but not confirmed", async () => {
     const attemptId = await buildAttemptReadyToFinalize();
     await prisma.checkoutAttempt.update({ where: { id: attemptId }, data: { flightStatus: "unknown" } });
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(false);
     const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     expect(attempt.bookingId).toBeNull();
@@ -103,13 +116,13 @@ describe("L — finalization rejected when a required external component isn't C
 
   it("refuses when there is no HELD ticket hold to confirm", async () => {
     const attemptId = await buildAttemptReadyToFinalize({ withHeldHold: false });
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(false);
   });
 
   it("refuses when no FinalQuoteSnapshot exists", async () => {
     const attemptId = await buildAttemptReadyToFinalize({ withSnapshot: false });
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(false);
   });
 });
@@ -117,7 +130,7 @@ describe("L — finalization rejected when a required external component isn't C
 describe("M — valid finalization", () => {
   it("confirms the TicketHold, creates a Booking, and transitions the attempt to CONFIRMED", async () => {
     const attemptId = await buildAttemptReadyToFinalize();
-    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -138,8 +151,8 @@ describe("M — valid finalization", () => {
 describe("N — finalization called twice is idempotent: exactly one Booking, same result", () => {
   it("second call returns the same booking, no duplicate created", async () => {
     const attemptId = await buildAttemptReadyToFinalize();
-    const first = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
-    const second = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER });
+    const first = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
+    const second = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(first.ok && second.ok).toBe(true);
     if (first.ok && second.ok) {
       expect(second.alreadyFinalized).toBe(true);
@@ -156,10 +169,11 @@ describe("N — finalization called twice is idempotent: exactly one Booking, sa
 });
 
 describe("O — a local failure during finalization never triggers external compensation and is safely retryable", () => {
-  it("a traveler-count mismatch rolls back cleanly, leaves the attempt in FINALIZING, and a corrected retry then succeeds", async () => {
-    const attemptId = await buildAttemptReadyToFinalize({ partySize: 2 });
+  it("a persisted-traveler-count mismatch rolls back cleanly, leaves the attempt in FINALIZING, and a corrected retry then succeeds", async () => {
+    // partySize=2, but only 1 CheckoutAttemptTraveler row exists yet.
+    const attemptId = await buildAttemptReadyToFinalize({ partySize: 2, travelerCount: 1 });
 
-    const failed = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: ONE_TRAVELER /* only 1, but partySize is 2 */ });
+    const failed = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(failed.ok).toBe(false);
 
     const afterFailure = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId }, include: { ticketHolds: true } });
@@ -170,11 +184,30 @@ describe("O — a local failure during finalization never triggers external comp
     const failureEvents = await prisma.checkoutAttemptEvent.findMany({ where: { checkoutAttemptId: attemptId, type: "finalization_failed" } });
     expect(failureEvents).toHaveLength(1);
 
-    const retried = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER, travelers: [{ firstName: "Test", lastName: "One" }, { firstName: "Test", lastName: "Two" }] });
+    // Corrected retry: persist the missing second traveler, then retry with no new input other than buyer.
+    await prisma.checkoutAttemptTraveler.create({ data: { checkoutAttemptId: attemptId, order: 1, firstName: "Test1", lastName: "Sandbox" } });
+    const retried = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
     expect(retried.ok).toBe(true);
     if (retried.ok) {
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: retried.bookingId }, include: { travelers: true } });
       expect(booking.travelers).toHaveLength(2);
     }
+  });
+});
+
+describe("H — FINALIZING uses persisted CheckoutAttemptTraveler rows, never external input", () => {
+  it("the resulting Booking.Traveler names come from the persisted rows, in order — FinalizeInput carries no traveler data at all", async () => {
+    const attemptId = await buildAttemptReadyToFinalize({ partySize: 2, travelerCount: 0 });
+    await persistTravelers(attemptId, [
+      { firstName: "Ada", lastName: "Lovelace" },
+      { firstName: "Alan", lastName: "Turing" },
+    ]);
+
+    const result = await finalizeConfirmedCheckoutAttempt(attemptId, { buyer: BUYER });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const booking = await prisma.booking.findUniqueOrThrow({ where: { id: result.bookingId }, include: { travelers: { orderBy: { order: "asc" } } } });
+    expect(booking.travelers.map((t) => `${t.firstName} ${t.lastName}`)).toEqual(["Ada Lovelace", "Alan Turing"]);
   });
 });

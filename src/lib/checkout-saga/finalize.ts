@@ -19,22 +19,7 @@ export type FinalizeBuyerInput = {
   paymentProvider: PaymentProviderKind;
 };
 
-export type FinalizeTravelerInput = {
-  firstName: string;
-  lastName: string;
-  birthDate?: Date | null;
-  nationality?: string;
-  docType?: string;
-  docNumber?: string;
-  docExpiry?: Date | null;
-  docCountry?: string;
-  phone?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
-  originAirport?: string;
-};
-
-export type FinalizeInput = { buyer: FinalizeBuyerInput; travelers: FinalizeTravelerInput[] };
+export type FinalizeInput = { buyer: FinalizeBuyerInput };
 
 export type FinalizeResult = { ok: true; alreadyFinalized: boolean; bookingId: string; reference: string; accessToken: string } | { ok: false; error: string };
 
@@ -64,6 +49,15 @@ export type FinalizeResult = { ok: true; alreadyFinalized: boolean; bookingId: s
  * failure, and NEVER calls anything external (there is nothing external
  * to call in this phase) — a local failure here is always safe to retry
  * by calling this function again with corrected input.
+ *
+ * Fase 2 §6/§26 — travelers are no longer supplied by the caller. They
+ * come exclusively from CheckoutAttemptTraveler, persisted earlier in the
+ * saga by prepareCheckoutAttempt (see prepareCheckoutAttempt.ts) — a
+ * single source of truth for pre-payment traveler PII, never re-supplied
+ * or re-typed at finalization time. The FinalizeInput type reflects this:
+ * it now carries only `buyer` (still not persisted anywhere pre-payment —
+ * see prepareCheckoutAttempt.ts's own doc comment on that scope
+ * boundary).
  */
 export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string, input: FinalizeInput): Promise<FinalizeResult> {
   const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: checkoutAttemptId }, include: { ticketHolds: true } });
@@ -98,12 +92,13 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // Re-check the traveler count inside the transaction — a real local
-      // data-integrity precondition, and (deliberately) the one check
-      // capable of throwing mid-transaction to exercise a genuine
+      // Re-read the persisted travelers INSIDE the transaction — a real
+      // local data-integrity precondition, and (deliberately) the one
+      // check capable of throwing mid-transaction to exercise a genuine
       // rollback, per test scenario O.
-      if (input.travelers.length !== attempt.partySize) {
-        throw new Error(`Expected ${attempt.partySize} travelers, got ${input.travelers.length}.`);
+      const persistedTravelers = await tx.checkoutAttemptTraveler.findMany({ where: { checkoutAttemptId }, orderBy: { order: "asc" } });
+      if (persistedTravelers.length !== attempt.partySize) {
+        throw new Error(`Expected ${attempt.partySize} persisted CheckoutAttemptTraveler rows, found ${persistedTravelers.length}.`);
       }
 
       for (const hold of heldHolds) {
@@ -141,20 +136,23 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
       });
 
       await tx.traveler.createMany({
-        data: input.travelers.map((t, index) => ({
+        data: persistedTravelers.map((t, index) => ({
           bookingId: booking.id,
           firstName: t.firstName,
           lastName: t.lastName,
-          birthDate: t.birthDate ?? null,
-          nationality: t.nationality ?? "",
-          docType: t.docType ?? "",
-          docNumber: t.docNumber ?? "",
-          docExpiry: t.docExpiry ?? null,
-          docCountry: t.docCountry ?? "",
-          phone: t.phone ?? "",
-          emergencyContactName: t.emergencyContactName ?? "",
-          emergencyContactPhone: t.emergencyContactPhone ?? "",
-          originAirport: t.originAirport ?? "",
+          birthDate: t.birthDate,
+          nationality: t.nationality,
+          docType: t.docType,
+          docNumber: t.docNumber,
+          docExpiry: t.docExpiry,
+          docCountry: t.docCountry,
+          phone: t.phone,
+          emergencyContactName: t.emergencyContactName,
+          emergencyContactPhone: t.emergencyContactPhone,
+          originAirport: t.originAirport,
+          title: t.title,
+          gender: t.gender,
+          email: t.email,
           order: index,
         })),
       });

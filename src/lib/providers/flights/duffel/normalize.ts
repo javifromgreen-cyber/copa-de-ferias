@@ -1,5 +1,5 @@
 import { ProviderError } from "@/lib/providers/errors";
-import type { FlightOffer, FlightSearchResult, FlightSegment, RoundTripFlightOffer, RoundTripFlightSearchResult } from "./types";
+import type { FlightOffer, FlightSearchResult, FlightSegment, RoundTripFareConditions, RoundTripFlightOffer, RoundTripFlightSearchResult } from "./types";
 
 // Minimal shape of what we read from Duffel's raw JSON — deliberately not
 // a full API type; anything we don't need is never modeled, and this file
@@ -13,15 +13,21 @@ export type RawSegment = {
   marketing_carrier: RawCarrier;
   operating_carrier: RawCarrier;
   marketing_carrier_flight_number: string | null;
-  passengers?: { baggages?: { type: string; quantity: number }[] }[];
+  passengers?: { cabin_class?: string | null; baggages?: { type: string; quantity: number }[] }[];
 };
-type RawSlice = { segments: RawSegment[] };
+// Fase 2 §9 — fare_brand_name lives per-slice; conditions.*_before_departure
+// live at the offer level. Both come straight from Duffel's real Offers API
+// shape — nothing invented, nothing assumed present (all optional/nullable).
+type RawSlice = { segments: RawSegment[]; fare_brand_name?: string | null };
+type RawPenalty = { allowed: boolean; penalty_amount?: string | null; penalty_currency?: string | null } | null;
+type RawConditions = { refund_before_departure?: RawPenalty; change_before_departure?: RawPenalty } | null;
 type RawOffer = {
   id: string;
   total_amount: string;
   total_currency: string;
   expires_at: string;
   slices: RawSlice[];
+  conditions?: RawConditions;
 };
 type RawPassenger = { id: string };
 type RawOfferRequest = { id: string; live_mode: boolean; offers: RawOffer[]; passengers?: RawPassenger[] };
@@ -49,6 +55,33 @@ function normalizeBaggage(raw: RawSegment[]): FlightOffer["baggage"] {
   return {
     checkedIncluded: bags.some((b) => b.type === "checked" && b.quantity > 0),
     carryOnIncluded: bags.some((b) => b.type === "carry_on" && b.quantity > 0),
+  };
+}
+
+function normalizePenalty(raw: RawPenalty): RoundTripFareConditions["refundBeforeDeparture"] {
+  if (!raw) return null;
+  const amount = raw.penalty_amount !== null && raw.penalty_amount !== undefined ? Number(raw.penalty_amount) : null;
+  return {
+    allowed: Boolean(raw.allowed),
+    penaltyAmount: amount !== null && Number.isFinite(amount) ? amount : null,
+    penaltyCurrency: raw.penalty_currency ?? null,
+  };
+}
+
+/**
+ * Fase 2 §9 — takes the outbound slice's own segments/fare_brand_name as
+ * representative of the whole offer (a documented simplification for a
+ * genuinely mixed-fare offer — see RoundTripFareConditions's own doc
+ * comment) and the offer-level `conditions` object as-is. Every field is
+ * `null` rather than guessed when Duffel doesn't provide it.
+ */
+function normalizeFareConditions(raw: RawOffer, outboundSlice: RawSlice): RoundTripFareConditions {
+  return {
+    cabinClass: outboundSlice.segments[0]?.passengers?.[0]?.cabin_class ?? null,
+    fareBrandName: outboundSlice.fare_brand_name ?? null,
+    refundBeforeDeparture: normalizePenalty(raw.conditions?.refund_before_departure ?? null),
+    changeBeforeDeparture: normalizePenalty(raw.conditions?.change_before_departure ?? null),
+    baggage: normalizeBaggage(outboundSlice.segments),
   };
 }
 
@@ -136,6 +169,7 @@ export function normalizeRoundTripOffer(raw: RawOffer, liveMode: boolean, offerR
     expiresAt: new Date(raw.expires_at),
     liveMode,
     passengerIds,
+    fareConditions: normalizeFareConditions(raw, raw.slices[0]),
   };
 }
 

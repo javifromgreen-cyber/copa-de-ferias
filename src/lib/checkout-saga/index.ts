@@ -3,7 +3,7 @@ export { isValidGlobalTransition, assertGlobalTransition, transitionCheckoutAtte
 export { recordCheckoutAttemptEvent, type Db } from "./events";
 export { createCheckoutAttempt } from "./createCheckoutAttempt";
 export { acquireTicketHold, releaseTicketHold, confirmTicketHold, releaseExpiredTicketHolds, releaseHeldTicketHoldsForAttempt, type AcquireTicketHoldResult } from "./ticketHold";
-export { finalizeConfirmedCheckoutAttempt, type FinalizeInput, type FinalizeResult, type FinalizeBuyerInput, type FinalizeTravelerInput } from "./finalize";
+export { finalizeConfirmedCheckoutAttempt, type FinalizeInput, type FinalizeResult, type FinalizeBuyerInput } from "./finalize";
 export {
   serializeFinalQuoteSnapshot,
   parseFinalQuoteSnapshot,
@@ -12,6 +12,32 @@ export {
   type FinalQuoteSnapshotFlight,
   type FinalQuoteSnapshotFlightSlice,
   type FinalQuoteSnapshotFlightSegment,
+  type FinalQuoteSnapshotFareConditions,
   type FinalQuoteSnapshotTicketLine,
   type FinalQuoteSnapshotCommercial,
 } from "./finalQuoteSnapshot";
+export { normalizePhoneForDuffel, isValidE164Phone } from "./phone";
+export {
+  validateCheckoutAttemptTravelers,
+  normalizeTravelerPhone,
+  VALID_TRAVELER_TITLES,
+  VALID_TRAVELER_GENDERS,
+  type CheckoutAttemptTravelerInput,
+  type TravelerValidationResult,
+} from "./travelerValidation";
+export { persistCheckoutAttemptTravelers } from "./checkoutAttemptTravelers";
+export { computeLatestSafePaymentAt } from "./quoteValidity";
+export {
+  classifyHotelReversibility,
+  classifyFlightReversibility,
+  effectiveRiskLevel,
+  isNoViableReversibilityCombination,
+  type ReversibilityLevel,
+} from "./reversibility";
+export {
+  prepareCheckoutAttempt,
+  type PrepareCheckoutAttemptInput,
+  type PrepareCheckoutAttemptResult,
+  type PrepareCheckoutAttemptHotelInput,
+  type PrepareCheckoutAttemptFlightInput,
+} from "./prepareCheckoutAttempt";

@@ -108,27 +108,32 @@ export type ResolveRoundTripOfferResult =
  * "SelectedRoundTripFlight" type was introduced; this function's success
  * case simply returns the matched RoundTripFlightOffer as-is.
  *
- * §6 — when several offers share the exact same itinerary (same two
- * slices) but differ in price, this is a genuine "which fare/brand do we
- * sell" decision. The only condition this codebase can currently verify
- * from normalized data is CURRENCY (RoundTripFlightOffer doesn't model
- * fare brand, cabin class, or baggage allowance yet — see FlightOffer's
- * own baggage field on the one-way type, which the round-trip type
- * deliberately does not carry over yet). So: candidates are only
- * considered comparable when they share one currency; among those, the
- * cheapest wins deterministically (ties broken by offerId so the result
- * never depends on array order). A genuine cross-currency clash — which
- * this codebase has no business converting on its own — is reported as
- * `not_comparable` rather than resolved by an invented rule. If/when fare
- * conditions get normalized, this must be revisited to compare on those
- * too, not just currency.
+ * §6/Fase 2 §9 — when several offers share the exact same itinerary (same
+ * two slices) but differ in price, this is a genuine "which fare/brand do
+ * we sell" decision. Two conditions are verified from normalized data
+ * before "cheapest wins" is allowed to apply: CURRENCY, and — since Fase 2
+ * — the full `fareConditions` (cabin class, fare brand name, refund/change
+ * penalties, baggage — see RoundTripFareConditions in types.ts, itself
+ * built only from fields Duffel's real Offers API actually provides,
+ * nothing invented). Candidates are only considered comparable when every
+ * one of them shares the SAME currency AND the SAME fareConditions
+ * (structural equality); among those, the cheapest wins deterministically
+ * (ties broken by offerId so the result never depends on array order). A
+ * genuine mismatch on either axis — a currency clash this codebase has no
+ * business converting itself, or two offers that are the same flight but
+ * different products (e.g. Basic vs Flex) — is reported as
+ * `not_comparable` rather than resolved by an invented rule: automatically
+ * picking the cheaper of a non-refundable Basic fare and a refundable Flex
+ * fare just because it costs less would silently sell the customer a
+ * worse product than what they may have expected.
  */
 export function resolveRoundTripOffer(offers: RoundTripFlightOffer[], outboundKey: string, returnKey: string): ResolveRoundTripOfferResult {
   const matches = offers.filter((o) => flightSliceKey(o.outbound) === outboundKey && flightSliceKey(o.return) === returnKey);
   if (matches.length === 0) return { ok: false, reason: "not_found" };
 
   const currencies = new Set(matches.map((o) => o.currency));
-  if (currencies.size > 1) return { ok: false, reason: "not_comparable", candidates: matches };
+  const fareConditionKeys = new Set(matches.map((o) => JSON.stringify(o.fareConditions)));
+  if (currencies.size > 1 || fareConditionKeys.size > 1) return { ok: false, reason: "not_comparable", candidates: matches };
 
   const cheapest = [...matches].sort((a, b) => a.totalAmount - b.totalAmount || a.offerId.localeCompare(b.offerId))[0];
   return { ok: true, offer: cheapest };

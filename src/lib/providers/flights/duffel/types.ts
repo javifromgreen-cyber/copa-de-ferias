@@ -66,6 +66,40 @@ export type RoundTripFlightSlice = {
   segments: FlightSegment[];
 };
 
+/**
+ * Fase 2 §9 — a penalty-gated permission, straight from Duffel's own
+ * `conditions.refund_before_departure` / `conditions.change_before_departure`
+ * (offer-level, not per-slice). `null` means Duffel did not provide this
+ * condition for this offer — genuinely unknown, never defaulted to
+ * true/false (see classifyFlightReversibility in
+ * src/lib/checkout-saga/reversibility.ts, which treats that null as
+ * UNKNOWN, not as permissive).
+ */
+export type FarePenaltyCondition = {
+  allowed: boolean;
+  penaltyAmount: number | null;
+  penaltyCurrency: string | null;
+} | null;
+
+/**
+ * Fase 2 §9 — the real, Duffel-provided commercial conditions needed to
+ * tell whether two offers for the same physical itinerary are actually
+ * interchangeable fares, not just "the same flight, coincidentally
+ * cheaper". Nothing here is invented: cabinClass/fareBrandName come from
+ * the segments/slices Duffel already returns (cabin_class per passenger,
+ * fare_brand_name per slice — this offer's OUTBOUND slice is taken as
+ * representative, a documented simplification for a genuinely mixed-fare
+ * offer), and the two *BeforeDeparture fields are Duffel's own offer-level
+ * `conditions` object.
+ */
+export type RoundTripFareConditions = {
+  cabinClass: string | null;
+  fareBrandName: string | null;
+  refundBeforeDeparture: FarePenaltyCondition;
+  changeBeforeDeparture: FarePenaltyCondition;
+  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
+};
+
 export type RoundTripFlightOffer = {
   provider: "duffel";
   /** Duffel's own offer id for the WHOLE round trip — the only thing a future single Order needs. */
@@ -86,6 +120,8 @@ export type RoundTripFlightOffer = {
    * that time). Server-side only; never sent to the client.
    */
   passengerIds: string[];
+  /** §9 — used by resolveRoundTripOffer to refuse "cheapest wins" between fares that aren't actually comparable. */
+  fareConditions: RoundTripFareConditions;
 };
 
 export type RoundTripFlightSearchResult = {

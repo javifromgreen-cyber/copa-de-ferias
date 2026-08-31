@@ -611,6 +611,16 @@ model Traveler {
   emergencyContactName  String    @default("")
   emergencyContactPhone String    @default("")
 
+  // Fase 2 — carried through from CheckoutAttemptTraveler at FINALIZING
+  // (see finalize.ts) for modalities with a flight: Duffel's own
+  // vocabulary (title: mr/mrs/ms, gender: m/f) plus a per-traveler email,
+  // kept ready for the future real Order without a further migration.
+  // "" for modalities without a flight, same optional-with-default
+  // convention as every other field here.
+  title  String @default("")
+  gender String @default("")
+  email  String @default("")
+
   // A_TU_AIRE only — tickets can be fewer than travelers (§161), so each
   // traveler tracks whether they're one of the assigned ticket-holders.
   hasTicket     Boolean @default(true)
@@ -720,6 +730,16 @@ enum CheckoutAttemptEventType {
   finalization_started
   finalization_completed
   finalization_failed
+
+  // Fase 2 — the prepareCheckoutAttempt saga steps (see
+  // src/lib/checkout-saga/prepareCheckoutAttempt.ts). Sanitized only —
+  // never traveler PII, never a raw provider payload.
+  travelers_validated
+  quote_revalidation_started
+  ticket_validated
+  hotel_prebook_confirmed
+  flight_revalidated
+  quote_snapshot_created
 }
 
 model CheckoutAttempt {
@@ -759,8 +779,61 @@ model CheckoutAttempt {
   updatedAt DateTime  @updatedAt
   expiresAt DateTime?
 
+  // Fase 2 §22 — the earliest of every real, known external/internal
+  // expiration bounding this attempt (our own TicketHold.expiresAt; the
+  // Duffel round-trip offer's expiresAt when a flight is part of the
+  // quote). Never invented — see src/lib/checkout-saga/quoteValidity.ts.
+  // Null until READY_TO_PAY computes it; Nuitee never contributes a bound
+  // here because it doesn't provide one (see finalQuoteSnapshot.ts).
+  latestSafePaymentAt DateTime?
+
   ticketHolds TicketHold[]
   events      CheckoutAttemptEvent[]
+  travelers   CheckoutAttemptTraveler[]
+}
+
+// Fase 2 §6 — persists the travelers collected during REVALIDATING,
+// BEFORE any Booking exists (Booking must never exist before CONFIRMED —
+// see finalize.ts). Copied into Booking.Traveler at FINALIZING
+// (finalizeConfirmedCheckoutAttempt reads FROM here now, never from an
+// arbitrary caller-supplied list — a single source of truth for
+// pre-payment traveler PII). Field list mirrors Traveler's own optional-
+// with-default convention; title/gender/email/phone are additionally
+// enforced (dynamically, not via NOT NULL) as required whenever the
+// modality includes a flight — see travelerValidation.ts.
+model CheckoutAttemptTraveler {
+  id String @id @default(cuid())
+
+  checkoutAttemptId String
+  checkoutAttempt   CheckoutAttempt @relation(fields: [checkoutAttemptId], references: [id], onDelete: Cascade)
+
+  order Int @default(0)
+
+  firstName String
+  lastName  String
+  birthDate DateTime?
+
+  // Duffel's own vocabulary — see FlightOrderPassenger in
+  // src/lib/providers/flights/duffel/types.ts. "" until a flight modality
+  // requires them.
+  title  String @default("") // "mr" | "mrs" | "ms"
+  gender String @default("") // "m" | "f"
+  email  String @default("") // per-traveler; may equal the buyer's email — no uniqueness enforced
+  phone  String @default("") // E.164 once validated — see src/lib/checkout-saga/phone.ts
+
+  nationality           String    @default("")
+  docType               String    @default("")
+  docNumber             String    @default("")
+  docExpiry             DateTime?
+  docCountry            String    @default("")
+  emergencyContactName  String    @default("")
+  emergencyContactPhone String    @default("")
+  originAirport         String    @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([checkoutAttemptId, order])
 }
 
 // Belongs to exactly one CheckoutAttempt, always — never a "loose" hold.

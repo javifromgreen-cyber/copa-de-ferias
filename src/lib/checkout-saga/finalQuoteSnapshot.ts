@@ -55,6 +55,22 @@ export type FinalQuoteSnapshotFlightSlice = {
 };
 
 /**
+ * Fase 2 §9/§21 — mirrors src/lib/providers/flights/duffel/types.ts's
+ * RoundTripFareConditions structurally (same reason as
+ * FinalQuoteSnapshotFlight's own doc comment: never lose a fact in
+ * translation) without importing it directly, keeping this module
+ * provider-agnostic.
+ */
+export type FinalQuoteSnapshotFareCondition = { allowed: boolean; penaltyAmount: number | null; penaltyCurrency: string | null } | null;
+export type FinalQuoteSnapshotFareConditions = {
+  cabinClass: string | null;
+  fareBrandName: string | null;
+  refundBeforeDeparture: FinalQuoteSnapshotFareCondition;
+  changeBeforeDeparture: FinalQuoteSnapshotFareCondition;
+  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
+};
+
+/**
  * Fase 1.5 §4 — a TICKET_HOTEL_FLIGHT round trip is ONE commercially-
  * reservable Duffel offer, never two independent one-way offers: a single
  * offerId is what a future single Order needs, and the two directions
@@ -83,6 +99,8 @@ export type FinalQuoteSnapshotFlight = {
   currency: string;
   outbound: FinalQuoteSnapshotFlightSlice;
   return: FinalQuoteSnapshotFlightSlice;
+  /** §9 — the real, Duffel-provided conditions this offer was resolved/reversibility-classified against. */
+  fareConditions: FinalQuoteSnapshotFareConditions;
 };
 
 export type FinalQuoteSnapshotCommercial = {
