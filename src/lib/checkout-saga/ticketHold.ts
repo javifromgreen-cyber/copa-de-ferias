@@ -90,6 +90,27 @@ export async function confirmTicketHold(id: string, db: Db = prisma): Promise<vo
 }
 
 /**
+ * Fase 1.5 §1 — releases every currently-HELD TicketHold belonging to one
+ * CheckoutAttempt. This is the local, purely-reversible side of reaching a
+ * terminal failure state: it never talks to an external provider (there is
+ * nothing to compensate here, only our own stock reservation), so it is
+ * safe to run regardless of which path led to the terminal state — see
+ * transitionCheckoutAttempt() in transitions.ts, the single call site,
+ * which invokes this after writing status ONLY when the new status is
+ * `failed` or `cancelled`. Idempotent: reuses releaseTicketHold's
+ * `updateMany({ where: { status: "held" } })` guard, so holds already
+ * released/confirmed/expired are silently skipped and a second call finds
+ * nothing left to do.
+ */
+export async function releaseHeldTicketHoldsForAttempt(checkoutAttemptId: string, db: Db = prisma): Promise<number> {
+  const held = await db.ticketHold.findMany({ where: { checkoutAttemptId, status: "held" }, select: { id: true } });
+  for (const hold of held) {
+    await releaseTicketHold(hold.id, db);
+  }
+  return held.length;
+}
+
+/**
  * §11 — only releases holds whose CheckoutAttempt is in a state where an
  * unattended expiration is actually safe. From payment_authorizing
  * onward (through fulfilling/payment_capturing/finalizing) the hold

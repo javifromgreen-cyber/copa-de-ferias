@@ -1,5 +1,5 @@
 import { ProviderError } from "@/lib/providers/errors";
-import type { FlightOffer, FlightSearchResult, FlightSegment } from "./types";
+import type { FlightOffer, FlightSearchResult, FlightSegment, RoundTripFlightOffer, RoundTripFlightSearchResult } from "./types";
 
 // Minimal shape of what we read from Duffel's raw JSON — deliberately not
 // a full API type; anything we don't need is never modeled, and this file
@@ -23,7 +23,8 @@ type RawOffer = {
   expires_at: string;
   slices: RawSlice[];
 };
-type RawOfferRequest = { id: string; live_mode: boolean; offers: RawOffer[] };
+type RawPassenger = { id: string };
+type RawOfferRequest = { id: string; live_mode: boolean; offers: RawOffer[]; passengers?: RawPassenger[] };
 
 export function normalizeSegment(raw: RawSegment): FlightSegment {
   if (!raw?.origin?.iata_code || !raw?.destination?.iata_code || !raw?.departing_at || !raw?.arriving_at || !raw?.marketing_carrier) {
@@ -101,4 +102,65 @@ export function normalizeSearchResult(input: unknown): FlightSearchResult {
 
 export function normalizeOfferForRevalidation(raw: RawOffer, liveMode: boolean): FlightOffer {
   return normalizeOffer(raw, liveMode);
+}
+
+/**
+ * Fase 1.5 §2/§4/§6 — the round-trip counterpart of normalizeOffer: here a
+ * TWO-slice offer (outbound + return) is the expected, required shape —
+ * the inverse of normalizeOffer's own rule (`slices.length !== 1` ->
+ * reject). One offer = one commercially-reservable round trip, ONE
+ * offerId, ONE total_amount for both directions (§7) — never two
+ * independently-priced legs summed together.
+ */
+export function normalizeRoundTripOffer(raw: RawOffer, liveMode: boolean, offerRequestId: string, passengerIds: string[]): RoundTripFlightOffer {
+  if (!raw?.id || !raw?.total_amount || !raw?.total_currency || !raw?.expires_at || !Array.isArray(raw.slices) || raw.slices.length !== 2) {
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "duffel", "Duffel offer is missing required fields or is not a two-slice (round-trip) offer.");
+  }
+  const outboundSegments = raw.slices[0].segments.map(normalizeSegment);
+  const returnSegments = raw.slices[1].segments.map(normalizeSegment);
+  if (outboundSegments.length === 0 || returnSegments.length === 0) {
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "duffel", "Duffel round-trip offer has a slice with no segments.");
+  }
+  const totalAmount = Number(raw.total_amount);
+  if (!Number.isFinite(totalAmount)) {
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "duffel", "Duffel offer total_amount is not a valid number.");
+  }
+  return {
+    provider: "duffel",
+    offerId: raw.id,
+    offerRequestId,
+    totalAmount,
+    currency: raw.total_currency,
+    outbound: { segments: outboundSegments },
+    return: { segments: returnSegments },
+    expiresAt: new Date(raw.expires_at),
+    liveMode,
+    passengerIds,
+  };
+}
+
+/**
+ * Normalizes a two-slice Offer Request response into round-trip offers.
+ * Carries `passengers` (Duffel-assigned ids, shared by every offer under
+ * this offer_request — §5) through to each offer so they survive down to
+ * whatever later builds the real Order. Skips a single malformed/wrong-
+ * slice-count offer rather than failing the whole batch, same convention
+ * as normalizeSearchResult.
+ */
+export function normalizeRoundTripSearchResult(input: unknown): RoundTripFlightSearchResult {
+  const raw = input as RawOfferRequest;
+  if (!raw?.id || !Array.isArray(raw.offers)) {
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "duffel", "Duffel offer_request response is missing required fields.");
+  }
+  const passengerIds = Array.isArray(raw.passengers) ? raw.passengers.map((p) => p.id).filter((id): id is string => Boolean(id)) : [];
+  const offers: RoundTripFlightOffer[] = [];
+  for (const rawOffer of raw.offers) {
+    try {
+      offers.push(normalizeRoundTripOffer(rawOffer, raw.live_mode, raw.id, passengerIds));
+    } catch {
+      // Skip a single malformed/non-round-trip offer rather than failing
+      // the whole batch — the rest is still usable.
+    }
+  }
+  return { offerRequestId: raw.id, liveMode: raw.live_mode, offers };
 }

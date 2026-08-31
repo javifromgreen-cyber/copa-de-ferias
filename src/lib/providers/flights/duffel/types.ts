@@ -49,6 +49,59 @@ export type FlightRevalidation = {
   expiresAt: Date | null;
 };
 
+/**
+ * Fase 1.5 §2/§4 — the MVP never books ida/vuelta as two independent Duffel
+ * Orders (that would risk "outbound CONFIRMED, return FAILED" split
+ * bookings). A round trip is modeled as ONE Offer Request with TWO slices
+ * (outbound + return) -> ONE selected offer -> ONE offerId -> eventually
+ * ONE Order. FlightOffer/FlightSearchResult above stay exactly as they
+ * were (single-slice one-way) — they still power the existing
+ * NormalizedFlightLeg-based checkout UI (RealFlightProvider) unchanged;
+ * these round-trip types are a parallel, additive concept used only by the
+ * future real booking path (not wired into the live checkout in this
+ * phase).
+ */
+export type RoundTripFlightSlice = {
+  /** Every segment for this direction, in order — length 1 means direct. */
+  segments: FlightSegment[];
+};
+
+export type RoundTripFlightOffer = {
+  provider: "duffel";
+  /** Duffel's own offer id for the WHOLE round trip — the only thing a future single Order needs. */
+  offerId: string;
+  offerRequestId: string;
+  /** Total commercial price for both directions together — never outbound + return summed separately (§7). */
+  totalAmount: number;
+  currency: string;
+  outbound: RoundTripFlightSlice;
+  return: RoundTripFlightSlice;
+  expiresAt: Date;
+  liveMode: boolean;
+  /**
+   * Duffel-assigned passenger placeholder ids from the Offer Request this
+   * offer belongs to (§5) — shared by every offer under the same
+   * offerRequestId. Required, unmodified, to build the future Order's
+   * `passengers` array (matched to real traveler data by the caller at
+   * that time). Server-side only; never sent to the client.
+   */
+  passengerIds: string[];
+};
+
+export type RoundTripFlightSearchResult = {
+  offerRequestId: string;
+  liveMode: boolean;
+  offers: RoundTripFlightOffer[];
+};
+
+/** §Fase 1.5 point M — the round-trip counterpart of FlightRevalidation: revalidation still works over the SINGLE round-trip offerId, never two independent ones. */
+export type RoundTripFlightRevalidation = {
+  status: FlightRevalidationStatus;
+  offer: RoundTripFlightOffer | null;
+  originalTotalAmount: number;
+  expiresAt: Date | null;
+};
+
 export type FlightOrderPassenger = {
   id: string;
   title: "mr" | "mrs" | "ms";

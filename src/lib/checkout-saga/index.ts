@@ -2,7 +2,7 @@ export * from "./types";
 export { isValidGlobalTransition, assertGlobalTransition, transitionCheckoutAttempt, CheckoutSagaTransitionError } from "./transitions";
 export { recordCheckoutAttemptEvent, type Db } from "./events";
 export { createCheckoutAttempt } from "./createCheckoutAttempt";
-export { acquireTicketHold, releaseTicketHold, confirmTicketHold, releaseExpiredTicketHolds, type AcquireTicketHoldResult } from "./ticketHold";
+export { acquireTicketHold, releaseTicketHold, confirmTicketHold, releaseExpiredTicketHolds, releaseHeldTicketHoldsForAttempt, type AcquireTicketHoldResult } from "./ticketHold";
 export { finalizeConfirmedCheckoutAttempt, type FinalizeInput, type FinalizeResult, type FinalizeBuyerInput, type FinalizeTravelerInput } from "./finalize";
 export {
   serializeFinalQuoteSnapshot,
@@ -10,7 +10,8 @@ export {
   type FinalQuoteSnapshot,
   type FinalQuoteSnapshotHotel,
   type FinalQuoteSnapshotFlight,
-  type FinalQuoteSnapshotFlightLeg,
+  type FinalQuoteSnapshotFlightSlice,
+  type FinalQuoteSnapshotFlightSegment,
   type FinalQuoteSnapshotTicketLine,
   type FinalQuoteSnapshotCommercial,
 } from "./finalQuoteSnapshot";
