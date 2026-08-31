@@ -764,6 +764,37 @@ model CheckoutAttempt {
   // "" hasta que existe — mismo convenio que los *Snapshot de Booking.
   finalQuoteSnapshot String @default("")
 
+  // Fase 2.5 §5/§6 — persisted server-side in REVALIDATING, alongside
+  // travelers, BEFORE any Booking exists — the single source of truth
+  // finalizeConfirmedCheckoutAttempt() reads at FINALIZING (no external
+  // caller input anymore). Plain fields directly on CheckoutAttempt
+  // rather than a separate CheckoutAttemptBuyer table: buyer is always
+  // exactly 1:1 with the attempt (never multiple), so a whole extra
+  // table would just be a second place to keep in sync for no relational
+  // benefit — same reasoning as Fase 1's decision not to add a redundant
+  // Booking<->TicketOffer table. Mirrors Booking's own buyer* field
+  // names 1:1 for a trivial copy at FINALIZING.
+  buyerFirstName      String @default("")
+  buyerLastName       String @default("")
+  buyerEmail          String @default("")
+  buyerPhone          String @default("")
+  buyerOriginCity     String @default("")
+  buyerBillingAddress String @default("")
+
+  // Not PII — an operational choice, not yet collected from a real
+  // payment-method UI in this phase (no Stripe integration exists yet).
+  // "demo" signals "no real payment provider chosen" until Fase 3 wires
+  // an actual selector; finalize.ts reads this instead of accepting it
+  // as a caller argument.
+  paymentProviderChoice PaymentProviderKind @default(demo)
+
+  // Fase 2.5 §22 — opaque, unguessable lookup for the new /reservar-real
+  // flow to reconstruct READY_TO_PAY after a refresh, without trusting
+  // the raw (sequential-feeling, if still a cuid) id for public exposure —
+  // same "public reference vs. secret token" split already established
+  // for Booking.accessToken/Mi Viaje. Generated once at creation.
+  accessToken String @unique @default("")
+
   bookingId String?  @unique
   booking   Booking? @relation(fields: [bookingId], references: [id])
 

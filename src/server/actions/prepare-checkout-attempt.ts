@@ -1,8 +1,9 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import { prepareCheckoutAttempt, type PrepareCheckoutAttemptResult } from "@/lib/checkout-saga/prepareCheckoutAttempt";
+import { prepareCheckoutAttempt, type PrepareCheckoutAttemptResult, type PrepareCheckoutAttemptHotelInput, type PrepareCheckoutAttemptFlightInput } from "@/lib/checkout-saga/prepareCheckoutAttempt";
 import type { CheckoutAttemptTravelerInput } from "@/lib/checkout-saga/travelerValidation";
+import type { CheckoutAttemptBuyerInput } from "@/lib/checkout-saga/checkoutAttemptBuyer";
 import type { PackageType } from "@prisma/client";
 
 /**
@@ -21,11 +22,23 @@ export type PrepareRealCheckoutInput = {
   tripSlug: string;
   packageType: PackageType;
   partySize: number;
+  buyer: CheckoutAttemptBuyerInput;
   travelers: CheckoutAttemptTravelerInput[];
   ticketOfferId: string;
   ticketQuantity: number;
+  /** Only for TICKET_HOTEL / TICKET_HOTEL_FLIGHT — the hotel selection made in the UI's hotel picker step. */
+  hotel?: PrepareCheckoutAttemptHotelInput;
+  /** Only for TICKET_HOTEL_FLIGHT — the ONE round-trip offer resolved by the UI's ida/vuelta picker step. */
+  flight?: PrepareCheckoutAttemptFlightInput;
 };
 
+/**
+ * Fase 2.5 §15 — this action is a thin boundary: it accepts only
+ * identifiers/selections the backend can (and does, inside
+ * prepareCheckoutAttempt) revalidate against the real providers. It never
+ * trusts a client-supplied price, cost, fee, or reversibility — those are
+ * always recomputed server-side.
+ */
 export async function prepareRealCheckoutAttempt(input: PrepareRealCheckoutInput): Promise<PrepareCheckoutAttemptResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
@@ -36,8 +49,11 @@ export async function prepareRealCheckoutAttempt(input: PrepareRealCheckoutInput
     tripId: trip.id,
     packageType: input.packageType,
     partySize: input.partySize,
+    buyer: input.buyer,
     travelers: input.travelers,
     ticket: { ticketOfferId: input.ticketOfferId, quantity: input.ticketQuantity },
+    hotel: input.hotel,
+    flight: input.flight,
   });
 }
 

@@ -137,17 +137,46 @@ function resolvedFlightSelection() {
 
 const COMPLETE_TRAVELER: CheckoutAttemptTravelerInput = { firstName: "Ada", lastName: "Lovelace", title: "mrs", gender: "f", birthDate: "1990-01-01", email: "ada@example.com", phone: "+34600000000" };
 
+const BUYER: PrepareCheckoutAttemptInput["buyer"] = { firstName: "Ada", lastName: "Lovelace", email: "ada.buyer@example.com", phone: "+34600000001" };
+
 async function baseInput(overrides: Partial<PrepareCheckoutAttemptInput> = {}): Promise<PrepareCheckoutAttemptInput> {
   const ticketOfferId = overrides.ticket?.ticketOfferId ?? (await createTicketOffer(10));
   return {
     tripId,
     packageType: "TICKET_ONLY",
     partySize: 1,
+    buyer: BUYER,
     travelers: [{ firstName: "Ada", lastName: "Lovelace" }],
     ticket: { ticketOfferId, quantity: 1 },
     ...overrides,
   };
 }
+
+describe("F/G — buyer is validated and persisted on CheckoutAttempt before READY_TO_PAY", () => {
+  it("rejects an invalid buyer before creating anything (no CheckoutAttempt row at all)", async () => {
+    const countBefore = await prisma.checkoutAttempt.count({ where: { tripId } });
+    const input = await baseInput({ buyer: { firstName: "", lastName: "Lovelace", email: "not-an-email", phone: "" } });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.checkoutAttemptId).toBeNull();
+    const countAfter = await prisma.checkoutAttempt.count({ where: { tripId } });
+    expect(countAfter).toBe(countBefore);
+  });
+
+  it("persists the buyer on the CheckoutAttempt row, readable independently of the returned snapshot (survives a refresh)", async () => {
+    const input = await baseInput({ buyer: { firstName: "Grace", lastName: "Hopper", email: "grace@example.com", phone: "+34600000099" } });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: result.checkoutAttemptId } });
+    expect(attempt.buyerFirstName).toBe("Grace");
+    expect(attempt.buyerLastName).toBe("Hopper");
+    expect(attempt.buyerEmail).toBe("grace@example.com");
+    expect(attempt.buyerPhone).toBe("+34600000099");
+    expect(attempt.accessToken).not.toBe("");
+  });
+});
 
 describe("AB — happy path TICKET_ONLY", () => {
   it("reaches READY_TO_PAY with a TicketHold and a FinalQuoteSnapshot, no hotel/flight", async () => {
@@ -404,5 +433,117 @@ describe("§14 — Duffel revalidation detecting a changed itinerary blocks READ
     });
     const result = await prepareCheckoutAttempt(input);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("U/V/W — READY_TO_PAY carries every field the real summary screen needs, for all three modalities", () => {
+  it("U — TICKET_ONLY: ticket + commercial total present, hotel/flight null", async () => {
+    const result = await prepareCheckoutAttempt(await baseInput());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.finalQuoteSnapshot.ticket.length).toBeGreaterThan(0);
+    expect(result.finalQuoteSnapshot.commercial.pvpTotal).toBeGreaterThan(0);
+    expect(result.finalQuoteSnapshot.hotel).toBeNull();
+    expect(result.finalQuoteSnapshot.flight).toBeNull();
+  });
+
+  it("V — TICKET_HOTEL: hotel name/checkIn/checkOut/roomMix/refundable all present", async () => {
+    const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]);
+    const input = await baseInput({
+      packageType: "TICKET_HOTEL",
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      fetchImpl,
+    });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const hotel = result.finalQuoteSnapshot.hotel;
+    expect(hotel?.name).toBe("Hotel Test");
+    expect(hotel?.checkIn).toBeTruthy();
+    expect(hotel?.checkOut).toBeTruthy();
+    expect(hotel?.roomMix.length).toBeGreaterThan(0);
+    expect(typeof hotel?.refundable).toBe("boolean");
+  });
+
+  it("W — TICKET_HOTEL_FLIGHT: hotel AND flight (segments, commercialProduct, per-person price) all present", async () => {
+    const { offer, outboundSliceKey, returnSliceKey } = resolvedFlightSelection();
+    const fetchImpl = routedFetch([
+      { test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() },
+      { test: /air\/offers\//, status: 200, body: { data: duffelRawOffer() } },
+    ]);
+    const input = await baseInput({
+      packageType: "TICKET_HOTEL_FLIGHT",
+      travelers: [COMPLETE_TRAVELER],
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      flight: { offerId: offer.offerId, offerRequestId: offer.offerRequestId, passengerIds: offer.passengerIds, originalTotalAmount: offer.totalAmount, outboundSliceKey, returnSliceKey },
+      fetchImpl,
+    });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.finalQuoteSnapshot.hotel).not.toBeNull();
+    const flight = result.finalQuoteSnapshot.flight;
+    expect(flight?.outbound.segments.length).toBeGreaterThan(0);
+    expect(flight?.return.segments.length).toBeGreaterThan(0);
+    expect(flight?.commercialProduct.outbound).toBeTruthy();
+    expect(flight?.pricePerPerson).toBeGreaterThan(0);
+    // §16 — never expose internal cost/margin fields to the display layer.
+    expect(result.finalQuoteSnapshot.commercial).not.toHaveProperty("orgFeeMargin");
+  });
+});
+
+describe("Y/Z/AA/AB — no Booking, no PaymentIntent, no Nuitee BOOK, no Duffel Order are ever created reaching READY_TO_PAY", () => {
+  it("Y — Booking.count() does not increase across a full TICKET_HOTEL_FLIGHT happy path", async () => {
+    const before = await prisma.booking.count();
+    const { offer, outboundSliceKey, returnSliceKey } = resolvedFlightSelection();
+    const fetchImpl = routedFetch([
+      { test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() },
+      { test: /air\/offers\//, status: 200, body: { data: duffelRawOffer() } },
+    ]);
+    const input = await baseInput({
+      packageType: "TICKET_HOTEL_FLIGHT",
+      travelers: [COMPLETE_TRAVELER],
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      flight: { offerId: offer.offerId, offerRequestId: offer.offerRequestId, passengerIds: offer.passengerIds, originalTotalAmount: offer.totalAmount, outboundSliceKey, returnSliceKey },
+      fetchImpl,
+    });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(true);
+    const after = await prisma.booking.count();
+    expect(after).toBe(before);
+  });
+
+  it("Z — this saga's own source never references Stripe/PaymentIntent at all (nothing to call, not just nothing called)", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const files = ["prepareCheckoutAttempt.ts", "finalize.ts", "ticketHold.ts"];
+    for (const f of files) {
+      const content = await fs.readFile(path.join(process.cwd(), "src/lib/checkout-saga", f), "utf8");
+      expect(content).not.toMatch(/stripe/i);
+      expect(content).not.toMatch(/PaymentIntent/i);
+    }
+  });
+
+  it("AA/AB — the TICKET_HOTEL_FLIGHT happy path never issues a request to /rates/book or /air/orders", async () => {
+    const { offer, outboundSliceKey, returnSliceKey } = resolvedFlightSelection();
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      if (/rates\/prebook/.test(url)) return new Response(JSON.stringify(nuiteePrebookBody()), { status: 200 });
+      if (/air\/offers\//.test(url)) return new Response(JSON.stringify({ data: duffelRawOffer() }), { status: 200 });
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+    const input = await baseInput({
+      packageType: "TICKET_HOTEL_FLIGHT",
+      travelers: [COMPLETE_TRAVELER],
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      flight: { offerId: offer.offerId, offerRequestId: offer.offerRequestId, passengerIds: offer.passengerIds, originalTotalAmount: offer.totalAmount, outboundSliceKey, returnSliceKey },
+      fetchImpl,
+    });
+    const result = await prepareCheckoutAttempt(input);
+    expect(result.ok).toBe(true);
+    expect(calls.some((u) => /rates\/book/.test(u))).toBe(false);
+    expect(calls.some((u) => /air\/orders/.test(u))).toBe(false);
   });
 });

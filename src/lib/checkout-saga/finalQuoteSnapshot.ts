@@ -55,19 +55,25 @@ export type FinalQuoteSnapshotFlightSlice = {
 };
 
 /**
- * Fase 2 §9/§21 — mirrors src/lib/providers/flights/duffel/types.ts's
- * RoundTripFareConditions structurally (same reason as
- * FinalQuoteSnapshotFlight's own doc comment: never lose a fact in
- * translation) without importing it directly, keeping this module
- * provider-agnostic.
+ * Fase 2 §9/§21, corrected in Fase 2.5 §1/§2 — mirrors src/lib/providers/
+ * flights/duffel/types.ts's FlightCommercialProduct structurally (same
+ * reason as FinalQuoteSnapshotFlight's own doc comment: never lose a fact
+ * in translation) without importing it directly, keeping this module
+ * provider-agnostic. Per-direction now (Fase 2 only captured outbound's
+ * product and silently dropped return's — fixed here to match the real
+ * corrected model).
  */
 export type FinalQuoteSnapshotFareCondition = { allowed: boolean; penaltyAmount: number | null; penaltyCurrency: string | null } | null;
-export type FinalQuoteSnapshotFareConditions = {
+export type FinalQuoteSnapshotSliceCommercialProduct = {
   cabinClass: string | null;
   fareBrandName: string | null;
+  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
+};
+export type FinalQuoteSnapshotCommercialProduct = {
+  outbound: FinalQuoteSnapshotSliceCommercialProduct;
+  return: FinalQuoteSnapshotSliceCommercialProduct;
   refundBeforeDeparture: FinalQuoteSnapshotFareCondition;
   changeBeforeDeparture: FinalQuoteSnapshotFareCondition;
-  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
 };
 
 /**
@@ -99,8 +105,8 @@ export type FinalQuoteSnapshotFlight = {
   currency: string;
   outbound: FinalQuoteSnapshotFlightSlice;
   return: FinalQuoteSnapshotFlightSlice;
-  /** §9 — the real, Duffel-provided conditions this offer was resolved/reversibility-classified against. */
-  fareConditions: FinalQuoteSnapshotFareConditions;
+  /** §9 — the real, Duffel-provided commercial product (both directions) this offer was resolved/reversibility-classified against. */
+  commercialProduct: FinalQuoteSnapshotCommercialProduct;
 };
 
 export type FinalQuoteSnapshotCommercial = {

@@ -6,6 +6,7 @@ import { acquireTicketHold } from "./ticketHold";
 import { recordCheckoutAttemptEvent } from "./events";
 import { validateCheckoutAttemptTravelers, type CheckoutAttemptTravelerInput } from "./travelerValidation";
 import { persistCheckoutAttemptTravelers } from "./checkoutAttemptTravelers";
+import { validateCheckoutAttemptBuyer, persistCheckoutAttemptBuyer, type CheckoutAttemptBuyerInput } from "./checkoutAttemptBuyer";
 import { computeLatestSafePaymentAt } from "./quoteValidity";
 import { classifyHotelReversibility, classifyFlightReversibility, isNoViableReversibilityCombination, type ReversibilityLevel } from "./reversibility";
 import { serializeFinalQuoteSnapshot, type FinalQuoteSnapshot, type FinalQuoteSnapshotFlightSegment } from "./finalQuoteSnapshot";
@@ -29,10 +30,12 @@ import type { FlightSegment, RoundTripFlightOffer } from "@/lib/providers/flight
  * saga/provider integration) — see this repo's Fase 2 report for exactly
  * which parts of the live checkout stay on the legacy path vs. this one.
  *
- * Buyer data is validated by the caller (not this module's concern) but
- * NOT persisted here — see finalize.ts's own FinalizeInput, which still
- * expects fresh buyer data at FINALIZING time. Only traveler PII is
- * persisted pre-payment (§6), via CheckoutAttemptTraveler.
+ * Fase 2.5 §5/§6 — buyer data is now validated AND persisted here too,
+ * alongside travelers, before any provider is touched — the same
+ * REVALIDATING-time, single-source-of-truth treatment CheckoutAttemptTraveler
+ * already got in Fase 2. finalize.ts no longer accepts buyer as an
+ * argument at all; it reads the persisted CheckoutAttempt.buyer* fields
+ * directly.
  */
 export type PrepareCheckoutAttemptHotelInput = {
   /** Nuitee HotelRate.offerId from SEARCH — the whole multi-room combination, never one offer per room. */
@@ -59,6 +62,7 @@ export type PrepareCheckoutAttemptInput = {
   tripId: string;
   packageType: PackageType;
   partySize: number;
+  buyer: CheckoutAttemptBuyerInput;
   travelers: CheckoutAttemptTravelerInput[];
   ticket: { ticketOfferId: string; quantity: number };
   hotel?: PrepareCheckoutAttemptHotelInput;
@@ -68,7 +72,7 @@ export type PrepareCheckoutAttemptInput = {
 };
 
 export type PrepareCheckoutAttemptResult =
-  | { ok: true; checkoutAttemptId: string; status: "ready_to_pay"; finalQuoteSnapshot: FinalQuoteSnapshot }
+  | { ok: true; checkoutAttemptId: string; status: "ready_to_pay"; finalQuoteSnapshot: FinalQuoteSnapshot; accessToken: string }
   | { ok: false; checkoutAttemptId: string | null; status: "failed"; error: string };
 
 /** §15 minutes — our own conservative stock-protection window; not derived from any provider, an internal operational choice (see quoteValidity.ts's own doc comment on why this, not Nuitee, bounds a TICKET_HOTEL attempt with no flight). */
@@ -89,7 +93,11 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
   const requiresHotel = input.packageType !== "TICKET_ONLY";
   const requiresFlight = input.packageType === "TICKET_HOTEL_FLIGHT";
 
-  // §1 step 1 — validate client/traveler data BEFORE touching the DB at all.
+  // §1 step 1 — validate client/traveler/buyer data BEFORE touching the DB at all.
+  const buyerValidation = validateCheckoutAttemptBuyer(input.buyer);
+  if (!buyerValidation.ok) {
+    return { ok: false, checkoutAttemptId: null, status: "failed", error: buyerValidation.errors.join(" ") };
+  }
   if (input.travelers.length !== input.partySize) {
     return { ok: false, checkoutAttemptId: null, status: "failed", error: `partySize (${input.partySize}) no coincide con el número de viajeros indicados (${input.travelers.length}).` };
   }
@@ -119,7 +127,8 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
     return { ok: false, checkoutAttemptId, status: "failed", error: reason };
   }
 
-  // §6 — persist travelers now, inside REVALIDATING, before any Booking exists.
+  // §5/§6 — persist buyer + travelers now, inside REVALIDATING, before any Booking exists.
+  await persistCheckoutAttemptBuyer(checkoutAttemptId, input.buyer);
   await persistCheckoutAttemptTravelers(checkoutAttemptId, input.travelers);
   await recordCheckoutAttemptEvent(checkoutAttemptId, "travelers_validated", { sanitizedDetail: JSON.stringify({ count: input.travelers.length }) });
 
@@ -215,7 +224,7 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
   // §1 step 8 / §17/§18 — reversibility gate. Only blocks when BOTH a
   // hotel AND a flight are present and both are irreversible-for-risk.
   const hotelReversibility: ReversibilityLevel | null = hotelPrebook ? classifyHotelReversibility(hotelPrebook.rooms) : null;
-  const flightReversibility: ReversibilityLevel | null = flightOffer ? classifyFlightReversibility(flightOffer.fareConditions) : null;
+  const flightReversibility: ReversibilityLevel | null = flightOffer ? classifyFlightReversibility(flightOffer.commercialProduct) : null;
   if (isNoViableReversibilityCombination(hotelReversibility, flightReversibility)) {
     return failAttempt("Esta combinación de hotel y vuelo no es automatizable de forma segura para el MVP (ambos componentes son irreversibles o de reversibilidad desconocida) — vuelve a la selección.");
   }
@@ -267,7 +276,7 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
           currency: flightOffer.currency,
           outbound: { segments: flightOffer.outbound.segments.map(toSnapshotSegment) },
           return: { segments: flightOffer.return.segments.map(toSnapshotSegment) },
-          fareConditions: flightOffer.fareConditions,
+          commercialProduct: flightOffer.commercialProduct,
         }
       : null,
     commercial: {
@@ -296,5 +305,7 @@ export async function prepareCheckoutAttempt(input: PrepareCheckoutAttemptInput)
 
   // §1 step 12 — showing the payment screen is a frontend concern (see
   // the new checkout page); this function's job ends at READY_TO_PAY.
-  return { ok: true, checkoutAttemptId, status: "ready_to_pay", finalQuoteSnapshot: snapshot };
+  // §22 — accessToken lets the UI build a resumable URL
+  // (?attempt=<token>) without ever exposing the raw id.
+  return { ok: true, checkoutAttemptId, status: "ready_to_pay", finalQuoteSnapshot: snapshot, accessToken: attempt.accessToken };
 }

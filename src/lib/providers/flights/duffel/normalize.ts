@@ -1,5 +1,5 @@
 import { ProviderError } from "@/lib/providers/errors";
-import type { FlightOffer, FlightSearchResult, FlightSegment, RoundTripFareConditions, RoundTripFlightOffer, RoundTripFlightSearchResult } from "./types";
+import type { FlightCommercialProduct, FlightOffer, FlightSearchResult, FlightSegment, FlightSliceCommercialProduct, RoundTripFlightOffer, RoundTripFlightSearchResult } from "./types";
 
 // Minimal shape of what we read from Duffel's raw JSON — deliberately not
 // a full API type; anything we don't need is never modeled, and this file
@@ -58,7 +58,7 @@ function normalizeBaggage(raw: RawSegment[]): FlightOffer["baggage"] {
   };
 }
 
-function normalizePenalty(raw: RawPenalty): RoundTripFareConditions["refundBeforeDeparture"] {
+function normalizePenalty(raw: RawPenalty): FlightCommercialProduct["refundBeforeDeparture"] {
   if (!raw) return null;
   const amount = raw.penalty_amount !== null && raw.penalty_amount !== undefined ? Number(raw.penalty_amount) : null;
   return {
@@ -68,20 +68,28 @@ function normalizePenalty(raw: RawPenalty): RoundTripFareConditions["refundBefor
   };
 }
 
+/** Fase 2.5 §1/§2/§3 — one slice's own commercial product, from that slice's own segments/fare_brand_name only — never borrowed from the other direction. */
+function normalizeSliceCommercialProduct(slice: RawSlice): FlightSliceCommercialProduct {
+  return {
+    cabinClass: slice.segments[0]?.passengers?.[0]?.cabin_class ?? null,
+    fareBrandName: slice.fare_brand_name ?? null,
+    baggage: normalizeBaggage(slice.segments),
+  };
+}
+
 /**
- * Fase 2 §9 — takes the outbound slice's own segments/fare_brand_name as
- * representative of the whole offer (a documented simplification for a
- * genuinely mixed-fare offer — see RoundTripFareConditions's own doc
- * comment) and the offer-level `conditions` object as-is. Every field is
+ * Fase 2.5 §1/§2 — corrects Fase 2's outbound-only simplification: both
+ * slices get their own commercial product (see
+ * normalizeSliceCommercialProduct), while refund/change conditions stay
+ * offer-level (Duffel doesn't expose those per-slice). Every field is
  * `null` rather than guessed when Duffel doesn't provide it.
  */
-function normalizeFareConditions(raw: RawOffer, outboundSlice: RawSlice): RoundTripFareConditions {
+function normalizeCommercialProduct(raw: RawOffer, outboundSlice: RawSlice, returnSlice: RawSlice): FlightCommercialProduct {
   return {
-    cabinClass: outboundSlice.segments[0]?.passengers?.[0]?.cabin_class ?? null,
-    fareBrandName: outboundSlice.fare_brand_name ?? null,
+    outbound: normalizeSliceCommercialProduct(outboundSlice),
+    return: normalizeSliceCommercialProduct(returnSlice),
     refundBeforeDeparture: normalizePenalty(raw.conditions?.refund_before_departure ?? null),
     changeBeforeDeparture: normalizePenalty(raw.conditions?.change_before_departure ?? null),
-    baggage: normalizeBaggage(outboundSlice.segments),
   };
 }
 
@@ -169,7 +177,7 @@ export function normalizeRoundTripOffer(raw: RawOffer, liveMode: boolean, offerR
     expiresAt: new Date(raw.expires_at),
     liveMode,
     passengerIds,
-    fareConditions: normalizeFareConditions(raw, raw.slices[0]),
+    commercialProduct: normalizeCommercialProduct(raw, raw.slices[0], raw.slices[1]),
   };
 }
 

@@ -16,6 +16,10 @@ test("CONFIGURACIÓN -> CONTINUAR -> READY_TO_PAY for a real TICKET_ONLY Checkou
 
   await page.getByLabel(/Nombre viajero 1/).fill("Ada");
   await page.getByLabel(/Apellidos viajero 1/).fill("Lovelace");
+  await page.getByLabel("Nombre del comprador").fill("Ada");
+  await page.getByLabel("Apellidos del comprador").fill("Lovelace");
+  await page.getByLabel("Email del comprador").fill("ada@example.com");
+  await page.getByLabel("Teléfono del comprador").fill("+34600000000");
 
   await page.getByRole("button", { name: "Continuar" }).click();
 

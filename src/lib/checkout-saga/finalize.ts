@@ -1,25 +1,9 @@
-import type { PaymentProviderKind } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { generateAccessToken, generateBookingReference } from "@/lib/utils";
 import { parseFinalQuoteSnapshot } from "./finalQuoteSnapshot";
 import { confirmTicketHold } from "./ticketHold";
 import { transitionCheckoutAttempt } from "./transitions";
 import { recordCheckoutAttemptEvent } from "./events";
-
-export type FinalizeBuyerInput = {
-  buyerFirstName: string;
-  buyerLastName: string;
-  buyerEmail: string;
-  buyerPhone: string;
-  originCity?: string;
-  billingAddress?: string;
-  // Caller's choice — this phase never actually calls Stripe/PayPal; the
-  // value is only recorded on the resulting Booking for consistency with
-  // the existing model.
-  paymentProvider: PaymentProviderKind;
-};
-
-export type FinalizeInput = { buyer: FinalizeBuyerInput };
 
 export type FinalizeResult = { ok: true; alreadyFinalized: boolean; bookingId: string; reference: string; accessToken: string } | { ok: false; error: string };
 
@@ -54,12 +38,19 @@ export type FinalizeResult = { ok: true; alreadyFinalized: boolean; bookingId: s
  * come exclusively from CheckoutAttemptTraveler, persisted earlier in the
  * saga by prepareCheckoutAttempt (see prepareCheckoutAttempt.ts) — a
  * single source of truth for pre-payment traveler PII, never re-supplied
- * or re-typed at finalization time. The FinalizeInput type reflects this:
- * it now carries only `buyer` (still not persisted anywhere pre-payment —
- * see prepareCheckoutAttempt.ts's own doc comment on that scope
- * boundary).
+ * or re-typed at finalization time.
+ *
+ * Fase 2.5 §6 — the buyer is now the same story: this function takes NO
+ * second argument at all. Buyer fields are read exclusively from the
+ * CheckoutAttempt row itself (persisted earlier by
+ * persistCheckoutAttemptBuyer, called from prepareCheckoutAttempt — see
+ * checkoutAttemptBuyer.ts), so a caller can no longer substitute a
+ * different buyer at finalize time than the one the customer actually
+ * validated pre-payment. If that data is somehow missing (e.g. an old
+ * attempt from before this phase, or a bug upstream), finalization refuses
+ * rather than falling back to blank/invented values.
  */
-export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string, input: FinalizeInput): Promise<FinalizeResult> {
+export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string): Promise<FinalizeResult> {
   const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: checkoutAttemptId }, include: { ticketHolds: true } });
 
   if (attempt.status === "confirmed" && attempt.bookingId) {
@@ -78,6 +69,9 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
   }
   if (attempt.flightStatus !== null && attempt.flightStatus !== "confirmed") {
     return { ok: false, error: `Flight component is ${attempt.flightStatus}, not confirmed — refusing to finalize.` };
+  }
+  if (!attempt.buyerEmail || !attempt.buyerFirstName || !attempt.buyerLastName || !attempt.buyerPhone) {
+    return { ok: false, error: "No buyer has been persisted for this attempt — refusing to finalize." };
   }
   const snapshot = parseFinalQuoteSnapshot(attempt.finalQuoteSnapshot);
   if (!snapshot) {
@@ -112,16 +106,16 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
         data: {
           reference,
           tripId: attempt.tripId,
-          buyerFirstName: input.buyer.buyerFirstName,
-          buyerLastName: input.buyer.buyerLastName,
-          buyerEmail: input.buyer.buyerEmail,
-          buyerPhone: input.buyer.buyerPhone,
-          originCity: input.buyer.originCity ?? "",
-          billingAddress: input.buyer.billingAddress ?? "",
+          buyerFirstName: attempt.buyerFirstName,
+          buyerLastName: attempt.buyerLastName,
+          buyerEmail: attempt.buyerEmail,
+          buyerPhone: attempt.buyerPhone,
+          originCity: attempt.buyerOriginCity,
+          billingAddress: attempt.buyerBillingAddress,
           travelersCount: attempt.partySize,
           totalPrice: snapshot.commercial.pvpTotal,
           currency: snapshot.commercial.currency,
-          paymentProvider: input.buyer.paymentProvider,
+          paymentProvider: attempt.paymentProviderChoice,
           paymentStatus: "paid",
           bookingStatus: "confirmed",
           accessToken,

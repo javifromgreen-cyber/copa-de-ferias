@@ -1,5 +1,5 @@
 import type { HotelRoom } from "@/lib/providers/hotels/nuitee/types";
-import type { RoundTripFareConditions } from "@/lib/providers/flights/duffel/types";
+import type { FlightCommercialProduct } from "@/lib/providers/flights/duffel/types";
 
 /**
  * Fase 2 §17/§18 — the reversibility classification this session's earlier
@@ -30,17 +30,18 @@ export function classifyHotelReversibility(rooms: HotelRoom[]): ReversibilityLev
 /**
  * §17 — derived only from information Duffel actually provides on the
  * OFFER, before any Order exists: `conditions.refund_before_departure`
- * (see RoundTripFareConditions, normalizeFareConditions in duffel/
- * normalize.ts). Never inferred from cabin class or price — Duffel does
- * not guarantee refundability correlates with either, and this codebase
- * must not invent that correlation (§17: "NO inventar 'cancelable' si
- * Duffel no lo garantiza en Offer"). When Duffel doesn't provide the
- * condition at all (`refundBeforeDeparture === null`), the true
- * refundability can only be confirmed after an Order exists — exactly the
- * case the brief calls out — so this returns UNKNOWN, never a guess.
+ * (offer-level — see FlightCommercialProduct, normalizeCommercialProduct
+ * in duffel/normalize.ts). Never inferred from cabin class or price —
+ * Duffel does not guarantee refundability correlates with either, and
+ * this codebase must not invent that correlation (§17: "NO inventar
+ * 'cancelable' si Duffel no lo garantiza en Offer"). When Duffel doesn't
+ * provide the condition at all (`refundBeforeDeparture === null`), the
+ * true refundability can only be confirmed after an Order exists —
+ * exactly the case the brief calls out — so this returns UNKNOWN, never a
+ * guess.
  */
-export function classifyFlightReversibility(conditions: RoundTripFareConditions): ReversibilityLevel {
-  const refund = conditions.refundBeforeDeparture;
+export function classifyFlightReversibility(product: FlightCommercialProduct): ReversibilityLevel {
+  const refund = product.refundBeforeDeparture;
   if (refund === null) return "UNKNOWN";
   if (!refund.allowed) return "IRREVERSIBLE";
   if (refund.penaltyAmount === null || refund.penaltyAmount === 0) return "FULLY_REVERSIBLE";

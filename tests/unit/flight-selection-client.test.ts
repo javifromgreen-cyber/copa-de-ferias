@@ -1,0 +1,87 @@
+import { describe, it, expect } from "vitest";
+import { buildOutboundOptions, buildReturnOptions, resolveOffer } from "@/components/checkout-real/flightSelectionClient";
+import type { RealRoundTripOfferDTO } from "@/server/actions/real-checkout-search";
+
+// Fase 2.5 §25 O/P/Q/R/T — the UI-only round-trip selection helpers
+// (a client-safe mirror of duffel/roundTripSelection.ts's pure functions,
+// operating on the plain serialized DTO shape). Same rules, same tests as
+// the server-side originals, exercised here against the DTO type the
+// browser actually receives.
+
+function slice(originIata: string, destinationIata: string, departingAt: string, carrierIata = "VY", flightNumber = "1") {
+  return { segments: [{ originIata, destinationIata, departingAt, arrivingAt: departingAt, carrierIata, carrierName: "Vueling", flightNumber }] };
+}
+
+function offer(id: string, amount: number, opts: { outboundDep?: string; returnDep?: string; outboundFlightNo?: string; returnFlightNo?: string; fareBrand?: string; refundAllowed?: boolean } = {}): RealRoundTripOfferDTO {
+  return {
+    offerId: id,
+    offerRequestId: "orq_1",
+    passengerIds: ["pas_1"],
+    totalAmount: amount,
+    currency: "EUR",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    outbound: slice("MAD", "MAN", opts.outboundDep ?? "2026-11-14T09:00:00", "VY", opts.outboundFlightNo ?? "1"),
+    return: slice("MAN", "MAD", opts.returnDep ?? "2026-11-16T18:00:00", "VY", opts.returnFlightNo ?? "2"),
+    commercialProduct: {
+      outbound: { cabinClass: "economy", fareBrandName: opts.fareBrand ?? "Basic", baggage: null },
+      return: { cabinClass: "economy", fareBrandName: opts.fareBrand ?? "Basic", baggage: null },
+      refundBeforeDeparture: { allowed: opts.refundAllowed ?? false, penaltyAmount: null, penaltyCurrency: null },
+      changeBeforeDeparture: null,
+    },
+  };
+}
+
+describe("O — PASO IDA options are deduplicated across offers that share the same outbound flight", () => {
+  it("two offers with the same outbound but different return produce ONE outbound option", () => {
+    const a = offer("off_a", 100, { returnDep: "2026-11-16T18:00:00" });
+    const b = offer("off_b", 110, { returnDep: "2026-11-16T20:00:00", returnFlightNo: "3" });
+    const options = buildOutboundOptions([a, b], "ANY");
+    expect(options).toHaveLength(1);
+  });
+});
+
+describe("P — choosing an outbound restricts PASO VUELTA to compatible returns only", () => {
+  it("a return belonging only to a different outbound never appears", () => {
+    const a = offer("off_a", 100, { outboundFlightNo: "1", returnFlightNo: "2" });
+    const b = offer("off_b", 120, { outboundFlightNo: "9", returnFlightNo: "3" }); // different outbound entirely
+    const outboundKeyA = buildOutboundOptions([a, b], "ANY").find((o) => o.slice.segments[0].flightNumber === "1")!.key;
+    const returns = buildReturnOptions([a, b], outboundKeyA, "ANY");
+    expect(returns).toHaveLength(1);
+    expect(returns[0].slice.segments[0].flightNumber).toBe("2");
+  });
+});
+
+describe("Q — daypart preferences (mañana/tarde) apply independently to ida and vuelta", () => {
+  it("ida mañana + vuelta tarde only keeps offers matching both, independently", () => {
+    const morningOut_afternoonReturn = offer("off_1", 100, { outboundDep: "2026-11-14T08:00:00", returnDep: "2026-11-16T17:00:00" });
+    const morningOut_morningReturn = offer("off_2", 105, { outboundDep: "2026-11-14T08:00:00", returnDep: "2026-11-16T07:00:00", returnFlightNo: "5" });
+
+    const morningOutbound = buildOutboundOptions([morningOut_afternoonReturn, morningOut_morningReturn], "MORNING");
+    expect(morningOutbound).toHaveLength(1); // both share the same morning outbound -> deduped to 1
+
+    const afternoonReturns = buildReturnOptions([morningOut_afternoonReturn, morningOut_morningReturn], morningOutbound[0].key, "AFTERNOON");
+    expect(afternoonReturns).toHaveLength(1);
+    expect(afternoonReturns[0].slice.segments[0].flightNumber).toBe("2");
+  });
+});
+
+describe("R — final selection resolves to exactly ONE offerId, never a pair", () => {
+  it("resolveOffer returns a single RealRoundTripOfferDTO with one offerId", () => {
+    const a = offer("off_a", 100);
+    const outboundKey = buildOutboundOptions([a], "ANY")[0].key;
+    const returnKey = buildReturnOptions([a], outboundKey, "ANY")[0].key;
+    const result = resolveOffer([a], outboundKey, returnKey);
+    expect(result).toEqual({ ok: true, offer: a });
+  });
+});
+
+describe("T — a different commercial product on the same itinerary never collapses on price", () => {
+  it("refuses to auto-select the cheaper of two offers with different fare brands", () => {
+    const basic = offer("off_basic", 100, { fareBrand: "Basic", refundAllowed: false });
+    const flex = offer("off_flex", 150, { fareBrand: "Flex", refundAllowed: true });
+    const outboundKey = buildOutboundOptions([basic, flex], "ANY")[0].key;
+    const returnKey = buildReturnOptions([basic, flex], outboundKey, "ANY")[0].key;
+    const result = resolveOffer([basic, flex], outboundKey, returnKey);
+    expect(result.ok).toBe(false);
+  });
+});

@@ -8,7 +8,7 @@ import type { FlightOffer } from "./duffel/types";
 // exercised against a comparable, small, known-good set of airports
 // rather than every Spanish airport (Duffel has no "list direct origins"
 // endpoint — each candidate costs one real search per direction).
-const CANDIDATE_SPANISH_ORIGINS: OriginOption[] = [
+export const CANDIDATE_SPANISH_ORIGINS: OriginOption[] = [
   { iata: "MAD", city: "Madrid", airportName: "Adolfo Suárez Madrid-Barajas" },
   { iata: "BCN", city: "Barcelona", airportName: "Josep Tarradellas Barcelona-El Prat" },
   { iata: "AGP", city: "Málaga", airportName: "Málaga-Costa del Sol" },

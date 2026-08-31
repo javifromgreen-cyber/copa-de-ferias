@@ -82,22 +82,41 @@ export type FarePenaltyCondition = {
 } | null;
 
 /**
- * Fase 2 §9 — the real, Duffel-provided commercial conditions needed to
- * tell whether two offers for the same physical itinerary are actually
- * interchangeable fares, not just "the same flight, coincidentally
- * cheaper". Nothing here is invented: cabinClass/fareBrandName come from
- * the segments/slices Duffel already returns (cabin_class per passenger,
- * fare_brand_name per slice — this offer's OUTBOUND slice is taken as
- * representative, a documented simplification for a genuinely mixed-fare
- * offer), and the two *BeforeDeparture fields are Duffel's own offer-level
- * `conditions` object.
+ * Fase 2.5 §1/§2/§3 — corrects Fase 2's own simplification, which only
+ * captured the OUTBOUND slice's cabin/fare brand/baggage and silently
+ * ignored the return slice's. A real Duffel round-trip offer can
+ * genuinely be mixed (different cabin, fare brand, or baggage allowance
+ * per direction — common with some carrier/fare combinations), so each
+ * direction gets its own product description, built only from fields
+ * Duffel's real Offers API actually returns for that slice:
+ * `fare_brand_name` (per-slice), and `cabin_class`/`baggages` (per
+ * segment/passenger, taken from that slice's own segments via
+ * normalizeBaggage — never inferred from the fare brand name).
  */
-export type RoundTripFareConditions = {
+export type FlightSliceCommercialProduct = {
   cabinClass: string | null;
   fareBrandName: string | null;
+  /** From this slice's own segments' `passengers[].baggages` — never inferred from cabin/fare brand. */
+  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
+};
+
+/**
+ * Fase 2 §9, corrected in Fase 2.5 §1/§2 — the real, Duffel-provided
+ * commercial product description needed to tell whether two offers for
+ * the same physical itinerary are actually interchangeable fares, not
+ * just "the same flight, coincidentally cheaper" (§4 of the Fase 2.5
+ * brief: a Basic-fare offer and a Flex-fare offer for the identical
+ * flights must never collapse into "cheapest wins"). `refundBeforeDeparture`/
+ * `changeBeforeDeparture` are Duffel's own offer-level `conditions`
+ * object (Duffel does not expose these per-slice) — everything else is
+ * per-direction. See resolveRoundTripOffer in roundTripSelection.ts,
+ * the sole consumer of this for comparability.
+ */
+export type FlightCommercialProduct = {
+  outbound: FlightSliceCommercialProduct;
+  return: FlightSliceCommercialProduct;
   refundBeforeDeparture: FarePenaltyCondition;
   changeBeforeDeparture: FarePenaltyCondition;
-  baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null;
 };
 
 export type RoundTripFlightOffer = {
@@ -121,7 +140,7 @@ export type RoundTripFlightOffer = {
    */
   passengerIds: string[];
   /** §9 — used by resolveRoundTripOffer to refuse "cheapest wins" between fares that aren't actually comparable. */
-  fareConditions: RoundTripFareConditions;
+  commercialProduct: FlightCommercialProduct;
 };
 
 export type RoundTripFlightSearchResult = {

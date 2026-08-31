@@ -3,7 +3,7 @@ export { isValidGlobalTransition, assertGlobalTransition, transitionCheckoutAtte
 export { recordCheckoutAttemptEvent, type Db } from "./events";
 export { createCheckoutAttempt } from "./createCheckoutAttempt";
 export { acquireTicketHold, releaseTicketHold, confirmTicketHold, releaseExpiredTicketHolds, releaseHeldTicketHoldsForAttempt, type AcquireTicketHoldResult } from "./ticketHold";
-export { finalizeConfirmedCheckoutAttempt, type FinalizeInput, type FinalizeResult, type FinalizeBuyerInput } from "./finalize";
+export { finalizeConfirmedCheckoutAttempt, type FinalizeResult } from "./finalize";
 export {
   serializeFinalQuoteSnapshot,
   parseFinalQuoteSnapshot,
@@ -12,7 +12,9 @@ export {
   type FinalQuoteSnapshotFlight,
   type FinalQuoteSnapshotFlightSlice,
   type FinalQuoteSnapshotFlightSegment,
-  type FinalQuoteSnapshotFareConditions,
+  type FinalQuoteSnapshotFareCondition,
+  type FinalQuoteSnapshotSliceCommercialProduct,
+  type FinalQuoteSnapshotCommercialProduct,
   type FinalQuoteSnapshotTicketLine,
   type FinalQuoteSnapshotCommercial,
 } from "./finalQuoteSnapshot";
@@ -26,6 +28,12 @@ export {
   type TravelerValidationResult,
 } from "./travelerValidation";
 export { persistCheckoutAttemptTravelers } from "./checkoutAttemptTravelers";
+export {
+  validateCheckoutAttemptBuyer,
+  persistCheckoutAttemptBuyer,
+  type CheckoutAttemptBuyerInput,
+  type BuyerValidationResult,
+} from "./checkoutAttemptBuyer";
 export { computeLatestSafePaymentAt } from "./quoteValidity";
 export {
   classifyHotelReversibility,
@@ -41,3 +49,4 @@ export {
   type PrepareCheckoutAttemptHotelInput,
   type PrepareCheckoutAttemptFlightInput,
 } from "./prepareCheckoutAttempt";
+export { getReadyToPayView, type ResumeCheckoutAttemptView } from "./resumeCheckoutAttempt";

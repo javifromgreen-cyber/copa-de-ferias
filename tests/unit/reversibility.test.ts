@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { classifyHotelReversibility, classifyFlightReversibility, isNoViableReversibilityCombination, effectiveRiskLevel } from "@/lib/checkout-saga/reversibility";
 import type { HotelRoom } from "@/lib/providers/hotels/nuitee/types";
-import type { RoundTripFareConditions } from "@/lib/providers/flights/duffel/types";
+import type { FlightCommercialProduct } from "@/lib/providers/flights/duffel/types";
 
 // Fase 2 §17/§18 — UNKNOWN is treated as IRREVERSIBLE for risk purposes
 // everywhere reversibility feeds a decision; never inventing "cancelable"
@@ -11,8 +11,14 @@ function room(overrides: Partial<HotelRoom> = {}): HotelRoom {
   return { occupancyNumber: 1, roomName: "Doble", maxOccupancy: 2, adultCount: 2, board: "RO", price: { total: 100, currency: "EUR" }, includedTaxesAndFees: [], excludedTaxesAndFees: [], refundable: true, ...overrides };
 }
 
-function fareConditions(overrides: Partial<RoundTripFareConditions> = {}): RoundTripFareConditions {
-  return { cabinClass: "economy", fareBrandName: null, refundBeforeDeparture: null, changeBeforeDeparture: null, baggage: null, ...overrides };
+function commercialProduct(overrides: Partial<FlightCommercialProduct> = {}): FlightCommercialProduct {
+  return {
+    outbound: { cabinClass: "economy", fareBrandName: null, baggage: null },
+    return: { cabinClass: "economy", fareBrandName: null, baggage: null },
+    refundBeforeDeparture: null,
+    changeBeforeDeparture: null,
+    ...overrides,
+  };
 }
 
 describe("classifyHotelReversibility", () => {
@@ -35,23 +41,23 @@ describe("classifyHotelReversibility", () => {
 
 describe("classifyFlightReversibility", () => {
   it("Duffel didn't provide refund_before_departure at all -> UNKNOWN", () => {
-    expect(classifyFlightReversibility(fareConditions({ refundBeforeDeparture: null }))).toBe("UNKNOWN");
+    expect(classifyFlightReversibility(commercialProduct({ refundBeforeDeparture: null }))).toBe("UNKNOWN");
   });
 
   it("allowed: false -> IRREVERSIBLE, never invented as cancelable", () => {
-    expect(classifyFlightReversibility(fareConditions({ refundBeforeDeparture: { allowed: false, penaltyAmount: null, penaltyCurrency: null } }))).toBe("IRREVERSIBLE");
+    expect(classifyFlightReversibility(commercialProduct({ refundBeforeDeparture: { allowed: false, penaltyAmount: null, penaltyCurrency: null } }))).toBe("IRREVERSIBLE");
   });
 
   it("allowed: true with a zero penalty -> FULLY_REVERSIBLE", () => {
-    expect(classifyFlightReversibility(fareConditions({ refundBeforeDeparture: { allowed: true, penaltyAmount: 0, penaltyCurrency: "EUR" } }))).toBe("FULLY_REVERSIBLE");
+    expect(classifyFlightReversibility(commercialProduct({ refundBeforeDeparture: { allowed: true, penaltyAmount: 0, penaltyCurrency: "EUR" } }))).toBe("FULLY_REVERSIBLE");
   });
 
   it("allowed: true with no penalty amount specified -> FULLY_REVERSIBLE", () => {
-    expect(classifyFlightReversibility(fareConditions({ refundBeforeDeparture: { allowed: true, penaltyAmount: null, penaltyCurrency: null } }))).toBe("FULLY_REVERSIBLE");
+    expect(classifyFlightReversibility(commercialProduct({ refundBeforeDeparture: { allowed: true, penaltyAmount: null, penaltyCurrency: null } }))).toBe("FULLY_REVERSIBLE");
   });
 
   it("allowed: true with a real penalty -> PARTIALLY_REVERSIBLE", () => {
-    expect(classifyFlightReversibility(fareConditions({ refundBeforeDeparture: { allowed: true, penaltyAmount: 40, penaltyCurrency: "EUR" } }))).toBe("PARTIALLY_REVERSIBLE");
+    expect(classifyFlightReversibility(commercialProduct({ refundBeforeDeparture: { allowed: true, penaltyAmount: 40, penaltyCurrency: "EUR" } }))).toBe("PARTIALLY_REVERSIBLE");
   });
 });
 
