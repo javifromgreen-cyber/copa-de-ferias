@@ -23,8 +23,8 @@ describe("computeRequiredRoomMix", () => {
     expect(computeRequiredRoomMix(3)).toEqual([{ type: "triple", count: 1 }]);
     expect(computeRequiredRoomMix(4)).toEqual([{ type: "double", count: 2 }]);
     expect(computeRequiredRoomMix(5)).toEqual([
-      { type: "triple", count: 1 },
       { type: "double", count: 1 },
+      { type: "triple", count: 1 },
     ]);
     expect(computeRequiredRoomMix(6)).toEqual([{ type: "double", count: 3 }]);
     expect(computeRequiredRoomMix(7)).toEqual([

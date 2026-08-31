@@ -101,11 +101,11 @@ describe("reconstructRoomAssignments — same pure computation the checkout used
     expect(assignments).toEqual([{ type: "double", travelerIndices: [0, 1] }]);
   });
 
-  it("party of 5 -> one triple + one double, filled in list order", () => {
+  it("party of 5 -> one double + one triple, filled in list order (canonical room order)", () => {
     const assignments = reconstructRoomAssignments(5);
     expect(assignments).toEqual([
-      { type: "triple", travelerIndices: [0, 1, 2] },
-      { type: "double", travelerIndices: [3, 4] },
+      { type: "double", travelerIndices: [0, 1] },
+      { type: "triple", travelerIndices: [2, 3, 4] },
     ]);
   });
 });

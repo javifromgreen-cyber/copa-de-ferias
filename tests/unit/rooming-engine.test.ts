@@ -21,10 +21,10 @@ describe("computeRequiredRoomMix — exact table for every allowed party size (1
   it("4 travelers -> 2 doubles (regression — must keep working exactly as before)", () => {
     expect(computeRequiredRoomMix(4)).toEqual([{ type: "double", count: 2 }]);
   });
-  it("5 travelers -> 1 triple + 1 double", () => {
+  it("5 travelers -> 1 double + 1 triple (canonical order: double first, occupancyNumber 1 in Nuitee terms)", () => {
     expect(computeRequiredRoomMix(5)).toEqual([
-      { type: "triple", count: 1 },
       { type: "double", count: 1 },
+      { type: "triple", count: 1 },
     ]);
   });
   it("6 travelers -> 3 doubles", () => {
@@ -63,12 +63,12 @@ describe("assignTravelersToRooms — every allowed party size (1-6) assigns ever
     ]);
   });
 
-  it("partySize=5 produces 1 triple + 1 double, in room-mix order, with all 5 travelers placed", () => {
+  it("partySize=5 produces 1 double + 1 triple, in room-mix order, with all 5 travelers placed", () => {
     const mix = computeRequiredRoomMix(5);
     const assignments = assignTravelersToRooms(5, mix);
     expect(assignments).toEqual([
-      { type: "triple", travelerIndices: [0, 1, 2] },
-      { type: "double", travelerIndices: [3, 4] },
+      { type: "double", travelerIndices: [0, 1] },
+      { type: "triple", travelerIndices: [2, 3, 4] },
     ]);
   });
 

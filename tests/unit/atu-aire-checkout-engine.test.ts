@@ -786,8 +786,8 @@ describe("buildAtuAireQuote — rooming survives every allowed party size, inclu
     const quoteAt5Reconciled = buildAtuAireQuote(data, reconciled);
     expect(quoteAt5Reconciled.price.missing).not.toContain("hotel");
     expect(quoteAt5Reconciled.roomMix).toEqual([
-      { type: "triple", count: 1 },
       { type: "double", count: 1 },
+      { type: "triple", count: 1 },
     ]);
   });
 

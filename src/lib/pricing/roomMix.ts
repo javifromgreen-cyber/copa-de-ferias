@@ -15,8 +15,8 @@ const ROOM_MIX_TABLE: Record<number, RoomMixEntry[]> = {
   3: [{ type: "triple", count: 1 }],
   4: [{ type: "double", count: 2 }],
   5: [
-    { type: "triple", count: 1 },
     { type: "double", count: 1 },
+    { type: "triple", count: 1 },
   ],
   6: [{ type: "double", count: 3 }],
   7: [

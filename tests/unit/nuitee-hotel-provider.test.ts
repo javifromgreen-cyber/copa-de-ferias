@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
+import { assignTravelersToRooms } from "@/lib/checkout-atu-aire/rooming";
 import { roomMixToOccupancies } from "@/lib/providers/hotels/nuitee/occupancies";
 import { normalizeTaxesAndFees, normalizeSearchResult } from "@/lib/providers/hotels/nuitee/normalize";
 import { searchHotels } from "@/lib/providers/hotels/nuitee/search";
@@ -109,6 +110,45 @@ describe("roomMixToOccupancies (§4 — direct translation, no new algorithm)", 
 
   it("5 travelers is exactly [{adults:2},{adults:3}] — a double at occupancyNumber 1, a triple at occupancyNumber 2, never [3,2]", () => {
     expect(roomMixToOccupancies(computeRequiredRoomMix(5))).toEqual([{ adults: 2 }, { adults: 3 }]);
+  });
+});
+
+describe("End-to-end domain rooming for 5 travelers — ONE canonical order, no local reordering anywhere", () => {
+  // Everything below starts from the real functions that compute/assign
+  // rooming for a party of 5 — nothing here is a hand-built RoomAssignment
+  // fixture. If computeRequiredRoomMix's own entry order ever changes,
+  // this test (and the ones above) are what catch it.
+  const mix = computeRequiredRoomMix(5);
+  const assignments = assignTravelersToRooms(5, mix);
+
+  it("assignTravelersToRooms(5, ...) produces RoomAssignment[0]=double(2 travelers), RoomAssignment[1]=triple(3 travelers)", () => {
+    expect(assignments).toEqual([
+      { type: "double", travelerIndices: [0, 1] },
+      { type: "triple", travelerIndices: [2, 3, 4] },
+    ]);
+  });
+
+  it("roomMixToOccupancies(mix) matches RoomAssignment 1:1 by position — occupancyNumber 1 <-> RoomAssignment[0], occupancyNumber 2 <-> RoomAssignment[1]", () => {
+    const occupancies = roomMixToOccupancies(mix);
+    expect(occupancies).toEqual([{ adults: 2 }, { adults: 3 }]);
+    // Explicit correspondence, not just equal arrays by coincidence: each
+    // occupancy's adult count matches the SAME-INDEX RoomAssignment's room
+    // size, in order.
+    occupancies.forEach((occupancy, i) => {
+      expect(occupancy.adults).toBe(assignments[i].travelerIndices.length);
+    });
+  });
+
+  it("buildRoomingSnapshot(assignments) freezes Room 1 = the same 2 travelers as RoomAssignment[0] (double), Room 2 = the same 3 travelers as RoomAssignment[1] (triple)", () => {
+    const snapshot = buildRoomingSnapshot(assignments);
+    expect(snapshot).toEqual({
+      rooms: [
+        { roomIndex: 0, travelerIndices: [0, 1] },
+        { roomIndex: 1, travelerIndices: [2, 3, 4] },
+      ],
+    });
+    expect(snapshot.rooms[0].travelerIndices).toEqual(assignments[0].travelerIndices);
+    expect(snapshot.rooms[1].travelerIndices).toEqual(assignments[1].travelerIndices);
   });
 });
 
