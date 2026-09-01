@@ -113,9 +113,43 @@ describe("searchOneWayOffers / searchDirectOneWayOffers", () => {
     expect(result.offers).toHaveLength(1);
   });
 
-  it("maps a Duffel 401/403 (bad/rejected token) to PROVIDER_UNAVAILABLE, not INVALID_PROVIDER_RESPONSE", async () => {
-    const fetchImpl = fakeFetch(403, {});
-    await expect(searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl })).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  it("B — maps a Duffel 401 to AUTHENTICATION_FAILED, not a rate limit", async () => {
+    const fetchImpl = fakeFetch(401, { errors: [{ type: "authentication_error", code: "invalid_token" }], meta: { request_id: "req_1" } });
+    await expect(searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
+  it("B — maps a Duffel 403 insufficient_permissions to PERMISSION_DENIED, never RATE_LIMITED, and captures the sanitized error detail", async () => {
+    const fetchImpl = fakeFetch(403, { errors: [{ type: "authentication_error", code: "insufficient_permissions", title: "Insufficient permissions" }], meta: { request_id: "req_2" } });
+    const promise = searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl });
+    await expect(promise).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(promise).rejects.not.toMatchObject({ code: "RATE_LIMITED" });
+    try {
+      await promise;
+    } catch (err) {
+      const detail = (err as { detail?: { httpStatus?: number; providerErrorCode?: string; requestId?: string } }).detail;
+      expect(detail?.httpStatus).toBe(403);
+      expect(detail?.providerErrorCode).toBe("insufficient_permissions");
+      expect(detail?.requestId).toBe("req_2");
+    }
+  });
+
+  it("A — maps a Duffel 429 rate_limit_exceeded to RATE_LIMITED and captures rate-limit headers", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ errors: [{ type: "rate_limit_error", code: "rate_limit_exceeded" }], meta: { request_id: "req_3" } }), {
+          status: 429,
+          headers: { "ratelimit-limit": "100", "ratelimit-remaining": "0", "ratelimit-reset": "30" },
+        }),
+    ) as unknown as typeof fetch;
+    const promise = searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl });
+    await expect(promise).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    try {
+      await promise;
+    } catch (err) {
+      const detail = (err as { detail?: { providerErrorCode?: string; rateLimitRemaining?: string } }).detail;
+      expect(detail?.providerErrorCode).toBe("rate_limit_exceeded");
+      expect(detail?.rateLimitRemaining).toBe("0");
+    }
   });
 
   it("maps a Duffel 5xx to PROVIDER_UNAVAILABLE", async () => {
@@ -123,11 +157,11 @@ describe("searchOneWayOffers / searchDirectOneWayOffers", () => {
     await expect(searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl })).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
   });
 
-  it("maps a network/timeout failure to PROVIDER_UNAVAILABLE", async () => {
+  it("C — maps a network/proxy failure (no HTTP response ever arrives) to NETWORK_ERROR, never PROVIDER_UNAVAILABLE", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("fetch failed");
     }) as unknown as typeof fetch;
-    await expect(searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl })).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(searchOneWayOffers({ originIata: "BCN", destinationIata: "MAN", date: "2026-10-15", passengers: 1, fetchImpl })).rejects.toMatchObject({ code: "NETWORK_ERROR" });
   });
 
   it("maps a malformed (non-JSON) response to INVALID_PROVIDER_RESPONSE", async () => {

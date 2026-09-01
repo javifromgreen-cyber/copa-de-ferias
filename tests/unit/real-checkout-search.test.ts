@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { searchRealHotelOptions, searchViableFlightOrigins, getFlightSessionOffers } from "@/server/actions/real-checkout-search";
-import { CANDIDATE_SPANISH_ORIGINS } from "@/lib/providers/flights/realFlightProvider";
+import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
 
 // Fase 2.5 §25 J/K/M (hotel SEARCH-only UI wiring) and N (one Offer
 // Request, two slices) — the new real-checkout SEARCH server actions
@@ -146,7 +146,7 @@ describe("N — one Duffel Offer Request with two slices per candidate origin, n
 
     const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
     expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(CANDIDATE_SPANISH_ORIGINS.length);
+    expect(calls).toHaveLength(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length);
     for (const call of calls) {
       expect(call.url).toMatch(/air\/offer_requests/);
       const slices = (call.body as { data: { slices: { origin: string; destination: string }[] } }).data.slices;
@@ -186,9 +186,9 @@ describe("Fase 2.6 §2/§4 — flight session security and origin viability", ()
     const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.origins.length).toBe(CANDIDATE_SPANISH_ORIGINS.length); // every candidate returned an offer in this fixture
+    expect(result.origins.length).toBe(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length); // every candidate returned an offer in this fixture
     for (const origin of result.origins) {
-      expect(CANDIDATE_SPANISH_ORIGINS.some((c) => c.iata === origin.iata)).toBe(true);
+      expect(SUPPORTED_SPANISH_FLIGHT_ORIGINS.some((c) => c.iata === origin.iata)).toBe(true);
       const session = await prisma.flightSearchSession.findUniqueOrThrow({ where: { id: origin.sessionId } });
       expect(session.offerRequestId).toBe("orq_1");
       expect(JSON.parse(session.passengerIds)).toEqual(["pas_1"]);
@@ -198,7 +198,11 @@ describe("Fase 2.6 §2/§4 — flight session security and origin viability", ()
   it("no viable origin -> a clear ok:false result, no session rows created", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: { id: "orq_empty", live_mode: false, passengers: [{ id: "pas_1" }], offers: [] } }), { status: 201 })) as unknown as typeof fetch;
     const before = await prisma.flightSearchSession.count();
-    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 1, fetchImpl });
+    // Fase 2.6 closure §5 — a distinct partySize (97) never used by an
+    // earlier test in this file, so the new session-reuse check can never
+    // short-circuit this search with a stale viable session and mask the
+    // "genuinely no offers" case this test exists to prove.
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 97, fetchImpl });
     expect(result.ok).toBe(false);
     const after = await prisma.flightSearchSession.count();
     expect(after).toBe(before);
@@ -232,5 +236,76 @@ describe("Fase 2.6 §2/§4 — flight session security and origin viability", ()
     });
     const result = await getFlightSessionOffers({ sessionId: expired.id });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("Cierre Fase 2.6 §5 F — an identical repeated search reuses the still-valid session instead of re-calling Duffel", () => {
+  it("clicking 'Buscar aeropuertos' twice with the exact same trip/dates/partySize/origins issues Offer Requests only on the first call", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input.toString());
+      return new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    // partySize 98 — never used by an earlier test in this file, so the
+    // first call below is guaranteed to be a genuine fresh search (no
+    // pre-existing session to reuse from), keeping this test's own
+    // first-call/second-call call-count assertions meaningful.
+    const first = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 98, fetchImpl });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const callsAfterFirst = calls.length;
+    expect(callsAfterFirst).toBe(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length); // one Offer Request per candidate origin
+
+    const second = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 98, fetchImpl });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+
+    // No new Duffel calls at all — every candidate origin resolved via the
+    // still-valid FlightSearchSession created by the first call.
+    expect(calls.length).toBe(callsAfterFirst);
+
+    // And the reused sessionIds are literally the same rows, not new ones.
+    const firstByIata = new Map(first.origins.map((o) => [o.iata, o.sessionId]));
+    for (const origin of second.origins) {
+      expect(origin.sessionId).toBe(firstByIata.get(origin.iata));
+    }
+  });
+
+  it("a different partySize is a different search and does hit Duffel again (reuse is exact-match only)", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input.toString());
+      return new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 99, fetchImpl });
+    const callsAfterFirst = calls.length;
+    await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 100, fetchImpl });
+    expect(calls.length).toBe(callsAfterFirst + SUPPORTED_SPANISH_FLIGHT_ORIGINS.length);
+  });
+});
+
+describe("Cierre Fase 2.6 §4 G — the supported-origins list is genuine domain config, separate from the search algorithm", () => {
+  it("SUPPORTED_SPANISH_FLIGHT_ORIGINS is a plain data array searchViableFlightOrigins merely iterates — not baked into its logic", () => {
+    expect(Array.isArray(SUPPORTED_SPANISH_FLIGHT_ORIGINS)).toBe(true);
+    expect(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length).toBeGreaterThan(0);
+    for (const origin of SUPPORTED_SPANISH_FLIGHT_ORIGINS) {
+      expect(typeof origin.iata).toBe("string");
+      expect(origin.iata).toHaveLength(3);
+    }
+    // MVP coverage today — documented as such, not the full universe of
+    // Spanish airports (closure §4). This assertion pins the current MVP
+    // set so a silent, undocumented change is caught; extending the list
+    // is a one-line data change, not an algorithm change.
+    expect(SUPPORTED_SPANISH_FLIGHT_ORIGINS.map((o) => o.iata).sort()).toEqual(["AGP", "BCN", "MAD", "SVQ"]);
+  });
+
+  it("searchViableFlightOrigins issues exactly one search attempt per entry in the current list, however many it holds", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(duffelOfferRequestBody()), { status: 201 })) as unknown as typeof fetch;
+    const result = await searchViableFlightOrigins({ tripSlug: RUN_ID, partySize: 4, fetchImpl });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(fetchImpl).toHaveBeenCalledTimes(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length);
   });
 });

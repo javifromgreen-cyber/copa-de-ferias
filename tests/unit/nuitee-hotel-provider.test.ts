@@ -306,20 +306,45 @@ describe("searchHotels", () => {
     expect(body.starRating).toEqual([3, 4]);
   });
 
-  it("maps a timeout to PROVIDER_UNAVAILABLE", async () => {
+  it("maps a timeout to NETWORK_ERROR (no response ever arrived — never blamed on the provider)", async () => {
     const fetchImpl = vi.fn(async () => {
       throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
     }) as unknown as typeof fetch;
     await expect(
       searchHotels({ cityName: "Manchester", countryCode: "GB", checkin: "2026-10-15", checkout: "2026-10-17", currency: "EUR", guestNationality: "ES", mix: computeRequiredRoomMix(2), fetchImpl }),
-    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    ).rejects.toMatchObject({ code: "NETWORK_ERROR" });
   });
 
-  it("maps a 401/403 (bad/rejected key) to PROVIDER_UNAVAILABLE, not INVALID_PROVIDER_RESPONSE", async () => {
-    const fetchImpl = fakeFetch(403, {});
+  it("E — maps a 401 (bad/rejected key) to AUTHENTICATION_FAILED, not a rate limit", async () => {
+    const fetchImpl = fakeFetch(401, {});
     await expect(
       searchHotels({ cityName: "Manchester", countryCode: "GB", checkin: "2026-10-15", checkout: "2026-10-17", currency: "EUR", guestNationality: "ES", mix: computeRequiredRoomMix(2), fetchImpl }),
-    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    ).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
+  it("E — maps a 403 to PERMISSION_DENIED, never reported as a rate limit", async () => {
+    const fetchImpl = fakeFetch(403, {});
+    const result = searchHotels({ cityName: "Manchester", countryCode: "GB", checkin: "2026-10-15", checkout: "2026-10-17", currency: "EUR", guestNationality: "ES", mix: computeRequiredRoomMix(2), fetchImpl });
+    await expect(result).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(result).rejects.not.toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  it("E — a 403 with an unparseable (non-JSON) body is flagged as not confirmed from the provider, never silently blamed on NUITEE_API_KEY", async () => {
+    const fetchImpl = vi.fn(async () => new Response("<html>Forbidden</html>", { status: 403 })) as unknown as typeof fetch;
+    try {
+      await searchHotels({ cityName: "Manchester", countryCode: "GB", checkin: "2026-10-15", checkout: "2026-10-17", currency: "EUR", guestNationality: "ES", mix: computeRequiredRoomMix(2), fetchImpl });
+      throw new Error("expected rejection");
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe("PERMISSION_DENIED");
+      expect((err as { detail?: { responseNotConfirmedFromProvider?: boolean } }).detail?.responseNotConfirmedFromProvider).toBe(true);
+    }
+  });
+
+  it("D — maps a 429 to RATE_LIMITED", async () => {
+    const fetchImpl = fakeFetch(429, { error: { type: "rate_limit_exceeded" } });
+    await expect(
+      searchHotels({ cityName: "Manchester", countryCode: "GB", checkin: "2026-10-15", checkout: "2026-10-17", currency: "EUR", guestNationality: "ES", mix: computeRequiredRoomMix(2), fetchImpl }),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
   });
 
   it("maps a 500 to PROVIDER_UNAVAILABLE", async () => {

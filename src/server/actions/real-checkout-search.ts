@@ -6,7 +6,7 @@ import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import { isoCountryCodeForTripCountry } from "@/lib/checkout-atu-aire/tripCountryCode";
 import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roundTripSearch";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
-import { CANDIDATE_SPANISH_ORIGINS } from "@/lib/providers/flights/realFlightProvider";
+import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
 import type { OriginOption } from "@/lib/providers/types";
 import { toStoredFlightOffer, type RealFlightSegmentDTO, type RealFlightSliceDTO, type RealCommercialProductDTO, type StoredFlightOffer } from "@/lib/checkout-saga/flightSearchSession";
 
@@ -151,7 +151,21 @@ export async function searchViableFlightOrigins(input: { tripSlug: string; party
   const destinationAirport = airportForCity(trip.city);
 
   const origins: ViableFlightOrigin[] = [];
-  for (const candidate of CANDIDATE_SPANISH_ORIGINS) {
+  for (const candidate of SUPPORTED_SPANISH_FLIGHT_ORIGINS) {
+    // §5 — reuse a still-valid session from an earlier identical search
+    // (same trip/dates/partySize/origin) instead of firing a new Offer
+    // Request. A plain DB lookup, not a cache layer: the session row
+    // already IS the cached result, so a second "Buscar aeropuertos"
+    // click within its TTL costs zero Duffel calls.
+    const reusable = await prisma.flightSearchSession.findFirst({
+      where: { tripId: trip.id, partySize: input.partySize, originIata: candidate.iata, destinationIata: destinationAirport, outboundDate, returnDate, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (reusable) {
+      origins.push({ ...candidate, sessionId: reusable.id });
+      continue;
+    }
+
     let result;
     try {
       result = await searchDirectRoundTripOffers({

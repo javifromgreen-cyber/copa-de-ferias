@@ -1,20 +1,26 @@
 import type { RealFlightSliceDTO, RealRoundTripOfferDTO } from "@/server/actions/real-checkout-search";
+import { flightSliceIdentityKey } from "@/lib/providers/flights/duffel/flightSliceIdentity";
 
 /**
- * Fase 2.5 §10/§11 — a UI-only mirror of
+ * Fase 2.5 §10/§11, corrected in Fase 2.6 §6 — a UI-only mirror of
  * src/lib/providers/flights/duffel/roundTripSelection.ts's pure functions
- * (flightSliceKey / buildOutboundSliceOptions /
- * buildReturnSliceOptionsForOutbound / resolveRoundTripOffer), but
- * operating on the plain, already-serialized RealRoundTripOfferDTO shape
- * (ISO date strings) instead of RoundTripFlightOffer (Date objects,
- * server-only Duffel client imports upstream). Duplicated on purpose
- * rather than imported: roundTripSearch.ts pulls in duffel/client.ts,
- * which must never end up in a client bundle. The rules themselves are
- * identical — same slice-key composition, same "same currency AND same
- * commercialProduct on both directions" comparability gate — because this
- * is only a UI grouping/dedup convenience; the actual selected offerId is
- * always re-revalidated server-side inside prepareCheckoutAttempt before
- * anything is trusted (§15).
+ * (buildOutboundSliceOptions / buildReturnSliceOptionsForOutbound /
+ * resolveRoundTripOffer), operating on the plain, already-serialized
+ * RealRoundTripOfferDTO shape (ISO date strings) instead of
+ * RoundTripFlightOffer (Date objects, server-only Duffel client imports
+ * upstream). The comparability rules are duplicated on purpose — same
+ * "same currency AND same commercialProduct on both directions" gate —
+ * because this is only a UI grouping/dedup convenience; the actual
+ * selected offerId is always re-revalidated server-side inside
+ * prepareCheckoutAttempt before anything is trusted (§15). The slice
+ * IDENTITY itself, though, is no longer a separate copy: `sliceKey` below
+ * calls flightSliceIdentity.ts's shared `flightSliceIdentityKey` directly
+ * — that module has no Duffel HTTP client, server-only env, or secrets,
+ * so it's safe to import here, and it's the exact same function
+ * roundTripSelection.ts's own `flightSliceKey` calls server-side. One
+ * identity function, one shape, both sides — see that module's own doc
+ * comment for why this mattered (a genuine codeshare must never collapse
+ * into its marketed equivalent).
  */
 export type DaypartPreference = "ANY" | "MORNING" | "AFTERNOON";
 
@@ -32,7 +38,7 @@ function sliceMatchesDaypart(slice: RealFlightSliceDTO, preference: DaypartPrefe
 }
 
 export function sliceKey(slice: RealFlightSliceDTO): string {
-  return slice.segments.map((s) => [s.originIata, s.destinationIata, s.departingAt, s.arrivingAt, s.carrierIata, s.flightNumber ?? ""].join("|")).join(">>");
+  return flightSliceIdentityKey(slice.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt, arrivingAt: s.arrivingAt, marketingCarrierIata: s.carrierIata, operatingCarrierIata: s.operatingCarrierIata, flightNumber: s.flightNumber })));
 }
 
 export type SliceOption = { key: string; slice: RealFlightSliceDTO };

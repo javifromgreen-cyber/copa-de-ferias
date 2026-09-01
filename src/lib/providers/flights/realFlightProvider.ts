@@ -2,18 +2,10 @@ import { duffelConfig } from "@/lib/env";
 import type { FlightProvider, NormalizedFlightLeg, OriginOption } from "../types";
 import { searchDirectOneWayOffers } from "./duffel/search";
 import type { FlightOffer } from "./duffel/types";
+import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
 
-// Candidate Spanish origins we're willing to check for direct service —
-// same codes the mock's fixture route table uses, so both providers are
-// exercised against a comparable, small, known-good set of airports
-// rather than every Spanish airport (Duffel has no "list direct origins"
-// endpoint — each candidate costs one real search per direction).
-export const CANDIDATE_SPANISH_ORIGINS: OriginOption[] = [
-  { iata: "MAD", city: "Madrid", airportName: "Adolfo Suárez Madrid-Barajas" },
-  { iata: "BCN", city: "Barcelona", airportName: "Josep Tarradellas Barcelona-El Prat" },
-  { iata: "AGP", city: "Málaga", airportName: "Málaga-Costa del Sol" },
-  { iata: "SVQ", city: "Sevilla", airportName: "Sevilla" },
-];
+/** @deprecated use SUPPORTED_SPANISH_FLIGHT_ORIGINS (src/lib/checkout-atu-aire/spanishFlightOrigins.ts) directly — kept as a re-export so existing imports don't break. */
+export const CANDIDATE_SPANISH_ORIGINS = SUPPORTED_SPANISH_FLIGHT_ORIGINS;
 
 const SINGLE_ADULT = 1;
 
@@ -55,7 +47,7 @@ export class RealFlightProvider implements FlightProvider {
   async listEligibleDirectOriginsForTrip(params: { destinationAirport: string; outboundDate: Date; returnDate: Date }): Promise<OriginOption[]> {
     if (!duffelConfig.isConfigured) return [];
     const eligible: OriginOption[] = [];
-    for (const origin of CANDIDATE_SPANISH_ORIGINS) {
+    for (const origin of SUPPORTED_SPANISH_FLIGHT_ORIGINS) {
       try {
         const [outbound, inbound] = await Promise.all([
           searchDirectOneWayOffers({ originIata: origin.iata, destinationIata: params.destinationAirport, date: toIsoDate(params.outboundDate), passengers: SINGLE_ADULT }),

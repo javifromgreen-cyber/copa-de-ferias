@@ -1,5 +1,6 @@
 import type { RoundTripFlightOffer, RoundTripFlightSlice } from "./types";
 import { sliceMatchesDaypart, type RoundTripDaypartPreference } from "./roundTripSearch";
+import { flightSliceIdentityKey } from "./flightSliceIdentity";
 
 /**
  * Fase 1.6 §2-§9 — the selection layer the future real checkout (Fase 2)
@@ -16,37 +17,46 @@ import { sliceMatchesDaypart, type RoundTripDaypartPreference } from "./roundTri
 /**
  * §5 — a stable identity for one physical flight (a slice), built from the
  * itinerary facts that actually define it: origin, destination, the exact
- * departure/arrival instants, the marketing carrier, and the flight number
- * for every segment, in order. Deliberately NOT schedule-only (e.g. just
- * "departingAt") — two different physical flights can depart at the same
- * minute on different carriers/routes, and Duffel can also return the same
- * physical flight framed at slightly different granularity across offers;
- * anchoring on carrier + flight number + both instants + route is what
- * makes two RoundTripFlightOffers agree this is "the same slice" rather
- * than two merely-similar ones.
+ * departure/arrival instants, the marketing carrier, the operating carrier
+ * when Duffel reports one, and the flight number for every segment, in
+ * order. Deliberately NOT schedule-only (e.g. just "departingAt") — two
+ * different physical flights can depart at the same minute on different
+ * carriers/routes, and Duffel can also return the same physical flight
+ * framed at slightly different granularity across offers; anchoring on
+ * carrier + flight number + both instants + route is what makes two
+ * RoundTripFlightOffers agree this is "the same slice" rather than two
+ * merely-similar ones.
  *
- * Fase 2.6 §6 — deliberately the SAME six-field composition (never a
- * separate operating-carrier field) as
- * src/lib/checkout-saga/flightSearchSession.ts's `dtoSliceKey` and
- * src/components/checkout-real/flightSelectionClient.ts's own `sliceKey`:
- * the browser only ever has marketingCarrier (RealFlightSegmentDTO has no
- * operatingCarrier field), and prepareCheckoutAttempt's security check
- * compares a client-claimed slice key against a server-computed one — if
- * the two algorithms didn't agree field-for-field on ordinary (non-
- * codeshare) flights, that check would reject every genuine selection.
- * Direct-only in this MVP (isDirectRoundTripOffer already discards
- * anything else upstream) makes the marketing/operating distinction moot
- * for the near-totality of real offers; a genuine codeshare where only the
- * operating carrier differs is treated as the same slice as its marketed
- * equivalent — a deliberate simplification, not an oversight.
+ * Fase 2.6 §6 — delegates to flightSliceIdentity.ts's
+ * `flightSliceIdentityKey`, the SAME pure function
+ * src/components/checkout-real/flightSelectionClient.ts's own `sliceKey`
+ * calls (imported directly there — that module carries no Duffel HTTP
+ * client, server-only env, or secrets, so it's safe in a Client
+ * Component). One identity function, one shape, on both sides — the
+ * earlier duplicated implementation had diverged (the client's copy
+ * never carried operating carrier at all), which is what made
+ * prepareCheckoutAttempt's session-based security check reject genuine
+ * client selections; that was fixed by unifying the implementation, not
+ * by making the identity less precise.
  *
- * A round-trip offer's slice is direct-only by construction in this MVP,
- * so in practice this hashes a single segment — but it walks every
- * segment so it degrades safely rather than silently mis-keying if that
- * assumption ever changes.
+ * A round-trip offer's slice is direct-only by construction in this MVP
+ * (isDirectRoundTripOffer already discards anything else upstream), so in
+ * practice this hashes a single segment — but it walks every segment so it
+ * degrades safely rather than silently mis-keying if that assumption ever
+ * changes.
  */
 export function flightSliceKey(slice: RoundTripFlightSlice): string {
-  return slice.segments.map((s) => [s.originIata, s.destinationIata, s.departingAt.toISOString(), s.arrivingAt.toISOString(), s.marketingCarrier.iata, s.flightNumber ?? ""].join("|")).join(">>");
+  return flightSliceIdentityKey(
+    slice.segments.map((s) => ({
+      originIata: s.originIata,
+      destinationIata: s.destinationIata,
+      departingAt: s.departingAt.toISOString(),
+      arrivingAt: s.arrivingAt.toISOString(),
+      marketingCarrierIata: s.marketingCarrier.iata,
+      operatingCarrierIata: s.operatingCarrier?.iata ?? null,
+      flightNumber: s.flightNumber,
+    })),
+  );
 }
 
 export type FlightSliceOption = {

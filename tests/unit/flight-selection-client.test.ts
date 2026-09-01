@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildOutboundOptions, buildReturnOptions, resolveOffer } from "@/components/checkout-real/flightSelectionClient";
+import { buildOutboundOptions, buildReturnOptions, resolveOffer, sliceKey } from "@/components/checkout-real/flightSelectionClient";
 import type { RealRoundTripOfferDTO } from "@/server/actions/real-checkout-search";
 
 // Fase 2.5 §25 O/P/Q/R/T — the UI-only round-trip selection helpers
@@ -8,8 +8,8 @@ import type { RealRoundTripOfferDTO } from "@/server/actions/real-checkout-searc
 // the server-side originals, exercised here against the DTO type the
 // browser actually receives.
 
-function slice(originIata: string, destinationIata: string, departingAt: string, carrierIata = "VY", flightNumber = "1") {
-  return { segments: [{ originIata, destinationIata, departingAt, arrivingAt: departingAt, carrierIata, carrierName: "Vueling", flightNumber }] };
+function slice(originIata: string, destinationIata: string, departingAt: string, carrierIata = "VY", flightNumber = "1", operatingCarrierIata: string | null = null) {
+  return { segments: [{ originIata, destinationIata, departingAt, arrivingAt: departingAt, carrierIata, carrierName: "Vueling", operatingCarrierIata, flightNumber }] };
 }
 
 function offer(id: string, amount: number, opts: { outboundDep?: string; returnDep?: string; outboundFlightNo?: string; returnFlightNo?: string; fareBrand?: string; refundAllowed?: boolean } = {}): RealRoundTripOfferDTO {
@@ -114,5 +114,29 @@ describe("Fase 2.6 §1/§9 A/B/C — not_comparable surfaces every candidate for
     const chosen = result.candidates.find((c) => c.offerId === "off_B");
     expect(chosen?.offerId).toBe("off_B");
     expect(chosen?.totalAmount).toBe(143);
+  });
+});
+
+describe("H (closure §6) — sliceKey differentiates a genuine codeshare (same marketing carrier/flight/time, different operating carrier)", () => {
+  it("two otherwise-identical slices with different operating carriers produce different keys", () => {
+    const marketedByVueling = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", "VY");
+    const operatedByIberia = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", "IB");
+    expect(sliceKey(marketedByVueling)).not.toBe(sliceKey(operatedByIberia));
+  });
+
+  it("null operating carrier (not reported) is a distinct identity from an explicit one matching the marketing carrier", () => {
+    const noOperatingCarrierReported = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", null);
+    const explicitlySelfOperated = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", "VY");
+    // Both represent "operated by Vueling itself" in practice, but the
+    // identity is intentionally literal about what Duffel actually
+    // reported — never inferring "same as marketing" when the field was
+    // simply absent.
+    expect(sliceKey(noOperatingCarrierReported)).not.toBe(sliceKey(explicitlySelfOperated));
+  });
+
+  it("identical operating carrier on both sides still resolves to the same key (no false split)", () => {
+    const a = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", "IB");
+    const b = slice("MAD", "MAN", "2026-11-14T09:00:00", "VY", "8748", "IB");
+    expect(sliceKey(a)).toBe(sliceKey(b));
   });
 });

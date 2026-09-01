@@ -1,4 +1,5 @@
 import type { RoundTripFlightOffer } from "@/lib/providers/flights/duffel/types";
+import { flightSliceIdentityKey } from "@/lib/providers/flights/duffel/flightSliceIdentity";
 
 /**
  * Fase 2.6 §2 — the shape a FlightSearchSession row's `offersJson` (and
@@ -15,7 +16,17 @@ import type { RoundTripFlightOffer } from "@/lib/providers/flights/duffel/types"
  * imports it back out, same direction every other server action already
  * uses for lib types.
  */
-export type RealFlightSegmentDTO = { originIata: string; destinationIata: string; departingAt: string; arrivingAt: string; carrierIata: string; carrierName: string; flightNumber: string | null };
+export type RealFlightSegmentDTO = {
+  originIata: string;
+  destinationIata: string;
+  departingAt: string;
+  arrivingAt: string;
+  carrierIata: string;
+  carrierName: string;
+  /** Fase 2.6 §6 — null when Duffel doesn't report an operating carrier distinct from the marketing one (the common case). Carried through to the browser so the shared flightSliceIdentityKey (see flightSliceIdentity.ts) has the same fields on both sides — a real codeshare must never collapse into its marketed equivalent. */
+  operatingCarrierIata: string | null;
+  flightNumber: string | null;
+};
 export type RealFlightSliceDTO = { segments: RealFlightSegmentDTO[] };
 export type RealCommercialProductDTO = {
   outbound: { cabinClass: string | null; fareBrandName: string | null; baggage: { checkedIncluded: boolean; carryOnIncluded: boolean } | null };
@@ -39,25 +50,44 @@ export function toStoredFlightOffer(o: RoundTripFlightOffer): StoredFlightOffer 
     totalAmount: o.totalAmount,
     currency: o.currency,
     expiresAt: o.expiresAt.toISOString(),
-    outbound: { segments: o.outbound.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt.toISOString(), arrivingAt: s.arrivingAt.toISOString(), carrierIata: s.marketingCarrier.iata, carrierName: s.marketingCarrier.name, flightNumber: s.flightNumber })) },
-    return: { segments: o.return.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt.toISOString(), arrivingAt: s.arrivingAt.toISOString(), carrierIata: s.marketingCarrier.iata, carrierName: s.marketingCarrier.name, flightNumber: s.flightNumber })) },
+    outbound: {
+      segments: o.outbound.segments.map((s) => ({
+        originIata: s.originIata,
+        destinationIata: s.destinationIata,
+        departingAt: s.departingAt.toISOString(),
+        arrivingAt: s.arrivingAt.toISOString(),
+        carrierIata: s.marketingCarrier.iata,
+        carrierName: s.marketingCarrier.name,
+        operatingCarrierIata: s.operatingCarrier?.iata ?? null,
+        flightNumber: s.flightNumber,
+      })),
+    },
+    return: {
+      segments: o.return.segments.map((s) => ({
+        originIata: s.originIata,
+        destinationIata: s.destinationIata,
+        departingAt: s.departingAt.toISOString(),
+        arrivingAt: s.arrivingAt.toISOString(),
+        carrierIata: s.marketingCarrier.iata,
+        carrierName: s.marketingCarrier.name,
+        operatingCarrierIata: s.operatingCarrier?.iata ?? null,
+        flightNumber: s.flightNumber,
+      })),
+    },
     commercialProduct: o.commercialProduct,
   };
 }
 
 /**
- * Fase 2.6 §6 — the same six-field slice-key composition as
- * src/lib/providers/flights/duffel/roundTripSelection.ts's own
- * `flightSliceKey` (origin, destination, both instants, marketing
- * carrier, flight number — deliberately no separate operating-carrier
- * field, see that function's own doc comment for why) AND
- * src/components/checkout-real/flightSelectionClient.ts's own `sliceKey`
- * (duplicated there client-side — that file must never import anything
- * that pulls in duffel/client.ts). All three must agree field-for-field:
- * this one is used server-side, at CONTINUAR, to verify the outbound/
- * return slice keys the client claims actually match the stored offer it
- * selected from its own FlightSearchSession row — never trusted as-is.
+ * Fase 2.6 §6 — delegates to flightSliceIdentity.ts's
+ * `flightSliceIdentityKey`, the exact same pure function
+ * duffel/roundTripSelection.ts's own `flightSliceKey` and
+ * flightSelectionClient.ts's own `sliceKey` call — one shared
+ * implementation, not three copies. Used server-side, at CONTINUAR, to
+ * verify the outbound/return slice keys the client claims actually match
+ * the stored offer it selected from its own FlightSearchSession row —
+ * never trusted as-is.
  */
 export function dtoSliceKey(slice: RealFlightSliceDTO): string {
-  return slice.segments.map((s) => [s.originIata, s.destinationIata, s.departingAt, s.arrivingAt, s.carrierIata, s.flightNumber ?? ""].join("|")).join(">>");
+  return flightSliceIdentityKey(slice.segments.map((s) => ({ originIata: s.originIata, destinationIata: s.destinationIata, departingAt: s.departingAt, arrivingAt: s.arrivingAt, marketingCarrierIata: s.carrierIata, operatingCarrierIata: s.operatingCarrierIata, flightNumber: s.flightNumber })));
 }
