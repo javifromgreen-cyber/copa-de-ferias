@@ -28,10 +28,23 @@ test("CONFIGURACIÓN -> CONTINUAR -> READY_TO_PAY for a real TICKET_ONLY Checkou
   await expect(page.getByText(/listo para pagar/i)).toBeVisible();
   await expect(page.getByTestId("pvp-total")).toBeVisible();
 
-  // The payment button must never claim to have charged anything.
-  const payButton = page.getByRole("button", { name: /pago todavía no disponible en sandbox/i });
-  await expect(payButton).toBeVisible();
-  await expect(payButton).toBeDisabled();
+  // Fase 3A — the real Stripe Payment Element panel mounts next to the
+  // summary. This dev/test environment has no real Stripe TEST keys
+  // configured (STRIPE_SECRET_KEY is an empty placeholder — see
+  // .env.example), so the panel is expected to surface a clear error
+  // rather than ever silently claiming anything was charged/authorized —
+  // exactly the same "never claims a payment happened" guarantee the
+  // previous disabled-button placeholder used to assert, now expressed
+  // against the real payment flow's own graceful-degradation path.
+  await expect(page.getByText(/preparando el pago/i)).toBeVisible();
+  // React's dev-mode StrictMode double-invokes this panel's mount effect,
+  // so which of the two error paths' message ends up rendered depends on
+  // harmless timing between the two invocations — both are correct,
+  // expected outcomes of no Stripe TEST keys being configured (see
+  // .env.example) and neither ever claims a payment happened.
+  await expect(page.getByText(/no se pudo iniciar el pago|no está configurado|ya no está disponible para pagar/i)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("payment-authorized")).toHaveCount(0);
+  await expect(page.getByTestId("payment-form")).toHaveCount(0);
 });
 
 test("a missing traveler name is rejected server-side with a visible error, never silently proceeding", async ({ page }) => {

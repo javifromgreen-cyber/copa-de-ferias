@@ -9,6 +9,7 @@ import type { PrepareCheckoutAttemptResult } from "@/lib/checkout-saga/prepareCh
 import { COUNTRIES, isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { buildOutboundOptions, buildReturnOptions, resolveOffer, formatSliceTime, type DaypartPreference } from "./flightSelectionClient";
 import { ReadyToPaySummary } from "./ReadyToPaySummary";
+import { PaymentAuthorizationPanel } from "./PaymentAuthorizationPanel";
 
 /**
  * Fase 2.5 §7-§17, corrected in Fase 2.6 — the new real pre-payment
@@ -213,13 +214,16 @@ export function RealCheckoutPrototype({
 
   if (status === "ready" && result?.ok) {
     return (
-      <ReadyToPaySummary
-        tripName={tripName}
-        matchLabel={matchLabel}
-        snapshot={result.finalQuoteSnapshot}
-        travelers={travelers.map((t) => ({ firstName: t.firstName, lastName: t.lastName }))}
-        travelOriginCountry={travelOriginCountry}
-      />
+      <div className="max-w-xl space-y-6">
+        <ReadyToPaySummary
+          tripName={tripName}
+          matchLabel={matchLabel}
+          snapshot={result.finalQuoteSnapshot}
+          travelers={travelers.map((t) => ({ firstName: t.firstName, lastName: t.lastName }))}
+          travelOriginCountry={travelOriginCountry}
+        />
+        <PaymentAuthorizationPanel accessToken={result.accessToken} totalLabel={`${result.finalQuoteSnapshot.commercial.pvpTotal.toFixed(2)} ${result.finalQuoteSnapshot.commercial.currency}`} />
+      </div>
     );
   }
 

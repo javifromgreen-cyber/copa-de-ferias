@@ -740,6 +740,21 @@ enum CheckoutAttemptEventType {
   hotel_prebook_confirmed
   flight_revalidated
   quote_snapshot_created
+
+  // Fase 3A — Stripe TEST manual-capture authorization (see
+  // src/lib/checkout-saga/payment.ts). sanitizedDetail carries only
+  // Stripe's own status/error type/code — never card data, never the
+  // secret key, never client_secret.
+  quote_refresh_started
+  quote_refreshed
+  payment_authorization_created
+  payment_requires_action
+  payment_authorized
+  payment_failed
+  payment_voided
+  payment_webhook_processed
+  payment_abandoned_released
+  payment_unverifiable
 }
 
 model CheckoutAttempt {
@@ -763,6 +778,28 @@ model CheckoutAttempt {
   // Congelado en REVALIDATING (see src/lib/checkout-saga/finalQuoteSnapshot.ts).
   // "" hasta que existe — mismo convenio que los *Snapshot de Booking.
   finalQuoteSnapshot String @default("")
+
+  // Fase 3A §8 — bumped every time a NEW finalQuoteSnapshot is frozen
+  // (initial prepareCheckoutAttempt, and any later refresh triggered by
+  // ensureCheckoutAttemptPayable when the previous one is no longer safe
+  // to pay against — see src/lib/checkout-saga/quoteRevalidation.ts). This
+  // is the "quote version" a Stripe PaymentIntent is created against (see
+  // paymentIntentQuoteVersion below) and what its idempotency key embeds —
+  // a version bump is what guarantees a stale-priced PaymentIntent is
+  // never reused once the quote changes underneath it.
+  finalQuoteSnapshotVersion Int @default(0)
+
+  // Fase 3A §7/§8 — the ORIGINAL ticket/hotel/flight selection inputs
+  // (same shapes prepareCheckoutAttempt.ts already accepts:
+  // {ticketOfferId,quantity} / PrepareCheckoutAttemptHotelInput /
+  // PrepareCheckoutAttemptFlightInput), persisted so a later refresh can
+  // replay the EXACT SAME revalidation engines against this SAME attempt
+  // rather than duplicating them or forcing the customer back through
+  // CONFIGURACIÓN. No PII — same structural-facts-only convention as
+  // finalQuoteSnapshot. "" for hotel/flight when this modality has none.
+  ticketSelectionJson String @default("")
+  hotelSelectionJson  String @default("")
+  flightSelectionJson String @default("")
 
   // Fase 2.5 §5/§6 — persisted server-side in REVALIDATING, alongside
   // travelers, BEFORE any Booking exists — the single source of truth
@@ -815,6 +852,30 @@ model CheckoutAttempt {
   paymentProviderReference String @default("")
   hotelProviderReference   String @default("")
   flightProviderReference  String @default("")
+
+  // Fase 3A §5/§7/§8 — the Stripe PaymentIntent id this attempt currently
+  // authorizes against (manual capture, never captured in this phase —
+  // see src/lib/providers/payments/stripe/). Deliberately its OWN named
+  // field rather than overloading paymentProviderReference above — a
+  // stripePaymentIntentId only ever means one specific thing, and a
+  // future capture/refund/void phase will want to read it unambiguously.
+  // "" until a PaymentIntent has been created. paymentIntentQuoteVersion
+  // pins it to the exact finalQuoteSnapshotVersion it was created
+  // against, so a stale-priced PaymentIntent left over from a superseded
+  // quote is never mistaken for matching the CURRENT snapshot (see §8 —
+  // "PaymentIntent <-> UNA versión concreta del snapshot").
+  stripePaymentIntentId     String @default("")
+  paymentIntentQuoteVersion Int?
+
+  // Fase 3A §14 — the deadline for an in-progress Stripe authorization
+  // attempt (created the instant CheckoutAttempt enters
+  // payment_authorizing), separate from the bank's own authorization
+  // result. An attempt still sitting in payment_authorizing PAST this
+  // instant, with Stripe confirming no authorization ever completed, is
+  // what releaseAbandonedPaymentAuthorizing() (payment.ts) is allowed to
+  // safely release — never released on elapsed time alone without first
+  // asking Stripe. Null before payment_authorizing is ever entered.
+  paymentAuthorizationExpiresAt DateTime?
 
   failureCode String @default("")
 
@@ -919,6 +980,16 @@ model CheckoutAttemptEvent {
 
   providerReference String @default("")
   sanitizedDetail   String @default("")
+
+  // Fase 3A §12 — Stripe's own webhook event.id, when this row records a
+  // processed webhook delivery. Nullable+unique (not a default "") so
+  // every non-webhook event keeps inserting freely (many NULLs are fine;
+  // Prisma/SQLite never enforce uniqueness across NULLs) while two
+  // deliveries of the SAME Stripe event collide on this constraint — the
+  // second insert throws (Prisma P2002), which the webhook handler
+  // catches and treats as "already processed, no-op". No separate
+  // dedup table needed.
+  providerEventId String? @unique
 
   createdAt DateTime @default(now())
 }

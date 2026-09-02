@@ -22,7 +22,16 @@ const ALLOWED_TRANSITIONS: Record<CheckoutAttemptStatus, CheckoutAttemptStatus[]
   draft: ["revalidating", "cancelled"],
   revalidating: ["ready_to_pay", "failed", "cancelled"],
   ready_to_pay: ["payment_authorizing", "revalidating", "cancelled"],
-  payment_authorizing: ["payment_authorized", "failed"],
+  // Fase 3A §14 — recovery_required is reachable directly from
+  // payment_authorizing (not just from later saga steps): when Stripe's
+  // own authorization result cannot be verified at all (network/API
+  // failure while checking, not merely "still in progress"), this
+  // attempt must not be silently released (a hold could still exist at
+  // Stripe's own bank rail) nor silently marked authorized. It parks
+  // here for the same human-resolvable escape hatch recovery_required
+  // already exists for elsewhere in this table — see its own doc
+  // comment above.
+  payment_authorizing: ["payment_authorized", "failed", "recovery_required"],
   payment_authorized: ["fulfilling"],
   fulfilling: ["payment_capturing", "compensating"],
   payment_capturing: ["finalizing", "recovery_required"],

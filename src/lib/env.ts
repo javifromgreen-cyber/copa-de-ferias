@@ -39,18 +39,36 @@ export function getCronSecret(): string {
   return process.env.CRON_SECRET || "";
 }
 
+/**
+ * Fase 3A — Stripe TEST-mode manual-capture authorization. `publishableKey`
+ * now reads NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY (the name Stripe.js/Payment
+ * Element actually needs client-side, hence NEXT_PUBLIC_) with the legacy
+ * STRIPE_PUBLISHABLE_KEY name kept as a fallback so an already-configured
+ * environment doesn't silently break. Every real Stripe call in this
+ * codebase MUST go through src/lib/providers/payments/stripe/client.ts,
+ * which additionally asserts `looksLikeTestKey` before constructing a live
+ * SDK client — never live/production Stripe, this phase only ever
+ * authorizes in TEST mode.
+ */
 export const stripeConfig = {
   get secretKey() {
     return process.env.STRIPE_SECRET_KEY || "";
   },
   get publishableKey() {
-    return process.env.STRIPE_PUBLISHABLE_KEY || "";
+    return process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || process.env.STRIPE_PUBLISHABLE_KEY || "";
   },
   get webhookSecret() {
     return process.env.STRIPE_WEBHOOK_SECRET || "";
   },
   get isConfigured() {
     return Boolean(this.secretKey && this.publishableKey);
+  },
+  /** True when the secret key itself has Stripe's own TEST-mode prefix — a second, independent signal, not a substitute for checking `livemode` on the actual API response. Never used to permit a live key through. */
+  get looksLikeTestKey() {
+    return this.secretKey.startsWith("sk_test_");
+  },
+  get publishableKeyLooksLikeTestKey() {
+    return this.publishableKey.startsWith("pk_test_");
   },
 };
 

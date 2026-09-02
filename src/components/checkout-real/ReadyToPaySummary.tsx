@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/Button";
 import type { FinalQuoteSnapshot } from "@/lib/checkout-saga/finalQuoteSnapshot";
 import type { RoomType } from "@/lib/pricing/roomMix";
 import { COUNTRIES } from "@/lib/checkout-atu-aire/countries";
@@ -13,10 +12,14 @@ function countryName(code: string): string {
  * Fase 2.5 §16/§17/§22 — the real READY_TO_PAY screen. Shown both right
  * after CONTINUAR (client-driven, inside RealCheckoutPrototype) and when
  * resuming from a refresh via ?attempt=<accessToken> (server-rendered
- * directly from getReadyToPayView — see reservar-real/page.tsx). No
- * hooks/interactivity here beyond the disabled Pagar button, so this
- * component works unchanged in both a Server Component tree and inside a
- * Client Component.
+ * directly from getReadyToPayView/getPaymentResumeView — see
+ * reservar-real/page.tsx). Purely presentational — no hooks/interactivity
+ * at all — so this component works unchanged in both a Server Component
+ * tree and inside a Client Component. Fase 3A — the actual Pagar
+ * button/Payment Element now lives in the sibling
+ * PaymentAuthorizationPanel, rendered alongside this summary rather than
+ * inside it, keeping this component's own Server-Component compatibility
+ * intact.
  *
  * §16 — deliberately never renders costNet, provider margin, orgFee, or
  * any internal buffer: only the fields a customer is meant to see.
@@ -118,10 +121,6 @@ export function ReadyToPaySummary({
           </dd>
         </div>
       </dl>
-
-      <Button disabled title="Pago todavía no disponible en sandbox">
-        Pagar {snapshot.commercial.pvpTotal.toFixed(2)} {snapshot.commercial.currency} — pago todavía no disponible en sandbox
-      </Button>
     </div>
   );
 }
