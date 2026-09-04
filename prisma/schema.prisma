@@ -1,18 +1,20 @@
 // Copa de Ferias — data model.
 //
-// Demo/local uses SQLite (zero setup). For production, switch the
-// datasource below to `provider = "postgresql"` and point DATABASE_URL
-// at a Postgres instance (e.g. Supabase). The schema itself is written
-// to be Postgres-compatible (no SQLite-only features are used).
-// See docs/DEPLOYMENT.md.
+// PostgreSQL everywhere — local dev, tests, and production all use the
+// same engine (Prisma Postgres in production; a local Postgres cluster
+// for dev/tests — see docs/DEPLOYMENT.md). `directUrl` is the
+// non-pooled connection Prisma CLI needs for `migrate deploy`/`migrate
+// dev`; `url` is the pooled connection the app uses at runtime. Locally
+// both env vars can point at the same local instance.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------

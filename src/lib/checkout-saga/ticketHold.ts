@@ -4,45 +4,68 @@ import { recordCheckoutAttemptEvent, type Db } from "./events";
 export type AcquireTicketHoldResult = { ok: true; hold: { id: string; status: string; quantity: number } } | { ok: false; reason: "insufficient_stock" };
 
 /**
- * Atomic, race-safe acquisition of a TicketHold — see the architecture
- * report §5/§9 of this session's own record for the full reasoning; the
- * short version:
+ * Atomic, race-safe acquisition of a TicketHold on PostgreSQL.
  *
- * This project runs on SQLite (see prisma/schema.prisma's datasource —
- * "provider = sqlite", DATABASE_URL=file:./dev.db). SQLite allows exactly
- * one writer at a time for the whole database file — there is no
- * per-row/per-table locking and no MVCC snapshot isolation for writers
- * the way Postgres has under READ COMMITTED. That single-writer property
- * is what this function actually relies on: the availability check and
- * the insert happen in ONE SQL statement (INSERT ... SELECT ... WHERE),
- * so there is no read-then-write gap in application code for a second
- * writer to interleave into — SQLite itself cannot let a second write
- * statement execute in the middle of this one's evaluation.
+ * Strategy: `SELECT "id" FROM "TicketOffer" WHERE "id" = ... FOR UPDATE`
+ * takes an exclusive row lock on the specific TicketOffer being held
+ * against, inside a transaction. A second, concurrent call for the SAME
+ * ticketOfferId blocks on that lock — Postgres itself serializes the two
+ * transactions, there is no read-then-write gap in application code for
+ * a second writer to interleave into. The second transaction only
+ * proceeds past the lock once the first commits (or rolls back), at
+ * which point its own availability check re-reads the now-committed
+ * state — so if the first transaction consumed the last unit of stock,
+ * the second correctly sees zero available and returns
+ * `insufficient_stock`, never oversubscribing. Different ticketOfferIds
+ * never contend with each other (each locks only its own row).
  *
- * IMPORTANT — this specific guarantee is SQLite-specific. The schema's
- * own header comment says it's written to be Postgres-compatible, and
- * this raw SQL is syntactically portable, but its ATOMICITY on Postgres
- * under default READ COMMITTED is NOT guaranteed the same way: two
- * concurrent Postgres transactions could each evaluate this statement's
- * WHERE-clause subqueries against their own snapshot (neither seeing the
- * other's still-uncommitted insert) and both succeed, oversubscribing
- * stock. If/when this project migrates to Postgres, this function must
- * be revisited — e.g. `SELECT ... FOR UPDATE` on the TicketOffer row (or
- * an advisory lock, or SERIALIZABLE isolation with retry) before the
- * availability check. Flagging this now rather than pretending SQLite's
- * guarantee travels for free.
+ * Deliberately NOT using a `heldQuantity` counter column (would add a
+ * new invariant to keep correct across create/release/expire/confirm),
+ * SERIALIZABLE+retry (no schema change needed either way, but adds
+ * retry-loop control flow this doesn't need), or an advisory lock
+ * (there's already a natural row to lock) — `FOR UPDATE` on the
+ * contended row is the minimal mechanism that satisfies "if 1 ticket
+ * remains and two concurrent checkouts race, exactly one gets HELD".
  *
  * Idempotent by (checkoutAttemptId, ticketOfferId) — see the @@unique
- * constraint on TicketHold. A second call for the same pair returns the
- * existing hold rather than erroring or creating a duplicate.
+ * constraint on TicketHold. A second, SEQUENTIAL call for the same pair
+ * (checked before taking the lock — this is a single-caller idempotency
+ * guard, not the concurrency mechanism above) returns the existing hold
+ * rather than erroring or creating a duplicate. Not covered: two
+ * genuinely CONCURRENT calls for the exact same pair (the same
+ * checkoutAttemptId calling this twice at once) — nothing in this
+ * codebase's saga does that today (one attempt only ever runs this step
+ * once, synchronously), so it's left as a known, narrow gap rather than
+ * adding unverified error-code parsing for a scenario that can't
+ * currently occur.
+ *
+ * Runs in its own transaction when called with the default `db = prisma`
+ * (needed so the row lock and the subsequent insert share one
+ * connection/transaction — a lock taken by one statement and released at
+ * the end of that same statement would protect nothing). When called
+ * with an already-open transaction client, composes into that
+ * transaction directly instead of nesting — same convention as
+ * transitionCheckoutAttempt (transitions.ts).
  */
 export async function acquireTicketHold(params: { checkoutAttemptId: string; ticketOfferId: string; quantity: number; expiresAt: Date }, db: Db = prisma): Promise<AcquireTicketHoldResult> {
+  if (db === prisma) {
+    return prisma.$transaction((tx) => acquireTicketHoldSteps(params, tx));
+  }
+  return acquireTicketHoldSteps(params, db);
+}
+
+async function acquireTicketHoldSteps(params: { checkoutAttemptId: string; ticketOfferId: string; quantity: number; expiresAt: Date }, db: Db): Promise<AcquireTicketHoldResult> {
   const { checkoutAttemptId, ticketOfferId, quantity, expiresAt } = params;
 
   const existing = await db.ticketHold.findUnique({ where: { checkoutAttemptId_ticketOfferId: { checkoutAttemptId, ticketOfferId } } });
   if (existing) {
     return { ok: true, hold: existing };
   }
+
+  // Locks this TicketOffer row for the rest of this transaction — a
+  // concurrent call for the same ticketOfferId blocks here until this
+  // transaction commits or rolls back.
+  await db.$executeRaw`SELECT "id" FROM "TicketOffer" WHERE "id" = ${ticketOfferId} FOR UPDATE`;
 
   const id = crypto.randomUUID();
   const now = new Date();
@@ -63,11 +86,9 @@ export async function acquireTicketHold(params: { checkoutAttemptId: string; tic
     return { ok: true, hold };
   }
 
-  // affected === 0: either a concurrent call for this exact same pair
-  // just won the race (re-check — idempotent, not a real conflict), or
-  // stock genuinely isn't available.
-  const raced = await db.ticketHold.findUnique({ where: { checkoutAttemptId_ticketOfferId: { checkoutAttemptId, ticketOfferId } } });
-  if (raced) return { ok: true, hold: raced };
+  // affected === 0: stock genuinely isn't available (already confirmed
+  // by the FOR UPDATE lock above that this is evaluated against the
+  // fully up-to-date, committed state — never a race).
   return { ok: false, reason: "insufficient_stock" };
 }
 

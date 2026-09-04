@@ -246,11 +246,16 @@ async function main() {
   // -----------------------------------------------------------------
   const belgradoMatchDate = nextSaturday(85);
 
-  await prisma.trip.deleteMany({ where: { slug: "derbi-eterno-belgrado" } });
-  const belgrado = await prisma.trip.create({
-    data: {
+  // Idempotent by Trip.slug (see the Manchester block below for the full
+  // rationale) — this and every other trip block from here on upserts
+  // in place instead of deleteMany-then-create, and only seeds its
+  // one-to-many rows (Event/TripOrigin/TripPlanningDay/...) the first
+  // time the trip is created, so a second seed run never crashes on a
+  // Restrict FK from real dependent data and never duplicates content.
+  const existingBelgrado = await prisma.trip.findUnique({ where: { slug: "derbi-eterno-belgrado" } });
+  const belgradoIsNew = !existingBelgrado;
+  const belgradoData = {
       number: 1,
-      slug: "derbi-eterno-belgrado",
       name: "Belgrado",
       subtitle: "El Derbi Eterno",
       city: "Belgrado",
@@ -261,7 +266,7 @@ async function main() {
       matchDate: belgradoMatchDate,
       durationDays: 3,
       durationNights: 2,
-      status: "open",
+      status: "open" as const,
       published: true,
       // Belgrado is retired from public listings entirely (see
       // PUBLIC_LISTING_EXCLUDED_SLUGS) — never featured on Home either.
@@ -276,7 +281,7 @@ async function main() {
       minDeadlineDate: addDays(belgradoMatchDate, -30),
       singleSupplement: 90,
       requiredTravelerFields: "nationality,docType,docNumber,docExpiry,docCountry",
-      scheduleStatus: "confirmed",
+      scheduleStatus: "confirmed" as const,
       heroImageKey: "belgrado",
       description:
         "Belgrado es una de esas ciudades que todo enfermo del fútbol tiene apuntada en algún sitio. El Eterno Derbi entre Estrella Roja y Partizan no es un partido cualquiera: es la ciudad entera dividida en dos, un ambiente que se nota desde el aeropuerto y noventa minutos que se recuerdan durante años. Montamos un viaje corto y bien resuelto para vivirlo desde dentro, con grupo pequeño y gente que va exactamente por lo mismo que tú.",
@@ -307,9 +312,12 @@ async function main() {
       seoTitle: "Belgrado — El Derbi Eterno | Copa de Ferias",
       seoDescription:
         "Viaje a Belgrado para vivir el Eterno Derbi entre Estrella Roja y Partizan. Vuelo, hotel, entrada, host local y coordinador. Grupo pequeño, 3 días.",
-    },
-  });
+  };
+  const belgrado = existingBelgrado
+    ? await prisma.trip.update({ where: { id: existingBelgrado.id }, data: belgradoData })
+    : await prisma.trip.create({ data: { slug: "derbi-eterno-belgrado", ...belgradoData } });
 
+  if (belgradoIsNew) {
   // Kept in sync with the Trip's own homeTeam/awayTeam/stadium/matchDate —
   // GROUP_CDF pages still read those legacy Trip fields directly; this
   // Event row exists for forward-compatibility with the multi-match engine.
@@ -433,15 +441,15 @@ async function main() {
       },
     ],
   });
+  } // belgradoIsNew
 
   // -----------------------------------------------------------------
   // Trip #002 — Fútbol Inglés (UPCOMING, no public page yet)
   // -----------------------------------------------------------------
-  await prisma.trip.deleteMany({ where: { slug: "futbol-ingles" } });
-  const futbolInglesTrip = await prisma.trip.create({
-    data: {
+  const existingFutbolIngles = await prisma.trip.findUnique({ where: { slug: "futbol-ingles" } });
+  const futbolInglesIsNew = !existingFutbolIngles;
+  const futbolInglesData = {
       number: 2,
-      slug: "futbol-ingles",
       name: "Fútbol Inglés",
       subtitle: "3 partidos · 3 días",
       city: "Inglaterra",
@@ -452,7 +460,7 @@ async function main() {
       matchDate: nextSaturday(150),
       durationDays: 3,
       durationNights: 2,
-      status: "upcoming",
+      status: "upcoming" as const,
       published: false,
       // Unpublished placeholder ("Próximamente") — never featured on Home
       // (destacados only ever shows published, currently open trips).
@@ -465,34 +473,37 @@ async function main() {
       soldSpots: 0,
       minSpots: 8,
       singleSupplement: 90,
-      scheduleStatus: "time_provisional",
+      scheduleStatus: "time_provisional" as const,
       heroImageKey: "futbol-ingles",
       description: "Todavía en preparación. Déjanos tu email y te avisamos en cuanto abramos plazas.",
       seoTitle: "Fútbol Inglés | Copa de Ferias",
       seoDescription: "Próximo viaje de Copa de Ferias: 3 partidos de fútbol inglés en 3 días.",
-    },
-  });
-  await prisma.event.create({
-    data: {
-      tripId: futbolInglesTrip.id,
-      homeTeam: futbolInglesTrip.homeTeam,
-      awayTeam: futbolInglesTrip.awayTeam,
-      stadium: futbolInglesTrip.stadium,
-      matchDate: futbolInglesTrip.matchDate,
-      scheduleStatus: futbolInglesTrip.scheduleStatus,
-      primaryEvent: true,
-      order: 0,
-    },
-  });
+  };
+  const futbolInglesTrip = existingFutbolIngles
+    ? await prisma.trip.update({ where: { id: existingFutbolIngles.id }, data: futbolInglesData })
+    : await prisma.trip.create({ data: { slug: "futbol-ingles", ...futbolInglesData } });
+  if (futbolInglesIsNew) {
+    await prisma.event.create({
+      data: {
+        tripId: futbolInglesTrip.id,
+        homeTeam: futbolInglesTrip.homeTeam,
+        awayTeam: futbolInglesTrip.awayTeam,
+        stadium: futbolInglesTrip.stadium,
+        matchDate: futbolInglesTrip.matchDate,
+        scheduleStatus: futbolInglesTrip.scheduleStatus,
+        primaryEvent: true,
+        order: 0,
+      },
+    });
+  }
 
   // -----------------------------------------------------------------
   // Trip #003 — Lisboa, Derbi de Lisboa (UPCOMING, no public page yet)
   // -----------------------------------------------------------------
-  await prisma.trip.deleteMany({ where: { slug: "derbi-lisboa" } });
-  const lisboaTrip = await prisma.trip.create({
-    data: {
+  const existingLisboa = await prisma.trip.findUnique({ where: { slug: "derbi-lisboa" } });
+  const lisboaIsNew = !existingLisboa;
+  const lisboaData = {
       number: 3,
-      slug: "derbi-lisboa",
       name: "Lisboa",
       subtitle: "Derbi de Lisboa",
       city: "Lisboa",
@@ -503,7 +514,7 @@ async function main() {
       matchDate: nextSaturday(180),
       durationDays: 3,
       durationNights: 2,
-      status: "upcoming",
+      status: "upcoming" as const,
       published: false,
       // Unpublished placeholder ("Próximamente") — never featured on Home
       // (destacados only ever shows published, currently open trips).
@@ -516,25 +527,29 @@ async function main() {
       soldSpots: 0,
       minSpots: 8,
       singleSupplement: 90,
-      scheduleStatus: "time_provisional",
+      scheduleStatus: "time_provisional" as const,
       heroImageKey: "lisboa",
       description: "Todavía en preparación. Déjanos tu email y te avisamos en cuanto abramos plazas.",
       seoTitle: "Lisboa — Derbi de Lisboa | Copa de Ferias",
       seoDescription: "Próximo viaje de Copa de Ferias: el derbi de Lisboa entre Sporting y Benfica.",
-    },
-  });
-  await prisma.event.create({
-    data: {
-      tripId: lisboaTrip.id,
-      homeTeam: lisboaTrip.homeTeam,
-      awayTeam: lisboaTrip.awayTeam,
-      stadium: lisboaTrip.stadium,
-      matchDate: lisboaTrip.matchDate,
-      scheduleStatus: lisboaTrip.scheduleStatus,
-      primaryEvent: true,
-      order: 0,
-    },
-  });
+  };
+  const lisboaTrip = existingLisboa
+    ? await prisma.trip.update({ where: { id: existingLisboa.id }, data: lisboaData })
+    : await prisma.trip.create({ data: { slug: "derbi-lisboa", ...lisboaData } });
+  if (lisboaIsNew) {
+    await prisma.event.create({
+      data: {
+        tripId: lisboaTrip.id,
+        homeTeam: lisboaTrip.homeTeam,
+        awayTeam: lisboaTrip.awayTeam,
+        stadium: lisboaTrip.stadium,
+        matchDate: lisboaTrip.matchDate,
+        scheduleStatus: lisboaTrip.scheduleStatus,
+        primaryEvent: true,
+        order: 0,
+      },
+    });
+  }
 
   // -----------------------------------------------------------------
   // A_TU_AIRE demo products — three genuinely different scenarios for
@@ -550,11 +565,9 @@ async function main() {
   }
 
   // --- DEMO A — Ámsterdam, De Klassieker — TICKET_ONLY only ----------
-  await prisma.trip.deleteMany({ where: { slug: "amsterdam-de-klassieker" } });
-  const demoA = await prisma.trip.create({
-    data: {
+  const existingDemoA = await prisma.trip.findUnique({ where: { slug: "amsterdam-de-klassieker" } });
+  const demoAData = {
       number: 4,
-      slug: "amsterdam-de-klassieker",
       name: "Ámsterdam",
       subtitle: "De Klassieker",
       city: "Ámsterdam",
@@ -565,77 +578,67 @@ async function main() {
       matchDate: nextSaturday(60),
       durationDays: 2,
       durationNights: 1,
-      status: "open",
+      status: "open" as const,
       published: true,
       homeFeatured: true,
       order: 3,
       isDemo: true,
       price: fromPrice(45),
-      scheduleStatus: "confirmed",
-      travelMode: "A_TU_AIRE",
+      scheduleStatus: "confirmed" as const,
+      travelMode: "A_TU_AIRE" as const,
       maxPartySize: 6,
       availablePackageTypes: "TICKET_ONLY",
       heroImageKey: "amsterdam",
       description: "Demo A_TU_AIRE — escenario de entrada suelta, sin hotel ni vuelo en el paquete.",
       seoTitle: "Ámsterdam — De Klassieker | Copa de Ferias",
       seoDescription: "Entrada para el Ajax - Feyenoord, a tu aire.",
-    },
-  });
-  const demoAEvent = await prisma.event.create({
-    data: {
-      tripId: demoA.id,
-      competitionId: competitionByName.get("Eredivisie") ?? null,
-      homeTeam: "Ajax",
-      awayTeam: "Feyenoord",
-      stadium: "Johan Cruijff ArenA",
-      city: "Ámsterdam",
-      country: "Países Bajos",
-      timezone: "Europe/Amsterdam",
-      matchDate: demoA.matchDate,
-      kickoff: new Date(new Date(demoA.matchDate).setHours(20, 0, 0, 0)),
-      scheduleStatus: "confirmed",
-      status: "published",
-      primaryEvent: true,
-      order: 0,
-    },
-  });
-  await prisma.ticketOffer.createMany({
-    data: [
-      {
-        eventId: demoAEvent.id,
-        provider: "manual",
-        category: "General",
-        sector: "Fondo",
-        costNet: 45,
-        currency: "EUR",
-        stock: 100,
-        deliveryType: "digital",
-        active: true,
-      },
-      {
-        eventId: demoAEvent.id,
-        provider: "manual",
-        category: "Tribuna preferente",
-        sector: "Lateral",
-        costNet: 85,
-        currency: "EUR",
-        stock: 30,
-        deliveryType: "digital",
-        active: true,
-      },
-    ],
-  });
+  };
+  const demoA = existingDemoA
+    ? await prisma.trip.update({ where: { id: existingDemoA.id }, data: demoAData })
+    : await prisma.trip.create({ data: { slug: "amsterdam-de-klassieker", ...demoAData } });
+  const demoAEventData = {
+    tripId: demoA.id,
+    competitionId: competitionByName.get("Eredivisie") ?? null,
+    homeTeam: "Ajax",
+    awayTeam: "Feyenoord",
+    stadium: "Johan Cruijff ArenA",
+    city: "Ámsterdam",
+    country: "Países Bajos",
+    timezone: "Europe/Amsterdam",
+    matchDate: demoA.matchDate,
+    kickoff: new Date(new Date(demoA.matchDate).setHours(20, 0, 0, 0)),
+    scheduleStatus: "confirmed" as const,
+    status: "published" as const,
+    primaryEvent: true,
+    order: 0,
+  };
+  const existingDemoAEvent = await prisma.event.findFirst({ where: { tripId: demoA.id, primaryEvent: true } });
+  const demoAEvent = existingDemoAEvent
+    ? await prisma.event.update({ where: { id: existingDemoAEvent.id }, data: demoAEventData })
+    : await prisma.event.create({ data: demoAEventData });
+
+  const demoAOffers = [
+    { category: "General", sector: "Fondo", costNet: 45, currency: "EUR", stock: 100, deliveryType: "digital" as const, active: true },
+    { category: "Tribuna preferente", sector: "Lateral", costNet: 85, currency: "EUR", stock: 30, deliveryType: "digital" as const, active: true },
+  ];
+  for (const offer of demoAOffers) {
+    const existingOffer = await prisma.ticketOffer.findFirst({ where: { eventId: demoAEvent.id, category: offer.category } });
+    const offerData = { eventId: demoAEvent.id, provider: "manual", ...offer };
+    if (existingOffer) {
+      await prisma.ticketOffer.update({ where: { id: existingOffer.id }, data: offerData });
+    } else {
+      await prisma.ticketOffer.create({ data: offerData });
+    }
+  }
 
   // --- DEMO B — Milán, Derby della Madonnina — TICKET_ONLY + TICKET_HOTEL
   // Party sizes needing a triple room (3/5/7/9 travelers) legitimately hit
   // MockHotelProviderA's zero-triple inventory here: it stays the cheaper
   // provider but becomes invalid, so selection must fall through to
   // MockHotelProviderB. Party sizes 1/2/4/6/8 stay within A's inventory.
-  await prisma.trip.deleteMany({ where: { slug: "milan-derby-della-madonnina" } });
-  const demoB = await prisma.trip.create({
-    data: {
+  const existingDemoB = await prisma.trip.findUnique({ where: { slug: "milan-derby-della-madonnina" } });
+  const demoBData = {
       number: 5,
-      slug: "milan-derby-della-madonnina",
       name: "Milán",
       subtitle: "Derby della Madonnina",
       city: "Milán",
@@ -646,46 +649,58 @@ async function main() {
       matchDate: nextSaturday(75),
       durationDays: 3,
       durationNights: 2,
-      status: "open",
+      status: "open" as const,
       published: true,
       homeFeatured: false,
       order: 4,
       isDemo: true,
       price: fromPrice(40),
-      scheduleStatus: "confirmed",
-      travelMode: "A_TU_AIRE",
+      scheduleStatus: "confirmed" as const,
+      travelMode: "A_TU_AIRE" as const,
       maxPartySize: 8,
       availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL",
       heroImageKey: "milan",
       description: "Demo A_TU_AIRE — escenario de entrada + hotel, con estancia de 1 o 2 noches.",
       seoTitle: "Milán — Derby della Madonnina | Copa de Ferias",
       seoDescription: "Entrada (y hotel opcional) para el Inter - Milan, a tu aire.",
-    },
-  });
-  const demoBEvent = await prisma.event.create({
-    data: {
-      tripId: demoB.id,
-      competitionId: competitionByName.get("Serie A") ?? null,
-      homeTeam: "Inter",
-      awayTeam: "Milan",
-      stadium: "Stadio San Siro",
-      city: "Milán",
-      country: "Italia",
-      timezone: "Europe/Rome",
-      matchDate: demoB.matchDate,
-      kickoff: new Date(new Date(demoB.matchDate).setHours(20, 45, 0, 0)),
-      scheduleStatus: "confirmed",
-      status: "published",
-      primaryEvent: true,
-      order: 0,
-    },
-  });
-  await prisma.ticketOffer.createMany({
-    data: [
-      { eventId: demoBEvent.id, provider: "manual", category: "Curva", sector: "Curva Nord", costNet: 40, currency: "EUR", stock: 80, deliveryType: "digital", active: true },
-      { eventId: demoBEvent.id, provider: "manual", category: "Tribuna", sector: "Tribuna Est", costNet: 95, currency: "EUR", stock: 25, deliveryType: "digital", active: true },
-    ],
-  });
+  };
+  const demoB = existingDemoB
+    ? await prisma.trip.update({ where: { id: existingDemoB.id }, data: demoBData })
+    : await prisma.trip.create({ data: { slug: "milan-derby-della-madonnina", ...demoBData } });
+  const demoBEventData = {
+    tripId: demoB.id,
+    competitionId: competitionByName.get("Serie A") ?? null,
+    homeTeam: "Inter",
+    awayTeam: "Milan",
+    stadium: "Stadio San Siro",
+    city: "Milán",
+    country: "Italia",
+    timezone: "Europe/Rome",
+    matchDate: demoB.matchDate,
+    kickoff: new Date(new Date(demoB.matchDate).setHours(20, 45, 0, 0)),
+    scheduleStatus: "confirmed" as const,
+    status: "published" as const,
+    primaryEvent: true,
+    order: 0,
+  };
+  const existingDemoBEvent = await prisma.event.findFirst({ where: { tripId: demoB.id, primaryEvent: true } });
+  const demoBEvent = existingDemoBEvent
+    ? await prisma.event.update({ where: { id: existingDemoBEvent.id }, data: demoBEventData })
+    : await prisma.event.create({ data: demoBEventData });
+
+  const demoBOffers = [
+    { category: "Curva", sector: "Curva Nord", costNet: 40, currency: "EUR", stock: 80, deliveryType: "digital" as const, active: true },
+    { category: "Tribuna", sector: "Tribuna Est", costNet: 95, currency: "EUR", stock: 25, deliveryType: "digital" as const, active: true },
+  ];
+  for (const offer of demoBOffers) {
+    const existingOffer = await prisma.ticketOffer.findFirst({ where: { eventId: demoBEvent.id, category: offer.category } });
+    const offerData = { eventId: demoBEvent.id, provider: "manual", ...offer };
+    if (existingOffer) {
+      await prisma.ticketOffer.update({ where: { id: existingOffer.id }, data: offerData });
+    } else {
+      await prisma.ticketOffer.create({ data: offerData });
+    }
+  }
 
   // --- DEMO C — Londres, doble jornada Premier League ------------------
   // TICKET_ONLY + TICKET_HOTEL + TICKET_HOTEL_FLIGHT, two Events under the
@@ -693,13 +708,11 @@ async function main() {
   // Arsenal PROVISIONAL (Sunday, kickoff not yet fixed — realistic Premier
   // League scheduling). Exercises additionalMatchFee, the multi-match
   // flight-window bounds, and provisional-schedule flight blocking.
-  await prisma.trip.deleteMany({ where: { slug: "londres-doble-jornada" } });
+  const existingDemoC = await prisma.trip.findUnique({ where: { slug: "londres-doble-jornada" } });
   const demoCMatch1Date = nextSaturday(90);
   const demoCMatch2Date = addDays(demoCMatch1Date, 1);
-  const demoC = await prisma.trip.create({
-    data: {
+  const demoCData = {
       number: 6,
-      slug: "londres-doble-jornada",
       name: "Londres",
       subtitle: "Doble jornada Premier League",
       city: "Londres",
@@ -710,66 +723,81 @@ async function main() {
       matchDate: demoCMatch1Date,
       durationDays: 4,
       durationNights: 3,
-      status: "open",
+      status: "open" as const,
       published: true,
       homeFeatured: false,
       order: 5,
       isDemo: true,
       price: fromPrice(60),
-      scheduleStatus: "confirmed",
-      travelMode: "A_TU_AIRE",
+      scheduleStatus: "confirmed" as const,
+      travelMode: "A_TU_AIRE" as const,
       maxPartySize: 10,
       availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
       heroImageKey: "londres",
       description: "Demo A_TU_AIRE — dos partidos en la misma experiencia, con vuelo y hotel opcionales.",
       seoTitle: "Londres — Doble jornada Premier League | Copa de Ferias",
       seoDescription: "Arsenal - Tottenham y Chelsea - Arsenal en el mismo viaje, a tu aire.",
-    },
-  });
-  const demoCEvent1 = await prisma.event.create({
-    data: {
-      tripId: demoC.id,
-      competitionId: competitionByName.get("Premier League") ?? null,
-      homeTeam: "Arsenal",
-      awayTeam: "Tottenham",
-      stadium: "Emirates Stadium",
-      city: "Londres",
-      country: "Reino Unido",
-      timezone: "Europe/London",
-      matchDate: demoCMatch1Date,
-      kickoff: new Date(new Date(demoCMatch1Date).setHours(17, 30, 0, 0)),
-      scheduleStatus: "confirmed",
-      status: "published",
-      primaryEvent: true,
-      order: 0,
-    },
-  });
-  const demoCEvent2 = await prisma.event.create({
-    data: {
-      tripId: demoC.id,
-      competitionId: competitionByName.get("Premier League") ?? null,
-      homeTeam: "Chelsea",
-      awayTeam: "Arsenal",
-      stadium: "Stamford Bridge",
-      city: "Londres",
-      country: "Reino Unido",
-      timezone: "Europe/London",
-      matchDate: demoCMatch2Date,
-      kickoff: null, // provisional — Premier League hasn't fixed the exact kickoff yet
-      scheduleStatus: "time_provisional",
-      status: "published",
-      primaryEvent: false,
-      order: 1,
-    },
-  });
-  await prisma.ticketOffer.createMany({
-    data: [
-      { eventId: demoCEvent1.id, provider: "manual", category: "General", sector: "Clock End", costNet: 60, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
-      { eventId: demoCEvent1.id, provider: "manual", category: "Members", sector: "Club Level", costNet: 120, currency: "EUR", stock: 20, deliveryType: "digital", active: true },
-      { eventId: demoCEvent2.id, provider: "manual", category: "General", sector: "Away end", costNet: 70, currency: "EUR", stock: 50, deliveryType: "digital", active: true },
-      { eventId: demoCEvent2.id, provider: "manual", category: "Members", sector: "Away end premium", costNet: 110, currency: "EUR", stock: 15, deliveryType: "digital", active: true },
-    ],
-  });
+  };
+  const demoC = existingDemoC
+    ? await prisma.trip.update({ where: { id: existingDemoC.id }, data: demoCData })
+    : await prisma.trip.create({ data: { slug: "londres-doble-jornada", ...demoCData } });
+  const demoCEvent1Data = {
+    tripId: demoC.id,
+    competitionId: competitionByName.get("Premier League") ?? null,
+    homeTeam: "Arsenal",
+    awayTeam: "Tottenham",
+    stadium: "Emirates Stadium",
+    city: "Londres",
+    country: "Reino Unido",
+    timezone: "Europe/London",
+    matchDate: demoCMatch1Date,
+    kickoff: new Date(new Date(demoCMatch1Date).setHours(17, 30, 0, 0)),
+    scheduleStatus: "confirmed" as const,
+    status: "published" as const,
+    primaryEvent: true,
+    order: 0,
+  };
+  const existingDemoCEvent1 = await prisma.event.findFirst({ where: { tripId: demoC.id, order: 0 } });
+  const demoCEvent1 = existingDemoCEvent1
+    ? await prisma.event.update({ where: { id: existingDemoCEvent1.id }, data: demoCEvent1Data })
+    : await prisma.event.create({ data: demoCEvent1Data });
+
+  const demoCEvent2Data = {
+    tripId: demoC.id,
+    competitionId: competitionByName.get("Premier League") ?? null,
+    homeTeam: "Chelsea",
+    awayTeam: "Arsenal",
+    stadium: "Stamford Bridge",
+    city: "Londres",
+    country: "Reino Unido",
+    timezone: "Europe/London",
+    matchDate: demoCMatch2Date,
+    kickoff: null, // provisional — Premier League hasn't fixed the exact kickoff yet
+    scheduleStatus: "time_provisional" as const,
+    status: "published" as const,
+    primaryEvent: false,
+    order: 1,
+  };
+  const existingDemoCEvent2 = await prisma.event.findFirst({ where: { tripId: demoC.id, order: 1 } });
+  const demoCEvent2 = existingDemoCEvent2
+    ? await prisma.event.update({ where: { id: existingDemoCEvent2.id }, data: demoCEvent2Data })
+    : await prisma.event.create({ data: demoCEvent2Data });
+
+  const demoCOffers: Array<{ eventId: string; category: string; sector: string; costNet: number; currency: string; stock: number; deliveryType: "digital"; active: boolean }> = [
+    { eventId: demoCEvent1.id, category: "General", sector: "Clock End", costNet: 60, currency: "EUR", stock: 100, deliveryType: "digital", active: true },
+    { eventId: demoCEvent1.id, category: "Members", sector: "Club Level", costNet: 120, currency: "EUR", stock: 20, deliveryType: "digital", active: true },
+    { eventId: demoCEvent2.id, category: "General", sector: "Away end", costNet: 70, currency: "EUR", stock: 50, deliveryType: "digital", active: true },
+    { eventId: demoCEvent2.id, category: "Members", sector: "Away end premium", costNet: 110, currency: "EUR", stock: 15, deliveryType: "digital", active: true },
+  ];
+  for (const offer of demoCOffers) {
+    const existingOffer = await prisma.ticketOffer.findFirst({ where: { eventId: offer.eventId, category: offer.category } });
+    const offerData = { provider: "manual", ...offer };
+    if (existingOffer) {
+      await prisma.ticketOffer.update({ where: { id: existingOffer.id }, data: offerData });
+    } else {
+      await prisma.ticketOffer.create({ data: offerData });
+    }
+  }
 
   // --- DEMO D — Manchester derby — QA/testing product with a fully
   // CONFIRMED schedule (day AND kickoff both fixed), so the entire
@@ -784,62 +812,81 @@ async function main() {
   //   - SVQ: direct Friday outbound but no direct Manchester -> Sevilla
   //     return — excluded entirely, proving round-trip eligibility (§22).
   //   - OVD: no route at all — excluded (§7/§29).
-  await prisma.trip.deleteMany({ where: { slug: "manchester-a-tu-aire" } });
+  // Idempotent by natural key (Trip.slug / Event tripId+primaryEvent /
+  // TicketOffer eventId+category) instead of deleteMany-then-create: this
+  // block runs against persistent PostgreSQL now, where a genuine
+  // CheckoutAttempt/TicketHold/Booking may already reference this Trip's
+  // Event/TicketOffer rows (all FKs onDelete: Restrict) — a bare
+  // deleteMany would either be rejected by Postgres or, worse, wipe and
+  // recreate the row with a NEW id, orphaning that operational data. A
+  // second seed run must only update these canonical demo rows in place.
   const demoDMatchDate = nextSaturday(95);
-  const demoD = await prisma.trip.create({
-    data: {
-      number: 7,
-      slug: "manchester-a-tu-aire",
-      name: "Manchester",
-      subtitle: "Derbi de Manchester",
-      city: "Manchester",
-      country: "Inglaterra",
-      homeTeam: "Manchester City",
-      awayTeam: "Manchester United",
-      stadium: "Etihad Stadium",
-      matchDate: demoDMatchDate,
-      durationDays: 3,
-      durationNights: 2,
-      status: "open",
-      published: true,
-      homeFeatured: true,
-      order: 6,
-      isDemo: true,
-      price: fromPrice(55),
-      scheduleStatus: "confirmed",
-      travelMode: "A_TU_AIRE",
-      maxPartySize: 10,
-      availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
-      heroImageKey: "manchester",
-      description: "Producto de prueba A_TU_AIRE — horario confirmado, pensado para recorrer todo el checkout de principio a fin.",
-      seoTitle: "Manchester — Derbi de Manchester | Copa de Ferias",
-      seoDescription: "Manchester City - Manchester United, a tu aire.",
-    },
+  const demoDTripData = {
+    number: 7,
+    name: "Manchester",
+    subtitle: "Derbi de Manchester",
+    city: "Manchester",
+    country: "Inglaterra",
+    homeTeam: "Manchester City",
+    awayTeam: "Manchester United",
+    stadium: "Etihad Stadium",
+    matchDate: demoDMatchDate,
+    durationDays: 3,
+    durationNights: 2,
+    status: "open" as const,
+    published: true,
+    homeFeatured: true,
+    order: 6,
+    isDemo: true,
+    price: fromPrice(55),
+    scheduleStatus: "confirmed" as const,
+    travelMode: "A_TU_AIRE" as const,
+    maxPartySize: 10,
+    availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
+    heroImageKey: "manchester",
+    description: "Producto de prueba A_TU_AIRE — horario confirmado, pensado para recorrer todo el checkout de principio a fin.",
+    seoTitle: "Manchester — Derbi de Manchester | Copa de Ferias",
+    seoDescription: "Manchester City - Manchester United, a tu aire.",
+  };
+  const demoD = await prisma.trip.upsert({
+    where: { slug: "manchester-a-tu-aire" },
+    update: demoDTripData,
+    create: { slug: "manchester-a-tu-aire", ...demoDTripData },
   });
-  const demoDEvent = await prisma.event.create({
-    data: {
-      tripId: demoD.id,
-      competitionId: competitionByName.get("Premier League") ?? null,
-      homeTeam: "Manchester City",
-      awayTeam: "Manchester United",
-      stadium: "Etihad Stadium",
-      city: "Manchester",
-      country: "Inglaterra",
-      timezone: "Europe/London",
-      matchDate: demoDMatchDate,
-      kickoff: new Date(new Date(demoDMatchDate).setHours(17, 30, 0, 0)),
-      scheduleStatus: "confirmed",
-      status: "published",
-      primaryEvent: true,
-      order: 0,
-    },
-  });
-  await prisma.ticketOffer.createMany({
-    data: [
-      { eventId: demoDEvent.id, provider: "manual", category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital", active: true, restrictions: "Documento de identidad obligatorio en el acceso." },
-      { eventId: demoDEvent.id, provider: "manual", category: "Members", sector: "Tier 1", costNet: 105, currency: "EUR", stock: 25, deliveryType: "digital", active: true },
-    ],
-  });
+  const demoDEventData = {
+    tripId: demoD.id,
+    competitionId: competitionByName.get("Premier League") ?? null,
+    homeTeam: "Manchester City",
+    awayTeam: "Manchester United",
+    stadium: "Etihad Stadium",
+    city: "Manchester",
+    country: "Inglaterra",
+    timezone: "Europe/London",
+    matchDate: demoDMatchDate,
+    kickoff: new Date(new Date(demoDMatchDate).setHours(17, 30, 0, 0)),
+    scheduleStatus: "confirmed" as const,
+    status: "published" as const,
+    primaryEvent: true,
+    order: 0,
+  };
+  const existingDemoDEvent = await prisma.event.findFirst({ where: { tripId: demoD.id, primaryEvent: true } });
+  const demoDEvent = existingDemoDEvent
+    ? await prisma.event.update({ where: { id: existingDemoDEvent.id }, data: demoDEventData })
+    : await prisma.event.create({ data: demoDEventData });
+
+  const demoDOffers = [
+    { category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital" as const, active: true, restrictions: "Documento de identidad obligatorio en el acceso." },
+    { category: "Members", sector: "Tier 1", costNet: 105, currency: "EUR", stock: 25, deliveryType: "digital" as const, active: true },
+  ];
+  for (const offer of demoDOffers) {
+    const existingOffer = await prisma.ticketOffer.findFirst({ where: { eventId: demoDEvent.id, category: offer.category } });
+    const offerData = { eventId: demoDEvent.id, provider: "manual", ...offer };
+    if (existingOffer) {
+      await prisma.ticketOffer.update({ where: { id: existingOffer.id }, data: offerData });
+    } else {
+      await prisma.ticketOffer.create({ data: offerData });
+    }
+  }
 
   // -----------------------------------------------------------------
   // Mi Viaje demo — a stable, fixed-token A_TU_AIRE booking on the
@@ -849,7 +896,13 @@ async function main() {
   // conditional section (hotel/rooming/vuelos) has something real to show.
   // Clearly demo data throughout (buyer/traveler names, emails, documents).
   // -----------------------------------------------------------------
-  await prisma.booking.deleteMany({ where: { reference: "CDF-DEMOMAN1" } });
+  // Idempotent by Booking.reference (unique). A CheckoutAttempt/TicketHold
+  // referencing this trip's real, operational bookings must never be
+  // affected by re-running this block, so we upsert this one demo booking
+  // in place rather than delete-then-create it. The nested
+  // Traveler/BookingDocument/BookingUpdate/BookingAction rows are only
+  // ever created the first time this booking is seeded — once it exists
+  // they're left untouched, so a reseed never duplicates them.
   const demoMiViajeOutbound = addDays(demoDMatchDate, -1);
   const demoMiViajeReturn = addDays(demoDMatchDate, 1);
   // Frozen once here, exactly like createAtuAireBooking does for a real
@@ -859,116 +912,121 @@ async function main() {
   const demoHotelCheckOut = addDays(demoDMatchDate, 1);
   const demoRoomMix = computeRequiredRoomMix(2);
   const demoRoomingSnapshot = JSON.stringify(assignTravelersToRooms(2, demoRoomMix));
-  const demoMiViajeBooking = await prisma.booking.create({
-    data: {
-      reference: "CDF-DEMOMAN1",
-      tripId: demoD.id,
-      buyerFirstName: "Demo",
-      buyerLastName: "Mi Viaje",
-      buyerEmail: "demo.mi.viaje@example.com",
-      buyerPhone: "+34600000001",
-      originCity: "Madrid",
-      travelersCount: 2,
-      totalPrice: 830,
-      currency: "EUR",
-      paymentProvider: "demo",
-      paymentStatus: "paid",
-      bookingStatus: "confirmed",
-      accessToken: "demo-manchester-atu-aire",
-      packageType: "TICKET_HOTEL_FLIGHT",
-      partySize: 2,
-      ticketCount: 2,
-      hotelSelectionSnapshot: JSON.stringify({
-        hotelOfferId: "demo-hotel-central-manchester",
-        name: "Hotel Central Manchester",
-        nights: 2,
-        perPersonPrice: 90,
-        checkIn: demoHotelCheckIn,
-        checkOut: demoHotelCheckOut,
-      }),
-      roomingSnapshot: demoRoomingSnapshot,
-      flightSelectionSnapshot: JSON.stringify({
-        outboundLegId: "demo-leg-out",
-        returnLegId: "demo-leg-ret",
-        originAirport: "MAD",
-        destinationAirport: "MAN",
-        outboundDeparture: new Date(new Date(demoMiViajeOutbound).setHours(8, 20, 0, 0)),
-        returnDeparture: new Date(new Date(demoMiViajeReturn).setHours(17, 40, 0, 0)),
-        outboundPricePerPerson: 34,
-        returnPricePerPerson: 34,
-      }),
-      priceBreakdownSnapshot: JSON.stringify({ perPerson: 415, total: 830, ticketSelections: { [demoDEvent.id]: "General" } }),
-    },
-  });
-  await prisma.traveler.createMany({
-    data: [
-      {
+  const demoMiViajeBookingData = {
+    tripId: demoD.id,
+    buyerFirstName: "Demo",
+    buyerLastName: "Mi Viaje",
+    buyerEmail: "demo.mi.viaje@example.com",
+    buyerPhone: "+34600000001",
+    originCity: "Madrid",
+    travelersCount: 2,
+    totalPrice: 830,
+    currency: "EUR",
+    paymentProvider: "demo" as const,
+    paymentStatus: "paid" as const,
+    bookingStatus: "confirmed" as const,
+    accessToken: "demo-manchester-atu-aire",
+    packageType: "TICKET_HOTEL_FLIGHT" as const,
+    partySize: 2,
+    ticketCount: 2,
+    hotelSelectionSnapshot: JSON.stringify({
+      hotelOfferId: "demo-hotel-central-manchester",
+      name: "Hotel Central Manchester",
+      nights: 2,
+      perPersonPrice: 90,
+      checkIn: demoHotelCheckIn,
+      checkOut: demoHotelCheckOut,
+    }),
+    roomingSnapshot: demoRoomingSnapshot,
+    flightSelectionSnapshot: JSON.stringify({
+      outboundLegId: "demo-leg-out",
+      returnLegId: "demo-leg-ret",
+      originAirport: "MAD",
+      destinationAirport: "MAN",
+      outboundDeparture: new Date(new Date(demoMiViajeOutbound).setHours(8, 20, 0, 0)),
+      returnDeparture: new Date(new Date(demoMiViajeReturn).setHours(17, 40, 0, 0)),
+      outboundPricePerPerson: 34,
+      returnPricePerPerson: 34,
+    }),
+    priceBreakdownSnapshot: JSON.stringify({ perPerson: 415, total: 830, ticketSelections: { [demoDEvent.id]: "General" } }),
+  };
+  const existingMiViajeBooking = await prisma.booking.findUnique({ where: { reference: "CDF-DEMOMAN1" } });
+  const demoMiViajeBooking = existingMiViajeBooking
+    ? await prisma.booking.update({ where: { id: existingMiViajeBooking.id }, data: demoMiViajeBookingData })
+    : await prisma.booking.create({ data: { reference: "CDF-DEMOMAN1", ...demoMiViajeBookingData } });
+
+  if (!existingMiViajeBooking) {
+    await prisma.traveler.createMany({
+      data: [
+        {
+          bookingId: demoMiViajeBooking.id,
+          firstName: "Demo",
+          lastName: "Viajero Mi Viaje",
+          birthDate: new Date(1990, 4, 12),
+          nationality: "España",
+          docType: "dni",
+          docNumber: "12345678A",
+          docExpiry: new Date(2031, 0, 1),
+          docCountry: "España",
+          phone: "+34600000001",
+          emergencyContactName: "Contacto Emergencia Uno",
+          emergencyContactPhone: "+34600000099",
+          originAirport: "MAD",
+          order: 0,
+        },
+        {
+          bookingId: demoMiViajeBooking.id,
+          firstName: "Demo",
+          lastName: "Acompañante Mi Viaje",
+          birthDate: new Date(1992, 8, 3),
+          nationality: "España",
+          docType: "passport",
+          docNumber: "AB1234567",
+          docExpiry: new Date(2030, 5, 1),
+          docCountry: "España",
+          phone: "+34600000002",
+          emergencyContactName: "Contacto Emergencia Uno",
+          emergencyContactPhone: "+34600000099",
+          originAirport: "MAD",
+          order: 1,
+        },
+      ],
+    });
+    await prisma.bookingDocument.createMany({
+      data: [
+        { bookingId: demoMiViajeBooking.id, type: "ticket", eventId: demoDEvent.id, status: "delivered" },
+        { bookingId: demoMiViajeBooking.id, type: "hotel", status: "available" },
+        { bookingId: demoMiViajeBooking.id, type: "flight", status: "pending" },
+      ],
+    });
+    await prisma.bookingUpdate.createMany({
+      data: [
+        { bookingId: demoMiViajeBooking.id, title: "Tu entrada está disponible.", message: "", createdAt: addDays(new Date(), -20) },
+        { bookingId: demoMiViajeBooking.id, title: "El horario del partido ha sido confirmado.", message: "Manchester City – Manchester United, 17:30 hora local.", createdAt: addDays(new Date(), -12) },
+        { bookingId: demoMiViajeBooking.id, title: "Tu hotel está confirmado.", message: "Hotel Central Manchester, 2 noches.", createdAt: addDays(new Date(), -3) },
+      ],
+    });
+    // Dev/demo only — a single clearly-fictitious pending action so the
+    // "Acciones necesarias" block has something real to render (correction
+    // microblock §11/§18). createAtuAireBooking never creates BookingAction
+    // rows on its own for a real purchase.
+    await prisma.bookingAction.create({
+      data: {
         bookingId: demoMiViajeBooking.id,
-        firstName: "Demo",
-        lastName: "Viajero Mi Viaje",
-        birthDate: new Date(1990, 4, 12),
-        nationality: "España",
-        docType: "dni",
-        docNumber: "12345678A",
-        docExpiry: new Date(2031, 0, 1),
-        docCountry: "España",
-        phone: "+34600000001",
-        emergencyContactName: "Contacto Emergencia Uno",
-        emergencyContactPhone: "+34600000099",
-        originAirport: "MAD",
-        order: 0,
+        type: "hotel_checkin",
+        title: "Completa el check-in del hotel",
+        description: "Hotel Central Manchester requiere completar el check-in online antes de tu llegada.",
+        status: "pending",
+        dueAt: demoHotelCheckIn,
       },
-      {
-        bookingId: demoMiViajeBooking.id,
-        firstName: "Demo",
-        lastName: "Acompañante Mi Viaje",
-        birthDate: new Date(1992, 8, 3),
-        nationality: "España",
-        docType: "passport",
-        docNumber: "AB1234567",
-        docExpiry: new Date(2030, 5, 1),
-        docCountry: "España",
-        phone: "+34600000002",
-        emergencyContactName: "Contacto Emergencia Uno",
-        emergencyContactPhone: "+34600000099",
-        originAirport: "MAD",
-        order: 1,
-      },
-    ],
-  });
-  await prisma.bookingDocument.createMany({
-    data: [
-      { bookingId: demoMiViajeBooking.id, type: "ticket", eventId: demoDEvent.id, status: "delivered" },
-      { bookingId: demoMiViajeBooking.id, type: "hotel", status: "available" },
-      { bookingId: demoMiViajeBooking.id, type: "flight", status: "pending" },
-    ],
-  });
-  await prisma.bookingUpdate.createMany({
-    data: [
-      { bookingId: demoMiViajeBooking.id, title: "Tu entrada está disponible.", message: "", createdAt: addDays(new Date(), -20) },
-      { bookingId: demoMiViajeBooking.id, title: "El horario del partido ha sido confirmado.", message: "Manchester City – Manchester United, 17:30 hora local.", createdAt: addDays(new Date(), -12) },
-      { bookingId: demoMiViajeBooking.id, title: "Tu hotel está confirmado.", message: "Hotel Central Manchester, 2 noches.", createdAt: addDays(new Date(), -3) },
-    ],
-  });
-  // Dev/demo only — a single clearly-fictitious pending action so the
-  // "Acciones necesarias" block has something real to render (correction
-  // microblock §11/§18). createAtuAireBooking never creates BookingAction
-  // rows on its own for a real purchase.
-  await prisma.bookingAction.create({
-    data: {
-      bookingId: demoMiViajeBooking.id,
-      type: "hotel_checkin",
-      title: "Completa el check-in del hotel",
-      description: "Hotel Central Manchester requiere completar el check-in online antes de tu llegada.",
-      status: "pending",
-      dueAt: demoHotelCheckIn,
-    },
-  });
+    });
+  }
 
   // -----------------------------------------------------------------
-  // Demo leads (notify + waitlist)
+  // Demo leads (notify + waitlist) — idempotent by (tripId, email): a
+  // bare deleteMany() here would also wipe real "avísame" signups left
+  // by actual site visitors, not just this seed's own demo rows.
   // -----------------------------------------------------------------
-  await prisma.lead.deleteMany();
   const futbolIngles = await prisma.trip.findUniqueOrThrow({ where: { slug: "futbol-ingles" } });
   const lisboa = await prisma.trip.findUniqueOrThrow({ where: { slug: "derbi-lisboa" } });
 
@@ -980,15 +1038,21 @@ async function main() {
     { tripId: lisboa.id, name: "Demo Interesado 5", email: "demo5@example.com", city: "Sevilla" },
   ];
   for (const l of demoLeads) {
-    await prisma.lead.create({
-      data: { ...l, type: "notify", consent: true },
-    });
+    const existingLead = await prisma.lead.findFirst({ where: { tripId: l.tripId, email: l.email } });
+    if (!existingLead) {
+      await prisma.lead.create({
+        data: { ...l, type: "notify", consent: true },
+      });
+    }
   }
 
   // -----------------------------------------------------------------
-  // Demo bookings for Belgrado (seed data, clearly fictitious)
+  // Demo bookings for Belgrado (seed data, clearly fictitious) — only
+  // ever seeded once (guarded by belgradoIsNew): booking.deleteMany +
+  // recreate-with-random-reference would both destroy any real booking
+  // on this trip and duplicate these demo ones on every reseed.
   // -----------------------------------------------------------------
-  await prisma.booking.deleteMany({ where: { tripId: belgrado.id } });
+  if (belgradoIsNew) {
 
   type DemoBooking = {
     buyerFirstName: string;
@@ -1078,6 +1142,7 @@ async function main() {
   }
 
   await prisma.trip.update({ where: { id: belgrado.id }, data: { soldSpots: totalSold } });
+  } // belgradoIsNew
 
   // -----------------------------------------------------------------
   // Email templates

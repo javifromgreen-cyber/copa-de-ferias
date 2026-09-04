@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { createCheckoutAttempt } from "@/lib/checkout-saga/createCheckoutAttempt";
 import { acquireTicketHold, releaseExpiredTicketHolds } from "@/lib/checkout-saga/ticketHold";
@@ -78,8 +78,14 @@ describe("E — insufficient stock", () => {
   });
 });
 
-describe("F — two attempts competing for the last unit of stock", () => {
-  it("exactly one of two concurrent acquisitions succeeds; the other is correctly rejected — no oversell", async () => {
+describe("F — two attempts competing for the last unit of stock (REAL PostgreSQL concurrency, no mocking)", () => {
+  it("stock=1 + two genuinely concurrent acquireTicketHold calls -> exactly one HELD, the other insufficient_stock", async () => {
+    // This runs against a real Postgres connection (see prisma/schema.prisma
+    // and .env's DATABASE_URL) — the two acquireTicketHold calls below
+    // truly race at the database level via Promise.all, and correctness
+    // here depends on acquireTicketHold's own `SELECT ... FOR UPDATE`
+    // transaction (ticketHold.ts), not on any test-level mocking or
+    // artificial serialization.
     const ticketOfferId = await createTicketOffer(1);
     const attemptA = await createAttempt();
     const attemptB = await createAttempt();
