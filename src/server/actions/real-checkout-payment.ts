@@ -2,15 +2,16 @@
 
 import { prisma } from "@/lib/db";
 import { createPaymentAuthorization, verifyAndApplyAuthorization } from "@/lib/checkout-saga/payment";
+import { progressCapturedCheckoutAttempt } from "@/lib/checkout-saga/capture";
 import { getAuthorization } from "@/lib/providers/payments/stripe/authorization";
 
 /**
- * Fase 3A §18 — the ONLY entry points the browser has into the payment
- * saga, both gated by CheckoutAttempt.accessToken (the same opaque,
- * unguessable token resumeCheckoutAttempt.ts already uses for
- * READY_TO_PAY) — NEVER a raw CheckoutAttempt.id. A guessed/garbage
- * token, or another customer's real token, resolves to nothing and both
- * actions return a generic failure — never leaking whether a token
+ * Fase 3A §18, extended Fase 3B.1 — the ONLY entry points the browser has
+ * into the payment saga, all gated by CheckoutAttempt.accessToken (the
+ * same opaque, unguessable token resumeCheckoutAttempt.ts already uses
+ * for READY_TO_PAY) — NEVER a raw CheckoutAttempt.id. A guessed/garbage
+ * token, or another customer's real token, resolves to nothing and every
+ * action returns a generic failure — never leaking whether a token
  * merely doesn't exist vs. belongs to someone else.
  */
 
@@ -68,19 +69,10 @@ export async function startPaymentAuthorization(accessToken: string, fetchImpl?:
   return result;
 }
 
-export type PaymentAuthorizationStatusView = {
-  /**
-   * Fase 3A §19 — deliberately just enough for the UI to branch between
-   * "not started yet, safe to begin" (ready), "still filling in card
-   * details / 3DS in progress" (authorizing), "pago autorizado (dev-only
-   * barrier copy)" (authorized), and terminal/error states — never
-   * CheckoutAttempt internals beyond that. This single check is also the
-   * ONE entry point the payment UI uses to decide what to render on
-   * mount, whether that's right after CONTINUAR or a page refresh/3DS
-   * return — never trusting client-side state either way (§17).
-   */
-  stage: "ready" | "authorizing" | "authorized" | "failed" | "voided" | "not_payable";
-};
+export type PaymentAuthorizationStatusView =
+  | { stage: "ready" | "authorizing" | "authorized" | "failed" | "voided" | "not_payable" }
+  | { stage: "blocked"; message: string }
+  | { stage: "confirmed"; bookingAccessToken: string; reference: string };
 
 /**
  * Fase 3A §17 — the resume/refresh entry point: the frontend NEVER
@@ -90,6 +82,15 @@ export type PaymentAuthorizationStatusView = {
  * CheckoutAttempt, consulting Stripe fresh when the attempt is still
  * mid-authorization so a webhook that hasn't arrived yet doesn't leave
  * the customer stuck looking at a stale "authorizing" screen.
+ *
+ * Fase 3B.1 — extended with two more terminal-ish views: "confirmed" (a
+ * Booking already exists — §11 "si Booking ya existe, mostrar CONFIRMED /
+ * Mi Viaje", read straight from the DB, no side effects) and "blocked"
+ * (TICKET_HOTEL/TICKET_HOTEL_FLIGHT reached PAYMENT_AUTHORIZED but this
+ * phase never fulfills/captures those — §17's explicit barrier). This
+ * function still only VERIFIES/reads state (plus the pre-existing
+ * payment_authorizing self-heal above) — it never itself drives
+ * capture/finalization forward; that is confirmRealCheckout's job below.
  */
 export async function getPaymentAuthorizationStatus(accessToken: string): Promise<PaymentAuthorizationStatusView> {
   if (!accessToken) return { stage: "not_payable" };
@@ -111,12 +112,64 @@ export async function getPaymentAuthorizationStatus(accessToken: string): Promis
     case "ready_to_pay":
       return { stage: "ready" };
     case "payment_authorized":
+    case "fulfilling":
+    case "payment_capturing":
+    case "finalizing":
+      if (attempt.packageType !== "TICKET_ONLY") {
+        return { stage: "blocked", message: "Fulfillment de esta modalidad aún no habilitado." };
+      }
       return { stage: "authorized" };
     case "payment_authorizing":
       return attempt.paymentStatus === "failed" ? { stage: "failed" } : { stage: "authorizing" };
+    case "confirmed": {
+      if (!attempt.bookingId) return { stage: "not_payable" };
+      const booking = await prisma.booking.findUnique({ where: { id: attempt.bookingId } });
+      if (!booking) return { stage: "not_payable" };
+      return { stage: "confirmed", bookingAccessToken: booking.accessToken, reference: booking.reference };
+    }
     case "failed":
       return attempt.paymentStatus === "voided" ? { stage: "voided" } : { stage: "failed" };
     default:
       return { stage: "not_payable" };
+  }
+}
+
+export type ConfirmRealCheckoutResult =
+  | { ok: true; stage: "confirmed"; bookingAccessToken: string; reference: string }
+  | { ok: true; stage: "processing" }
+  | { ok: false; error: string };
+
+/**
+ * Fase 3B.1 §1/§2/§11/§12 — the ONE action that drives an already-
+ * PAYMENT_AUTHORIZED, TICKET_ONLY CheckoutAttempt through Stripe TEST
+ * capture and local finalization to CONFIRMED. Thin accessToken-gated
+ * wrapper around progressCapturedCheckoutAttempt (capture.ts) — all the
+ * actual policy (check-before-capture, timeout reconciliation, the
+ * TICKET_ONLY barrier, idempotent finalization) lives there. Safe to
+ * call more than once for the same attempt (§11 refresh/retry, §12
+ * double click): a repeat call after "confirmed" just re-reads the same
+ * Booking; a repeat call after "processing" resumes from wherever the
+ * previous call left off, never re-captures, never creates a second
+ * Booking.
+ */
+export async function confirmRealCheckout(accessToken: string): Promise<ConfirmRealCheckoutResult> {
+  if (!accessToken) return { ok: false, error: "Intento de compra no encontrado." };
+  const attempt = await prisma.checkoutAttempt.findUnique({ where: { accessToken } });
+  if (!attempt) return { ok: false, error: "Intento de compra no encontrado." };
+
+  const result = await progressCapturedCheckoutAttempt(attempt.id);
+  switch (result.outcome) {
+    case "confirmed":
+      return { ok: true, stage: "confirmed", bookingAccessToken: result.accessToken, reference: result.reference };
+    case "blocked":
+      return { ok: false, error: result.reason };
+    case "retry":
+      return { ok: true, stage: "processing" };
+    case "recovery_required":
+      return { ok: false, error: "No se pudo verificar el pago. Un humano revisará este intento — vuelve a intentarlo en unos minutos." };
+    case "failed":
+      return { ok: false, error: "El pago no se pudo completar." };
+    case "not_applicable":
+      return { ok: false, error: "Este intento de compra no está listo para confirmarse." };
   }
 }

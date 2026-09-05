@@ -4,16 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { loadStripe, type Stripe as StripeJs } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { Button } from "@/components/ui/Button";
-import { startPaymentAuthorization, getPaymentAuthorizationStatus } from "@/server/actions/real-checkout-payment";
+import { startPaymentAuthorization, getPaymentAuthorizationStatus, confirmRealCheckout } from "@/server/actions/real-checkout-payment";
 
 /**
- * Fase 3A §9/§10/§18/§19 — the real Stripe TEST Payment Element,
- * replacing ReadyToPaySummary's old disabled placeholder button. This is
- * the ONLY place in the app that ever touches the Stripe.js SDK; it
- * never receives or handles a raw card number/CVC itself — Stripe's own
- * iframe-hosted Payment Element does, and only client_secret (fetched
- * once via the accessToken-gated startPaymentAuthorization server
- * action) ever reaches this component.
+ * Fase 3A §9/§10/§18/§19, extended Fase 3B.1 — the real Stripe TEST
+ * Payment Element, replacing ReadyToPaySummary's old disabled placeholder
+ * button. This is the ONLY place in the app that ever touches the
+ * Stripe.js SDK; it never receives or handles a raw card number/CVC
+ * itself — Stripe's own iframe-hosted Payment Element does, and only
+ * client_secret (fetched once via the accessToken-gated
+ * startPaymentAuthorization server action) ever reaches this component.
  *
  * On mount it ALWAYS asks the server what stage this attempt is
  * actually in (getPaymentAuthorizationStatus) before deciding what to
@@ -21,10 +21,13 @@ import { startPaymentAuthorization, getPaymentAuthorizationStatus } from "@/serv
  * right after CONTINUAR or a page refresh/3DS redirect return (§17):
  * the browser never decides for itself whether a payment happened.
  *
- * §19 — once authorized, this shows ONLY a dev-only barrier message
- * ("pago autorizado en Stripe TEST, la reserva de proveedores sigue
- * desactivada en esta fase") — never "reserva confirmada", never a
- * Booking/Mi Viaje reference, because neither exists yet in this phase.
+ * Fase 3B.1 §1/§20 — once authorized, this no longer stops at a dev-only
+ * barrier: it immediately calls confirmRealCheckout (real-checkout-payment.ts),
+ * which drives Stripe TEST capture + local finalization to CONFIRMED
+ * (capture.ts), then shows "Reserva confirmada" with a link to Mi Viaje.
+ * TICKET_HOTEL/TICKET_HOTEL_FLIGHT (not fulfillable yet) surface as an
+ * explicit blocked message instead — never silently stuck, never a fake
+ * "confirmada".
  */
 
 let stripePromise: Promise<StripeJs | null> | null = null;
@@ -33,7 +36,7 @@ function getStripePromise(publishableKey: string): Promise<StripeJs | null> {
   return stripePromise;
 }
 
-type Stage = "checking" | "starting" | "form" | "submitting" | "authorized" | "error";
+type Stage = "checking" | "starting" | "form" | "authorized" | "confirmed" | "error";
 
 function PaymentForm({ accessToken, onResolved }: { accessToken: string; onResolved: (stage: Stage, message?: string) => void }) {
   const stripe = useStripe();
@@ -96,6 +99,7 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [publishableKey, setPublishableKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [bookingInfo, setBookingInfo] = useState<{ accessToken: string; reference: string } | null>(null);
   // React dev-mode StrictMode intentionally double-invokes this effect
   // (mount -> cleanup -> mount again, synchronously, before any `await`
   // inside `begin()` below has a chance to resume). Unlike a pure
@@ -119,7 +123,20 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
       const status = await getPaymentAuthorizationStatus(accessToken);
       if (!mountedRef.current) return;
 
+      if (status.stage === "confirmed") {
+        // §11 — the browser may have closed before ever seeing this;
+        // reconstructed straight from the DB, no side effects.
+        setBookingInfo({ accessToken: status.bookingAccessToken, reference: status.reference });
+        setStage("confirmed");
+        return;
+      }
+      if (status.stage === "blocked") {
+        setStage("error");
+        setMessage(status.message);
+        return;
+      }
       if (status.stage === "authorized") {
+        // Triggers the confirm effect below — never a static dead end.
         setStage("authorized");
         return;
       }
@@ -158,6 +175,47 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
 
   const stripePromiseMemo = useMemo(() => (publishableKey ? getStripePromise(publishableKey) : null), [publishableKey]);
 
+  // Fase 3B.1 §1/§11/§12 — the single trigger for capture+finalization:
+  // fires whenever `stage` becomes "authorized", whether that came from
+  // `begin()` above (mount-time resume — §11's refresh scenario) or from
+  // PaymentForm's onResolved("authorized") right after a fresh card
+  // confirmation. `confirmStartedForToken` guards it exactly like
+  // `startedForToken` guards `begin()` above — StrictMode's dev-mode
+  // double-invoke must still only ever call confirmRealCheckout once per
+  // accessToken (it is NOT re-safe to call twice concurrently for
+  // wholly unrelated reasons — it IS idempotent, per capture.ts's own
+  // doc comment — but there is no reason to double the network round
+  // trip either).
+  const confirmStartedForToken = useRef<string | null>(null);
+  useEffect(() => {
+    if (stage !== "authorized") return;
+
+    async function confirm() {
+      const result = await confirmRealCheckout(accessToken);
+      if (!mountedRef.current) return;
+      if (!result.ok) {
+        setStage("error");
+        setMessage(result.error);
+        return;
+      }
+      if (result.stage === "confirmed") {
+        setBookingInfo({ accessToken: result.bookingAccessToken, reference: result.reference });
+        setStage("confirmed");
+        return;
+      }
+      // "processing" — capture/finalization is in a safe-to-retry
+      // ambiguous state (§4/§13): never silent, and never guessed at as
+      // success or failure.
+      setStage("error");
+      setMessage("Estamos verificando tu pago con Stripe. Recarga esta página en unos segundos para comprobar el estado.");
+    }
+
+    if (confirmStartedForToken.current !== accessToken) {
+      confirmStartedForToken.current = accessToken;
+      void confirm();
+    }
+  }, [stage, accessToken]);
+
   // Defense in depth: `begin()` above should never call setStage("form")
   // without both clientSecret and publishableKey already set (the server
   // action itself now refuses to return "action_required" without a
@@ -183,12 +241,21 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
   }
 
   if (stage === "authorized") {
-    // §19 — dev-only barrier copy. Never "reserva confirmada" — no
-    // Booking/fulfillment exists in this phase.
+    // Transient — confirmRealCheckout is already in flight (see the
+    // effect above) and will move this to "confirmed" or "error". Never
+    // a static "pago autorizado" dead end: capture+finalization now
+    // follow automatically.
+    return <p className="text-sm text-carbon/70">Procesando reserva...</p>;
+  }
+
+  if (stage === "confirmed" && bookingInfo) {
     return (
-      <div data-testid="payment-authorized" className="border border-carbon/20 bg-ivory p-4 text-sm">
-        <p className="font-semibold">Pago autorizado correctamente en Stripe TEST.</p>
-        <p className="text-carbon/70">La reserva de proveedores todavía está desactivada en esta fase.</p>
+      <div data-testid="booking-confirmed" className="border border-carbon/20 bg-ivory p-4 text-sm">
+        <p className="font-semibold">Reserva confirmada.</p>
+        <p className="mb-3 text-carbon/70">Referencia {bookingInfo.reference} · pagado con Stripe TEST.</p>
+        <a href={`/mi-viaje/${bookingInfo.accessToken}`} className="inline-block underline">
+          Ir a Mi Viaje
+        </a>
       </div>
     );
   }

@@ -1,15 +1,15 @@
 import type Stripe from "stripe";
 import { getStripeClient, mapStripeError } from "./client";
-import type { CreateAuthorizationParams, PaymentAuthorization, PaymentAuthorizationStatus } from "./types";
+import type { CreateAuthorizationParams, PaymentAuthorization, PaymentAuthorizationStatus, CaptureAuthorizationParams } from "./types";
 
 /** The minimal slice of the Stripe SDK this adapter actually calls — narrow on purpose so unit tests can inject a small fake instead of the real SDK (same fetchImpl-injection spirit as duffel/nuitee's clients). */
 export type StripePaymentIntentsClient = Pick<Stripe, "paymentIntents">;
 
 /**
- * Fase 3A §15 — maps a raw Stripe PaymentIntent into this codebase's own
- * PaymentAuthorizationStatus vocabulary. Never inflates the domain enum —
- * every branch below produces a value PaymentComponentStatus (prisma
- * schema) already has room for.
+ * Fase 3A §15, updated Fase 3B.1 — maps a raw Stripe PaymentIntent into
+ * this codebase's own PaymentAuthorizationStatus vocabulary. Never
+ * inflates the domain enum — every branch below produces a value
+ * PaymentComponentStatus (prisma schema) already has room for.
  *
  * - requires_payment_method, no last_payment_error yet -> "authorizing"
  *   (fresh PaymentIntent, customer hasn't submitted the Payment Element
@@ -23,11 +23,9 @@ export type StripePaymentIntentsClient = Pick<Stripe, "paymentIntents">;
  * - requires_capture -> "authorized" (manual-capture's whole point: funds
  *   are authorized and capturable, nothing captured yet).
  * - canceled -> "voided".
- * - succeeded -> "authorized" too, defensively: this phase never calls
- *   capture() itself, so a PaymentIntent reaching `succeeded` here would
- *   mean it was captured by something OUTSIDE this codebase (never
- *   expected in normal operation) — treated the same as "funds are
- *   secured", never silently ignored or mis-mapped to "failed".
+ * - succeeded -> "captured" (Fase 3B.1: this codebase now calls
+ *   capture() itself — see captureAuthorization below — so `succeeded`
+ *   genuinely means the funds were captured, not merely authorized).
  * - anything else -> "unknown" (a future Stripe status this mapping
  *   hasn't been taught yet, rather than guessing).
  */
@@ -40,8 +38,9 @@ export function mapPaymentIntentStatus(pi: Pick<Stripe.PaymentIntent, "status" |
     case "processing":
       return "authorizing";
     case "requires_capture":
-    case "succeeded":
       return "authorized";
+    case "succeeded":
+      return "captured";
     case "canceled":
       return "voided";
     default:
@@ -59,6 +58,7 @@ function toDomain(pi: Stripe.PaymentIntent): PaymentAuthorization {
     amountMinorUnits: pi.amount,
     currency: pi.currency.toUpperCase(),
     amountCapturableMinorUnits: pi.amount_capturable,
+    amountReceivedMinorUnits: pi.amount_received,
     captureMethod: pi.capture_method,
     livemode: pi.livemode,
     hasKnownFailure: Boolean(pi.last_payment_error),
@@ -120,6 +120,35 @@ export async function getAuthorization(paymentIntentId: string, stripeClient: St
 export async function cancelAuthorization(paymentIntentId: string, stripeClient: StripePaymentIntentsClient = getStripeClient()): Promise<PaymentAuthorization> {
   try {
     const pi = await stripeClient.paymentIntents.cancel(paymentIntentId);
+    return toDomain(pi);
+  } catch (err) {
+    throw mapStripeError(err);
+  }
+}
+
+/**
+ * Fase 3B.1 §3 — captures a manual-capture PaymentIntent for EXACTLY
+ * `params.amountMinorUnits` (Stripe's own `amount_to_capture`), never the
+ * PaymentIntent's full authorized amount by default — the caller
+ * (capture.ts) always derives this from the CheckoutAttempt's own
+ * FinalQuoteSnapshot, never from any client-supplied number. Like
+ * createAuthorization, `params.idempotencyKey` is always the caller's
+ * responsibility (see idempotency.ts's paymentIntentCaptureIdempotencyKey)
+ * — the SAME call twice (a retried server action after a timeout, a
+ * concurrent double request) always resolves to Stripe's own idempotent
+ * response, never a second, unwanted capture.
+ *
+ * This function is deliberately dumb: it does not check the
+ * PaymentIntent's current status first, does not retry on error, and
+ * does not interpret an error as "maybe it actually captured" — all of
+ * that policy (check-before-capture, timeout reconciliation via a fresh
+ * GET, treating an already-succeeded PaymentIntent as done rather than
+ * erroring) lives in capture.ts's capturePaymentIntent(), the one and
+ * only caller this adapter function is meant to have.
+ */
+export async function captureAuthorization(paymentIntentId: string, params: CaptureAuthorizationParams, stripeClient: StripePaymentIntentsClient = getStripeClient()): Promise<PaymentAuthorization> {
+  try {
+    const pi = await stripeClient.paymentIntents.capture(paymentIntentId, { amount_to_capture: params.amountMinorUnits }, { idempotencyKey: params.idempotencyKey });
     return toDomain(pi);
   } catch (err) {
     throw mapStripeError(err);

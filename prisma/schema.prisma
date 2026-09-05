@@ -757,6 +757,15 @@ enum CheckoutAttemptEventType {
   payment_webhook_processed
   payment_abandoned_released
   payment_unverifiable
+
+  // Fase 3B.1 — TICKET_ONLY manual capture + local finalization (see
+  // src/lib/checkout-saga/capture.ts). Same sanitized-only convention:
+  // Stripe status/error code only, never card data or a secret.
+  payment_capture_started
+  payment_captured
+  payment_capture_failed
+  payment_capture_ambiguous
+  fulfillment_barrier_blocked
 }
 
 model CheckoutAttempt {
@@ -1035,6 +1044,43 @@ model FlightSearchSession {
   expiresAt DateTime
 
   @@index([tripId, originIata, partySize])
+}
+
+enum WebhookClaimStatus {
+  processing
+  completed
+  failed
+}
+
+// Fase 3B.1 §6 — an atomic claim on ONE inbound webhook delivery, keyed by
+// the PROVIDER'S OWN event id (Stripe's "evt_..."), not a separate
+// generated key. The row's very existence — created via a single INSERT,
+// never an upsert — IS the claim: two concurrent deliveries of the same
+// event.id race to insert the same primary key, and the database's own
+// uniqueness guarantee (not application logic) ensures exactly one of
+// them wins and proceeds to actually run the event's side effects; the
+// loser observes the insert failing and treats the event as already
+// being handled (see claimWebhookEvent in src/lib/webhooks/claim.ts).
+// This tightens Fase 3A §12's original "read existing marker, process,
+// then write the marker" dedup (which left a window where two concurrent
+// deliveries could both pass the read check before either wrote the
+// marker) into a real claim-before-processing.
+//
+// `status` starts at `processing` on the winning insert; the winner
+// flips it to `completed` once its processing finishes without throwing,
+// or to `failed` if it throws — a LATER delivery of the same event.id
+// (Stripe's own retry after a transient failure) is then allowed to
+// reclaim a `failed` row and try again, but never a `completed` one.
+// Deliberately NOT a queue/worker system (§6 "no construir una
+// plataforma de colas") — just enough atomicity for exactly-once-in-
+// practice processing of a single webhook delivery.
+model WebhookEventClaim {
+  id       String             @id // the provider's own event id, e.g. Stripe's "evt_..."
+  provider String             @default("stripe")
+  status   WebhookClaimStatus @default(processing)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum BookingDocumentType {

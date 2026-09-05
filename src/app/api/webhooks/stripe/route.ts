@@ -4,25 +4,49 @@ import { stripeConfig } from "@/lib/env";
 import { constructStripeWebhookEvent } from "@/lib/providers/payments/stripe/client";
 import { getAuthorization } from "@/lib/providers/payments/stripe/authorization";
 import { verifyAndApplyAuthorization } from "@/lib/checkout-saga/payment";
+import { progressCapturedCheckoutAttempt } from "@/lib/checkout-saga/capture";
+import { claimWebhookEvent, completeWebhookClaim, failWebhookClaim } from "@/lib/webhooks/claim";
 import { prisma } from "@/lib/db";
 
 /**
- * Fase 3A §11/§12/§13 — the real Stripe TEST webhook. Verifies
- * Stripe-Signature against STRIPE_WEBHOOK_SECRET before trusting
- * anything in the body (§11 — never JSON without both), processes only
- * the minimum event set this phase actually needs (never indiscriminately —
- * §11), is idempotent per Stripe event.id (§12 — via
- * CheckoutAttemptEvent.providerEventId's unique constraint, no separate
- * dedup table), and NEVER trusts the event's embedded PaymentIntent
- * object as the final word — it re-fetches fresh from Stripe (§13) and
- * hands that to verifyAndApplyAuthorization, the ONE place that
- * cross-checks id/amount/currency/capture_method/metadata before ever
- * transitioning CheckoutAttempt to PAYMENT_AUTHORIZED.
+ * Fase 3A §11/§12/§13, extended Fase 3B.1 §5/§6 — the real Stripe TEST
+ * webhook. Verifies Stripe-Signature against STRIPE_WEBHOOK_SECRET before
+ * trusting anything in the body (§11 — never JSON without both),
+ * processes only the minimum event set this phase actually needs (never
+ * indiscriminately — §11), and NEVER trusts the event's embedded
+ * PaymentIntent object as the final word — it re-fetches fresh from
+ * Stripe (§13).
  *
- * Deliberately still does not (and this phase must not): capture
- * anything, book a hotel, issue a flight Order, or create a Booking.
+ * Fase 3B.1 §6 — idempotency is now a real atomic claim
+ * (claimWebhookEvent, src/lib/webhooks/claim.ts) rather than Fase 3A's
+ * original read-marker-then-process-then-write-marker: two genuinely
+ * concurrent deliveries of the SAME event.id can no longer both pass a
+ * "not yet processed" check before either writes anything — only the
+ * request whose INSERT wins the race actually runs the event's logic.
+ * The CheckoutAttemptEvent.providerEventId marker below still exists
+ * too, for the audit trail (and as a second, redundant safety net) — but
+ * the CLAIM is what decides whether processing runs at all.
+ *
+ * Fase 3B.1 §5 — payment_intent.succeeded is now handled: it means a
+ * capture actually completed (ours or, in principle, a webhook arriving
+ * before the browser's own confirmation call returns), so it drives the
+ * SAME capture->finalize->confirmed progression
+ * (progressCapturedCheckoutAttempt, capture.ts) the browser-triggered
+ * path uses — never depending exclusively on the browser having stayed
+ * open (§5 "no depender exclusivamente del browser").
+ *
+ * Still no capture is ever TRIGGERED from this route for the
+ * authorization-only events below (amount_capturable_updated/
+ * payment_failed/canceled) — those only ever verify/apply an
+ * AUTHORIZATION via verifyAndApplyAuthorization, exactly as Fase 3A left
+ * them. No Nuitee BOOK, no Duffel Order, ever, from this route.
  */
-const HANDLED_EVENT_TYPES = new Set<string>(["payment_intent.amount_capturable_updated", "payment_intent.payment_failed", "payment_intent.canceled"]);
+const HANDLED_EVENT_TYPES = new Set<string>([
+  "payment_intent.amount_capturable_updated",
+  "payment_intent.payment_failed",
+  "payment_intent.canceled",
+  "payment_intent.succeeded",
+]);
 
 export async function POST(req: Request) {
   if (!stripeConfig.webhookSecret) {
@@ -49,47 +73,63 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true, handled: false });
   }
 
-  // §12 — idempotency check (read, not claim-then-act): if this exact
-  // Stripe event.id already has a marker row, the FIRST delivery already
-  // ran to completion (the marker is only ever written AFTER successful
-  // processing below) — redeliver 200 without reprocessing. Ordering the
-  // check as read-then-process-then-mark (rather than claim-before-
-  // processing) matters: if processing throws, no marker is written, so
-  // a genuine retry from Stripe after a transient failure is NOT
-  // silently swallowed as "already handled".
-  const alreadyProcessed = await prisma.checkoutAttemptEvent.findUnique({ where: { providerEventId: event.id } });
-  if (alreadyProcessed) {
-    return NextResponse.json({ received: true, deduplicated: true });
+  // §6 — the atomic claim: only the request that actually inserts this
+  // event.id's row proceeds to process it. "in_progress" (another
+  // concurrent delivery already owns it) and "already_completed" (a
+  // prior delivery already ran this event to completion) both return 200
+  // without reprocessing — Stripe should not retry either case.
+  const claim = await claimWebhookEvent(event.id);
+  if (claim !== "claimed") {
+    return NextResponse.json({ received: true, deduplicated: true, claim });
   }
 
-  const paymentIntent = event.data.object as Stripe.PaymentIntent;
-  const attempt = await prisma.checkoutAttempt.findFirst({ where: { stripePaymentIntentId: paymentIntent.id } });
-  if (!attempt) {
-    // Nothing in this database references this PaymentIntent — not an
-    // error (could be a stale/foreign TEST event), just nothing to do.
-    return NextResponse.json({ received: true, handled: false });
-  }
-
-  // §13 — never trust the event's embedded object as the final word: a
-  // fresh, authoritative read from Stripe is what verifyAndApplyAuthorization
-  // actually cross-checks against this CheckoutAttempt.
-  const fresh = await getAuthorization(paymentIntent.id);
-  const outcome = await verifyAndApplyAuthorization(attempt.id, fresh);
-
-  // Mark this event.id processed only now that handling completed
-  // without throwing — a deterministic "rejected" outcome (a mismatch)
-  // still counts as completed processing (retrying wouldn't change it),
-  // so it's marked too. Wrapped: verifyAndApplyAuthorization is itself
-  // idempotent (see its own doc comment), so a unique-constraint
-  // collision here just means a genuinely-concurrent duplicate delivery
-  // already recorded the same marker a moment earlier — not an error.
   try {
-    await prisma.checkoutAttemptEvent.create({
-      data: { checkoutAttemptId: attempt.id, type: "payment_webhook_processed", providerReference: paymentIntent.id, providerEventId: event.id, sanitizedDetail: JSON.stringify({ eventType: event.type, outcome: outcome.outcome }) },
-    });
-  } catch {
-    // already marked by a concurrent delivery — fine.
-  }
+    const paymentIntent = event.data.object as Stripe.PaymentIntent;
+    const attempt = await prisma.checkoutAttempt.findFirst({ where: { stripePaymentIntentId: paymentIntent.id } });
+    if (!attempt) {
+      // Nothing in this database references this PaymentIntent — not an
+      // error (could be a stale/foreign TEST event), just nothing to do.
+      await completeWebhookClaim(event.id);
+      return NextResponse.json({ received: true, handled: false });
+    }
 
-  return NextResponse.json({ received: true, outcome: outcome.outcome });
+    let outcome: string;
+    if (event.type === "payment_intent.succeeded") {
+      // §5 — a capture actually completed: drive the same
+      // capture->finalize->confirmed progression the browser path uses,
+      // never a bare authorization check.
+      const progressResult = await progressCapturedCheckoutAttempt(attempt.id);
+      outcome = progressResult.outcome;
+    } else {
+      // §13 — never trust the event's embedded object as the final word:
+      // a fresh, authoritative read from Stripe is what
+      // verifyAndApplyAuthorization actually cross-checks against this
+      // CheckoutAttempt.
+      const fresh = await getAuthorization(paymentIntent.id);
+      const verifyResult = await verifyAndApplyAuthorization(attempt.id, fresh);
+      outcome = verifyResult.outcome;
+    }
+
+    // Audit-trail marker — best-effort; a unique-constraint collision
+    // here just means a genuinely-concurrent duplicate delivery already
+    // recorded the same marker (shouldn't happen now that the claim
+    // above already serializes concurrent deliveries, but harmless
+    // either way).
+    try {
+      await prisma.checkoutAttemptEvent.create({
+        data: { checkoutAttemptId: attempt.id, type: "payment_webhook_processed", providerReference: paymentIntent.id, providerEventId: event.id, sanitizedDetail: JSON.stringify({ eventType: event.type, outcome }) },
+      });
+    } catch {
+      // already marked — fine.
+    }
+
+    await completeWebhookClaim(event.id);
+    return NextResponse.json({ received: true, outcome });
+  } catch (err) {
+    // §6 — a genuine processing failure leaves the claim in `failed`, so
+    // Stripe's own retry of this same event.id can reclaim and try again
+    // rather than being permanently stuck as "in progress" forever.
+    await failWebhookClaim(event.id);
+    throw err;
+  }
 }

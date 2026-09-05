@@ -86,6 +86,29 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Fase 3B.1 audit finding — the preconditions above were all
+      // checked OUTSIDE this transaction, against a snapshot of `attempt`
+      // read before it started. Two genuinely concurrent calls to this
+      // function (a double "confirmar reserva" click, or the browser and
+      // the payment_intent.succeeded webhook both reconciling the same
+      // attempt at once) could both pass those checks, both reach here,
+      // and — without this lock — both create their own Booking for the
+      // same CheckoutAttempt (CheckoutAttempt.bookingId being `@unique`
+      // does NOT prevent this: each transaction sets it to a DIFFERENT,
+      // newly-created booking id, so the uniqueness constraint never
+      // fires). `SELECT ... FOR UPDATE` on the CheckoutAttempt row itself
+      // closes that gap exactly like acquireTicketHold's own row lock
+      // does for stock (ticketHold.ts): the second transaction blocks
+      // here until the first commits, then the re-check just below sees
+      // the now-committed bookingId and returns the SAME booking instead
+      // of creating a second one.
+      await tx.$executeRaw`SELECT "id" FROM "CheckoutAttempt" WHERE "id" = ${checkoutAttemptId} FOR UPDATE`;
+      const lockedAttempt = await tx.checkoutAttempt.findUniqueOrThrow({ where: { id: checkoutAttemptId } });
+      if (lockedAttempt.status === "confirmed" && lockedAttempt.bookingId) {
+        const existingBooking = await tx.booking.findUniqueOrThrow({ where: { id: lockedAttempt.bookingId } });
+        return { bookingId: existingBooking.id, reference: existingBooking.reference, accessToken: existingBooking.accessToken, alreadyFinalized: true };
+      }
+
       // Re-read the persisted travelers INSIDE the transaction — a real
       // local data-integrity precondition, and (deliberately) the one
       // check capable of throwing mid-transaction to exercise a genuine
@@ -125,7 +148,22 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
           hotelSelectionSnapshot: snapshot.hotel ? JSON.stringify(snapshot.hotel) : "",
           flightSelectionSnapshot: snapshot.flight ? JSON.stringify(snapshot.flight) : "",
           roomingSnapshot: snapshot.hotel ? JSON.stringify(snapshot.hotel.roomingIntent) : "",
-          priceBreakdownSnapshot: JSON.stringify(snapshot.commercial),
+          // Fase 3B.1 audit finding — this must match the shape Mi Viaje
+          // actually reads (PriceBreakdownSnapshot in
+          // src/lib/mi-viaje/atuAireSnapshots.ts: { perPerson, total,
+          // ticketSelections }), NOT FinalQuoteSnapshot.commercial's own
+          // shape verbatim — those are two different, unrelated JSON
+          // schemas that happen to share this one column. Writing
+          // snapshot.commercial directly here (as this function did
+          // before this audit) would silently break buildAtuAireMiViajeView's
+          // ticket rendering for every booking created through this real
+          // checkout saga: ticketSelections would parse as undefined, and
+          // no ticket/category would ever show in Mi Viaje.
+          priceBreakdownSnapshot: JSON.stringify({
+            perPerson: snapshot.commercial.pvpPerPerson,
+            total: snapshot.commercial.pvpTotal,
+            ticketSelections: Object.fromEntries(snapshot.ticket.map((line) => [line.eventId, line.category])),
+          }),
         },
       });
 
@@ -154,11 +192,13 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
       await tx.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { bookingId: booking.id } });
       await transitionCheckoutAttempt(checkoutAttemptId, "confirmed", tx);
 
-      return { bookingId: booking.id, reference: booking.reference, accessToken: booking.accessToken };
+      return { bookingId: booking.id, reference: booking.reference, accessToken: booking.accessToken, alreadyFinalized: false };
     });
 
-    await recordCheckoutAttemptEvent(checkoutAttemptId, "finalization_completed", { providerReference: result.reference });
-    return { ok: true, alreadyFinalized: false, ...result };
+    if (!result.alreadyFinalized) {
+      await recordCheckoutAttemptEvent(checkoutAttemptId, "finalization_completed", { providerReference: result.reference });
+    }
+    return { ok: true, ...result };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await recordCheckoutAttemptEvent(checkoutAttemptId, "finalization_failed", { sanitizedDetail: JSON.stringify({ message }) });

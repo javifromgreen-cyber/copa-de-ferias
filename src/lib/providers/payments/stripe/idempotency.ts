@@ -32,3 +32,14 @@ export function paymentIntentCreateIdempotencyKey(checkoutAttemptId: string, quo
 export function paymentIntentCancelIdempotencyKey(checkoutAttemptId: string, quoteVersion: number): string {
   return `cdf:${checkoutAttemptId}:payment-intent:cancel:v${quoteVersion}`;
 }
+
+/**
+ * Fase 3B.1 §3/§4/§12 — the capture call's own idempotency key, same
+ * construction as create/cancel above: a double PAGAR-confirmation click,
+ * a retried server action after a capture-call timeout, or two genuinely
+ * concurrent requests all resolve to Stripe's own idempotent response for
+ * this (checkoutAttemptId, quoteVersion) pair — never a second capture.
+ */
+export function paymentIntentCaptureIdempotencyKey(checkoutAttemptId: string, quoteVersion: number): string {
+  return `cdf:${checkoutAttemptId}:payment-intent:capture:v${quoteVersion}`;
+}

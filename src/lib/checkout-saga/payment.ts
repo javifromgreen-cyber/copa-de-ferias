@@ -176,6 +176,19 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
     return { ok: false, error: "Este intento no está listo para pagar." };
   }
 
+  // Fase 3B.1 §17 — TICKET_ONLY only, this phase: capture/finalization
+  // for TICKET_HOTEL and TICKET_HOTEL_FLIGHT doesn't exist yet, so a real
+  // authorization for those would leave a paid-but-unfulfillable order.
+  // Checked here, before ever creating a PaymentIntent, is the preferred
+  // guard per this phase's own brief ("permitir pago real TEST únicamente
+  // para TICKET_ONLY") — capture.ts's progressCapturedCheckoutAttempt has
+  // its own, independent copy of this same check as defense in depth for
+  // an attempt that already reached PAYMENT_AUTHORIZED before this
+  // restriction existed.
+  if (attempt.packageType !== "TICKET_ONLY") {
+    return { ok: false, error: "Fulfillment de esta modalidad aún no habilitado." };
+  }
+
   const payable = await ensureCheckoutAttemptPayable(checkoutAttemptId, fetchImpl);
   if (!payable.ok) {
     return { ok: false, error: payable.error };
@@ -388,4 +401,50 @@ export async function releaseAbandonedPaymentAuthorizing(checkoutAttemptId: stri
       // another tab): never release.
       return { released: false, reason: `not_safe_to_release:${authorization.rawStatus}` };
   }
+}
+
+export type CancelAuthorizedPaymentResult = { ok: true; alreadyCancelled: boolean } | { ok: false; error: string };
+
+/**
+ * Fase 3B.1 §14 — an explicit user/operator cancel of an authorized-but-
+ * not-yet-captured payment (distinct from releaseAbandonedPaymentAuthorizing's
+ * unattended-timeout path above). Only valid from PAYMENT_AUTHORIZED —
+ * once payment_capturing has actually started, a real capture may already
+ * be in flight and this function refuses rather than racing it. Never a
+ * refund: nothing this codebase creates has captured funds before this
+ * function can run, so there is nothing to refund, only to void.
+ *
+ * Idempotent: already-cancelled short-circuits; and even the Stripe side
+ * checks the PaymentIntent's current status first rather than blindly
+ * calling cancel() a second time (which Stripe itself would reject with
+ * an error for an already-canceled PaymentIntent).
+ */
+export async function cancelAuthorizedPayment(checkoutAttemptId: string): Promise<CancelAuthorizedPaymentResult> {
+  const attempt = await prisma.checkoutAttempt.findUnique({ where: { id: checkoutAttemptId } });
+  if (!attempt) return { ok: false, error: "Intento de compra no encontrado." };
+  if (attempt.status === "cancelled") return { ok: true, alreadyCancelled: true };
+  if (attempt.status !== "payment_authorized") {
+    return { ok: false, error: `No se puede cancelar: el intento está en ${attempt.status}, no en payment_authorized.` };
+  }
+
+  if (attempt.stripePaymentIntentId) {
+    let fresh: PaymentAuthorization;
+    try {
+      fresh = await getAuthorization(attempt.stripePaymentIntentId);
+    } catch {
+      return { ok: false, error: "No se pudo comprobar el estado del pago con Stripe — inténtalo de nuevo." };
+    }
+    if (fresh.status !== "voided") {
+      try {
+        await cancelAuthorization(attempt.stripePaymentIntentId);
+      } catch {
+        return { ok: false, error: "No se pudo cancelar la autorización en Stripe." };
+      }
+    }
+  }
+
+  await transitionCheckoutAttempt(checkoutAttemptId, "cancelled");
+  await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { paymentStatus: "voided" } });
+  await recordCheckoutAttemptEvent(checkoutAttemptId, "payment_voided", { providerReference: attempt.stripePaymentIntentId });
+  return { ok: true, alreadyCancelled: false };
 }

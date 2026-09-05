@@ -9,14 +9,19 @@
  */
 
 /**
- * Fase 3A §15 — our own normalized status, mapped from Stripe's
- * PaymentIntent.status (+ whether a `last_payment_error` is attached) by
- * mapPaymentIntentStatus() in authorization.ts. Deliberately reuses the
- * exact vocabulary already defined on prisma's PaymentComponentStatus
- * enum (not_started/authorizing/authorized/capturing/captured/unknown/
- * voiding/voided/failed) — no separate parallel enum invented for this.
+ * Fase 3A §15, extended Fase 3B.1 — our own normalized status, mapped
+ * from Stripe's PaymentIntent.status (+ whether a `last_payment_error` is
+ * attached) by mapPaymentIntentStatus() in authorization.ts. Deliberately
+ * reuses the exact vocabulary already defined on prisma's
+ * PaymentComponentStatus enum (not_started/authorizing/authorized/
+ * capturing/captured/unknown/voiding/voided/failed) — no separate
+ * parallel enum invented for this. "captured" is new in Fase 3B.1: before
+ * this phase, this codebase never called capture() itself, so a
+ * `succeeded` PaymentIntent was treated defensively as "authorized"; now
+ * that captureAuthorization() exists, `succeeded` genuinely means
+ * captured funds.
  */
-export type PaymentAuthorizationStatus = "authorizing" | "authorized" | "failed" | "voided" | "unknown";
+export type PaymentAuthorizationStatus = "authorizing" | "authorized" | "captured" | "failed" | "voided" | "unknown";
 
 export type PaymentAuthorization = {
   /** Stripe's own PaymentIntent id (`pi_...`). */
@@ -28,6 +33,8 @@ export type PaymentAuthorization = {
   currency: string;
   /** Only present on Stripe's `requires_capture` — the amount actually available to capture, verified against amountMinorUnits before ever trusting `authorized`. */
   amountCapturableMinorUnits: number;
+  /** Fase 3B.1 §3/§4 — Stripe's own `amount_received`: 0 until a capture actually applies, then the exact amount captured. The only value ever trusted to confirm a capture really happened with the expected amount — never inferred from `status` alone. */
+  amountReceivedMinorUnits: number;
   captureMethod: string;
   livemode: boolean;
   /** True only when a real `last_payment_error` is attached (e.g. after a declined card) — distinguishes a FRESH `requires_payment_method` (nothing tried yet) from a FAILED retry (§15's "requires_payment_method tras fallo conocido"). */
@@ -48,4 +55,10 @@ export type CreateAuthorizationParams = {
   currency: string;
   idempotencyKey: string;
   metadata: Record<string, string>;
+};
+
+/** Fase 3B.1 §3 — `amountMinorUnits` here is `amount_to_capture`, always derived server-side from the CheckoutAttempt's own FinalQuoteSnapshot, NEVER from browser input (see capture.ts's own doc comment). */
+export type CaptureAuthorizationParams = {
+  amountMinorUnits: number;
+  idempotencyKey: string;
 };

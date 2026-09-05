@@ -32,9 +32,23 @@ const ALLOWED_TRANSITIONS: Record<CheckoutAttemptStatus, CheckoutAttemptStatus[]
   // already exists for elsewhere in this table — see its own doc
   // comment above.
   payment_authorizing: ["payment_authorized", "failed", "recovery_required"],
-  payment_authorized: ["fulfilling"],
+  // Fase 3B.1 §14 — "cancelled" is reachable directly from
+  // payment_authorized (an authorized-but-not-yet-captured PaymentIntent)
+  // for an explicit user/operator cancel, distinct from the "failed" path
+  // an unattended abandonment takes (releaseAbandonedPaymentAuthorizing).
+  // Never reachable from payment_authorizing itself — that path already
+  // has its own distinct abandonment/failure semantics.
+  payment_authorized: ["fulfilling", "cancelled"],
   fulfilling: ["payment_capturing", "compensating"],
-  payment_capturing: ["finalizing", "recovery_required"],
+  // Fase 3B.1 §13 — "failed" is reachable directly from payment_capturing
+  // for a DEFINITIVE capture failure (Stripe confirms the PaymentIntent
+  // was voided/canceled or genuinely failed before any capture applied —
+  // never for an ambiguous/unverifiable result, which goes to
+  // recovery_required instead, per this same section's "no liberar hold
+  // si resultado es UNKNOWN"). Safe specifically because "failed" always
+  // releases any still-HELD TicketHold (see the hook below) and nothing
+  // external has been captured yet to compensate.
+  payment_capturing: ["finalizing", "recovery_required", "failed"],
   finalizing: ["confirmed", "recovery_required"],
   compensating: ["failed", "recovery_required"],
   recovery_required: ["confirmed", "failed", "cancelled"],

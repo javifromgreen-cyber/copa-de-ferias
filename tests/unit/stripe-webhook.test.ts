@@ -15,9 +15,15 @@ vi.mock("@/lib/providers/payments/stripe/authorization", async (importOriginal) 
   const actual = await importOriginal<typeof import("@/lib/providers/payments/stripe/authorization")>();
   return { ...actual, getAuthorization: vi.fn() };
 });
+// Fase 3B.1 — payment_intent.succeeded is routed to
+// progressCapturedCheckoutAttempt (capture.ts). Mocked here so these
+// tests stay focused on the ROUTE's own claim/dedup/dispatch behavior —
+// capture.ts's own logic is exhaustively covered by checkout-capture.test.ts.
+vi.mock("@/lib/checkout-saga/capture", () => ({ progressCapturedCheckoutAttempt: vi.fn() }));
 
 import { constructStripeWebhookEvent } from "@/lib/providers/payments/stripe/client";
 import { getAuthorization } from "@/lib/providers/payments/stripe/authorization";
+import { progressCapturedCheckoutAttempt } from "@/lib/checkout-saga/capture";
 import type { PaymentAuthorization } from "@/lib/providers/payments/stripe/types";
 
 const RUN_ID = `stripe-webhook-${Date.now()}`;
@@ -72,6 +78,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.webhookEventClaim.deleteMany({ where: { id: { in: ["evt_authorize_1", "evt_succeeded_1", "evt_concurrent_1", "evt_retry_1"] } } });
   await prisma.checkoutAttemptEvent.deleteMany({ where: { checkoutAttemptId } });
   await prisma.checkoutAttempt.delete({ where: { id: checkoutAttemptId } });
   await prisma.trip.delete({ where: { id: tripId } });
@@ -82,6 +89,7 @@ beforeEach(() => {
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_fake_for_unit_tests_only");
   vi.mocked(constructStripeWebhookEvent).mockReset();
   vi.mocked(getAuthorization).mockReset();
+  vi.mocked(progressCapturedCheckoutAttempt).mockReset();
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -93,6 +101,7 @@ function fakePi(overrides: Partial<PaymentAuthorization>): PaymentAuthorization 
     amountMinorUnits: 6000,
     currency: "EUR",
     amountCapturableMinorUnits: 6000,
+    amountReceivedMinorUnits: 0,
     captureMethod: "manual",
     livemode: false,
     hasKnownFailure: false,
@@ -166,5 +175,69 @@ describe("L — a duplicate delivery of the SAME event.id produces only one tran
     const body = await res.json();
     expect(body.deduplicated).toBe(true);
     expect(vi.mocked(getAuthorization).mock.calls.length).toBe(callsBefore); // no new Stripe call at all
+  });
+});
+
+describe("Q — payment_intent.succeeded drives the capture/finalize progression, signature verified", () => {
+  it("dispatches to progressCapturedCheckoutAttempt (never verifyAndApplyAuthorization) and reports its outcome", async () => {
+    vi.mocked(constructStripeWebhookEvent).mockReturnValue(stripeEvent("evt_succeeded_1", "payment_intent.succeeded"));
+    vi.mocked(progressCapturedCheckoutAttempt).mockResolvedValueOnce({ outcome: "confirmed", bookingId: "b1", reference: "CDF-TEST1", accessToken: "tok1", alreadyFinalized: false });
+    const { POST } = await import("@/app/api/webhooks/stripe/route");
+    const res = await POST(req("{}"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.outcome).toBe("confirmed");
+    expect(vi.mocked(progressCapturedCheckoutAttempt)).toHaveBeenCalledWith(checkoutAttemptId);
+    expect(vi.mocked(getAuthorization)).not.toHaveBeenCalled();
+
+    const events = await prisma.checkoutAttemptEvent.findMany({ where: { providerEventId: "evt_succeeded_1" } });
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("payment_webhook_processed");
+  });
+});
+
+describe("R — two concurrent deliveries of the SAME event.id: only one actually processes", () => {
+  it("Promise.all of two identical POSTs calls the underlying logic exactly once", async () => {
+    vi.mocked(constructStripeWebhookEvent).mockReturnValue(stripeEvent("evt_concurrent_1", "payment_intent.succeeded"));
+    // The winner's processing is deliberately slow, so the loser's claim
+    // attempt genuinely races against a still-`processing` row rather
+    // than a fast happy path that might finish before the second request
+    // even starts.
+    vi.mocked(progressCapturedCheckoutAttempt).mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve({ outcome: "confirmed", bookingId: "b2", reference: "CDF-TEST2", accessToken: "tok2", alreadyFinalized: false }), 50)),
+    );
+
+    const { POST } = await import("@/app/api/webhooks/stripe/route");
+    const [resA, resB] = await Promise.all([POST(req("{}")), POST(req("{}"))]);
+    const [bodyA, bodyB] = await Promise.all([resA.json(), resB.json()]);
+
+    expect(vi.mocked(progressCapturedCheckoutAttempt)).toHaveBeenCalledTimes(1);
+    const outcomes = [bodyA, bodyB];
+    expect(outcomes.filter((b) => b.outcome === "confirmed")).toHaveLength(1);
+    expect(outcomes.filter((b) => b.deduplicated === true)).toHaveLength(1);
+  });
+});
+
+describe("S — a processing failure leaves the claim reclaimable by a later retry", () => {
+  it("the first delivery throws (claim -> failed); a second delivery of the SAME event.id is allowed to reprocess", async () => {
+    vi.mocked(constructStripeWebhookEvent).mockReturnValue(stripeEvent("evt_retry_1", "payment_intent.succeeded"));
+    vi.mocked(progressCapturedCheckoutAttempt).mockRejectedValueOnce(new Error("transient DB error"));
+    const { POST } = await import("@/app/api/webhooks/stripe/route");
+
+    await expect(POST(req("{}"))).rejects.toThrow("transient DB error");
+
+    const claimAfterFailure = await prisma.webhookEventClaim.findUniqueOrThrow({ where: { id: "evt_retry_1" } });
+    expect(claimAfterFailure.status).toBe("failed");
+
+    // Stripe's own retry: same event.id, now succeeds.
+    vi.mocked(progressCapturedCheckoutAttempt).mockResolvedValueOnce({ outcome: "confirmed", bookingId: "b3", reference: "CDF-TEST3", accessToken: "tok3", alreadyFinalized: false });
+    const res = await POST(req("{}"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.outcome).toBe("confirmed");
+    expect(vi.mocked(progressCapturedCheckoutAttempt)).toHaveBeenCalledTimes(2);
+
+    const claimAfterSuccess = await prisma.webhookEventClaim.findUniqueOrThrow({ where: { id: "evt_retry_1" } });
+    expect(claimAfterSuccess.status).toBe("completed");
   });
 });

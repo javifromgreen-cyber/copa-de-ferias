@@ -95,6 +95,7 @@ function fakePi(overrides: Partial<PaymentAuthorization>): PaymentAuthorization 
     amountMinorUnits: 5000,
     currency: "EUR",
     amountCapturableMinorUnits: 0,
+    amountReceivedMinorUnits: 0,
     captureMethod: "manual",
     livemode: false,
     hasKnownFailure: false,
