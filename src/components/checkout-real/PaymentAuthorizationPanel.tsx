@@ -158,6 +158,26 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
 
   const stripePromiseMemo = useMemo(() => (publishableKey ? getStripePromise(publishableKey) : null), [publishableKey]);
 
+  // Defense in depth: `begin()` above should never call setStage("form")
+  // without both clientSecret and publishableKey already set (the server
+  // action itself now refuses to return "action_required" without a
+  // usable publishable key — see payment.ts's requireUsablePublishableKey).
+  // If that ever regresses anyway, this never goes silent: the render
+  // fallback below always shows an explicit error instead of null, and
+  // this effect logs which piece was missing — booleans only, never the
+  // actual key/secret values — so it's safe to leave in the browser
+  // console for diagnosis.
+  useEffect(() => {
+    if (stage !== "form") return;
+    if (clientSecret && publishableKey && stripePromiseMemo) return;
+    console.error("[PaymentAuthorizationPanel] reached \"form\" stage without everything needed to render it", {
+      hasClientSecret: Boolean(clientSecret),
+      hasPublishableKey: Boolean(publishableKey),
+      publishableKeyHasValidPrefix: Boolean(publishableKey?.startsWith("pk_test_")),
+      hasStripePromise: Boolean(stripePromiseMemo),
+    });
+  }, [stage, clientSecret, publishableKey, stripePromiseMemo]);
+
   if (stage === "checking" || stage === "starting") {
     return <p className="text-sm text-carbon/70">Preparando el pago...</p>;
   }
@@ -188,5 +208,10 @@ export function PaymentAuthorizationPanel({ accessToken, totalLabel }: { accessT
     );
   }
 
-  return null;
+  // Reached only if `stage` is "form" but clientSecret/publishableKey/
+  // stripePromiseMemo aren't all set yet (the effect above catches this
+  // one render later and formally transitions to "error"), or any other
+  // unexpected Stage value — never render nothing after "Preparando el
+  // pago...".
+  return <p className="text-sm text-red-700">{message ?? "No se pudo preparar el formulario de pago. Recarga la página o contacta con soporte si el problema persiste."}</p>;
 }

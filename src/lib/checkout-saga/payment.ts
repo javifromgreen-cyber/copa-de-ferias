@@ -29,6 +29,20 @@ function parseSelectionJson<T>(raw: string): T | undefined {
   return JSON.parse(raw) as T;
 }
 
+/**
+ * A `status: "action_required"` result is useless to the client without a
+ * real publishable key — `PaymentAuthorizationPanel` cannot mount
+ * `loadStripe()`/`Elements` without one. Checked explicitly (rather than
+ * letting `stripeConfig.publishableKey` fall through as `""`) so a missing
+ * or misconfigured NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY becomes a visible,
+ * diagnosable `ok:false` here instead of a silently unusable client state.
+ */
+function requireUsablePublishableKey(): string | null {
+  if (!stripeConfig.publishableKey || !stripeConfig.publishableKeyLooksLikeTestKey) return null;
+  return stripeConfig.publishableKey;
+}
+const MISSING_PUBLISHABLE_KEY_ERROR = "No se pudo iniciar el pago: falta configurar la publishable key de Stripe en el servidor (NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY).";
+
 export type EnsureCheckoutAttemptPayableResult = { ok: true; snapshot: FinalQuoteSnapshot; quoteVersion: number; refreshed: boolean } | { ok: false; error: string };
 
 /**
@@ -151,7 +165,11 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
     if (!authorization.clientSecret) {
       return { ok: false, error: "No se pudo recuperar el pago en curso — inténtalo de nuevo." };
     }
-    return { ok: true, status: "action_required", checkoutAttemptId, clientSecret: authorization.clientSecret, publishableKey: stripeConfig.publishableKey, refreshed: false };
+    const reentrantPublishableKey = requireUsablePublishableKey();
+    if (!reentrantPublishableKey) {
+      return { ok: false, error: MISSING_PUBLISHABLE_KEY_ERROR };
+    }
+    return { ok: true, status: "action_required", checkoutAttemptId, clientSecret: authorization.clientSecret, publishableKey: reentrantPublishableKey, refreshed: false };
   }
 
   if (attempt.status !== "ready_to_pay") {
@@ -169,6 +187,14 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
   } catch (err) {
     await transitionCheckoutAttempt(checkoutAttemptId, "failed");
     return { ok: false, error: err instanceof Error ? err.message : "Moneda no soportada para el pago." };
+  }
+
+  // Checked BEFORE any state mutation or Stripe call below: no point
+  // transitioning to payment_authorizing or creating a real PaymentIntent
+  // if the client could never actually use it.
+  const publishableKey = requireUsablePublishableKey();
+  if (!publishableKey) {
+    return { ok: false, error: MISSING_PUBLISHABLE_KEY_ERROR };
   }
 
   // §8 — a PaymentIntent left over from a superseded quote version is
@@ -211,7 +237,7 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
   if (!authorization.clientSecret) {
     return { ok: false, error: "Stripe no devolvió un client_secret." };
   }
-  return { ok: true, status: "action_required", checkoutAttemptId, clientSecret: authorization.clientSecret, publishableKey: stripeConfig.publishableKey, refreshed: payable.refreshed };
+  return { ok: true, status: "action_required", checkoutAttemptId, clientSecret: authorization.clientSecret, publishableKey, refreshed: payable.refreshed };
 }
 
 export type VerifyAuthorizationOutcome = { outcome: "authorized" } | { outcome: "still_authorizing" } | { outcome: "failed" } | { outcome: "voided" } | { outcome: "rejected"; reason: string };
