@@ -200,7 +200,7 @@ export function RealCheckoutPrototype({
       travelers: requiresFlight ? travelers.map(toDuffelTraveler) : travelers.map((t) => ({ firstName: t.firstName, lastName: t.lastName })),
       ticketOfferId,
       ticketQuantity: partySize,
-      hotel: requiresHotel && selectedHotel ? { offerId: selectedHotel.offerId, expectedTotalPrice: 0, expectedRooms: selectedHotel.rooms.map((r) => ({ occupancyNumber: r.occupancyNumber, roomName: r.roomName })), hotelName: selectedHotel.name } : undefined,
+      hotel: requiresHotel && selectedHotel ? { offerId: selectedHotel.offerId, expectedTotalPrice: 0, expectedRooms: selectedHotel.rooms.map((r) => ({ occupancyNumber: r.occupancyNumber, roomName: r.roomName })), hotelName: selectedHotel.name, hotelAddress: selectedHotel.address } : undefined,
       flight: requiresFlight && selectedOriginSessionId && finalFlightOffer && outboundKey && returnKey ? { searchSessionId: selectedOriginSessionId, offerId: finalFlightOffer.offerId, outboundSliceKey: outboundKey, returnSliceKey: returnKey } : undefined,
     });
     setResult(res);

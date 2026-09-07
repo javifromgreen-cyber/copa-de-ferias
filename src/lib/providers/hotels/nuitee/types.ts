@@ -36,6 +36,16 @@ export type HotelRoom = {
   includedTaxesAndFees: TaxAndFee[];
   excludedTaxesAndFees: TaxAndFee[];
   refundable: boolean;
+  /**
+   * Fase 3B.2 §4 — the real, provider-stated instant free cancellation
+   * ends for THIS room, derived from cancellationPolicies.cancelPolicyInfos
+   * (see normalize.ts) — never assumed from `refundable` alone ("RFN ==
+   * siempre gratis" is explicitly forbidden). Null whenever the schedule
+   * itself doesn't give us that evidence (not just when refundable is
+   * false) — e.g. `refundable: true` with an empty/missing
+   * cancelPolicyInfos is null here, not a guessed date.
+   */
+  freeCancellationUntil: string | null;
 };
 
 export type HotelRate = {
@@ -116,6 +126,18 @@ export type HotelBookingResult = {
   /** Conserved as opaque provider metadata only — never summed into our PVP (§10). */
   processingFee: number | null;
 };
+
+/**
+ * Fase 3B.2 §15 — the result of cancelHotelBooking. `status` is Nuitee's
+ * own raw string (e.g. "CANCELLED" / "CANCELLED_WITH_CHARGES") —
+ * deliberately never narrowed to a closed union here, since this codebase
+ * has never observed a real cancel response; hotelFulfillment.ts is the
+ * one place that interprets it, and does so defensively (§15: only a
+ * confirmed CANCELLED with `charges` confirmed as zero counts as a clean
+ * compensation — anything else, including a status this code doesn't
+ * recognize, is RECOVERY_REQUIRED).
+ */
+export type HotelCancelResult = { bookingId: string; status: string; charges: number | null; currency: string | null };
 
 /** Our own record of who we assigned to which room — see roomingSnapshot.ts; never reconstructed from HotelBookingResult (§7). */
 export type RoomingSnapshotRoom = {

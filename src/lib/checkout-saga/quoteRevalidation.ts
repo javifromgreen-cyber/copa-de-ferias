@@ -4,7 +4,7 @@ import { transitionCheckoutAttempt } from "./transitions";
 import { acquireTicketHold } from "./ticketHold";
 import { recordCheckoutAttemptEvent } from "./events";
 import { computeLatestSafePaymentAt } from "./quoteValidity";
-import { classifyHotelReversibility, classifyFlightReversibility, isNoViableReversibilityCombination, type ReversibilityLevel } from "./reversibility";
+import { classifyHotelReversibility, classifyFlightReversibility, classifyHotelAutoBookability, isNoViableReversibilityCombination, type ReversibilityLevel } from "./reversibility";
 import { serializeFinalQuoteSnapshot, type FinalQuoteSnapshot, type FinalQuoteSnapshotFlightSegment } from "./finalQuoteSnapshot";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import { assignTravelersToRooms } from "@/lib/checkout-atu-aire/rooming";
@@ -47,6 +47,8 @@ export type QuoteRevalidationHotelInput = {
   expectedTotalPrice: number;
   expectedRooms: { roomName: string; occupancyNumber: number }[];
   hotelName: string;
+  /** Fase 3B.2 §3 — same client-supplied, carried-through-verbatim treatment as hotelName (see FinalQuoteSnapshotHotel.address's own doc comment). Optional so existing callers/persisted JSON without it keep working. */
+  hotelAddress?: string;
 };
 export type QuoteRevalidationFlightInput = {
   searchSessionId: string;
@@ -207,16 +209,22 @@ export async function runQuoteRevalidation(input: QuoteRevalidationInput): Promi
             provider: "nuitee",
             hotelId: hotelPrebook.hotelId,
             name: input.hotel.hotelName,
+            address: input.hotel.hotelAddress ?? "",
             offerId: hotelPrebook.offerId,
             prebookId: hotelPrebook.prebookId,
             checkIn: hotelPrebook.checkin,
             checkOut: hotelPrebook.checkout,
             roomMix,
             roomingIntent,
+            board: hotelPrebook.rooms[0]?.board ?? null,
             price: hotelPrebook.price,
             includedTaxesAndFees: hotelPrebook.rooms.flatMap((r) => r.includedTaxesAndFees),
             excludedTaxesAndFees: hotelPrebook.rooms.flatMap((r) => r.excludedTaxesAndFees),
             refundable: hotelReversibility === "FULLY_REVERSIBLE",
+            // Fase 3B.2 §4 — computed fresh on every prebook/revalidation
+            // (never persisted separately from the snapshot it belongs to),
+            // exactly like hotelReversibility above.
+            autoBookability: classifyHotelAutoBookability(hotelPrebook.rooms),
           }
         : null,
     flight: flightOffer

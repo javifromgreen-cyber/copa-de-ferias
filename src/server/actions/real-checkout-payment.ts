@@ -115,7 +115,7 @@ export async function getPaymentAuthorizationStatus(accessToken: string): Promis
     case "fulfilling":
     case "payment_capturing":
     case "finalizing":
-      if (attempt.packageType !== "TICKET_ONLY") {
+      if (attempt.packageType === "TICKET_HOTEL_FLIGHT") {
         return { stage: "blocked", message: "Fulfillment de esta modalidad aún no habilitado." };
       }
       return { stage: "authorized" };

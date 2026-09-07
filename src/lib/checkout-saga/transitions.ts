@@ -39,16 +39,26 @@ const ALLOWED_TRANSITIONS: Record<CheckoutAttemptStatus, CheckoutAttemptStatus[]
   // Never reachable from payment_authorizing itself — that path already
   // has its own distinct abandonment/failure semantics.
   payment_authorized: ["fulfilling", "cancelled"],
-  fulfilling: ["payment_capturing", "compensating"],
-  // Fase 3B.1 §13 — "failed" is reachable directly from payment_capturing
-  // for a DEFINITIVE capture failure (Stripe confirms the PaymentIntent
-  // was voided/canceled or genuinely failed before any capture applied —
-  // never for an ambiguous/unverifiable result, which goes to
-  // recovery_required instead, per this same section's "no liberar hold
-  // si resultado es UNKNOWN"). Safe specifically because "failed" always
-  // releases any still-HELD TicketHold (see the hook below) and nothing
-  // external has been captured yet to compensate.
-  payment_capturing: ["finalizing", "recovery_required", "failed"],
+  // Fase 3B.2 §5/§17 — "failed" is reachable directly from fulfilling for
+  // a hotel BOOK that either never started (the safe-cancellation window
+  // expired before BOOK, or the rate turned out not auto-bookable after
+  // all) or definitively failed with a CONFIRMED absence of any booking
+  // (§17) — safe because nothing external has been captured/booked to
+  // compensate, and the Stripe authorization is voided before this
+  // transition fires (see hotelFulfillment.ts). "recovery_required" is
+  // reachable directly too, for a BOOK whose result cannot be determined
+  // safely (timeout + inconclusive lookup, §8) — never silently retried,
+  // never silently released.
+  fulfilling: ["payment_capturing", "compensating", "failed", "recovery_required"],
+  // Fase 3B.1 §13, extended Fase 3B.2 §14/§15 — "failed" is reachable
+  // directly from payment_capturing for a DEFINITIVE capture failure when
+  // there is nothing external to compensate (TICKET_ONLY, or a
+  // TICKET_HOTEL attempt that never reached a booked hotel). "compensating"
+  // is the NEW edge Fase 3B.2 needs: a definitive capture failure that
+  // happens AFTER the hotel is already CONFIRMED must cancel that hotel
+  // booking before this attempt can safely reach a terminal state (§14) —
+  // see hotelFulfillment.ts's own cancelConfirmedHotelBooking.
+  payment_capturing: ["finalizing", "recovery_required", "failed", "compensating"],
   finalizing: ["confirmed", "recovery_required"],
   compensating: ["failed", "recovery_required"],
   recovery_required: ["confirmed", "failed", "cancelled"],

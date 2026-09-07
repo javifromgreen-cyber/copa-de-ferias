@@ -5,7 +5,8 @@ import { roomMixToOccupancies } from "@/lib/providers/hotels/nuitee/occupancies"
 import { normalizeTaxesAndFees, normalizeSearchResult } from "@/lib/providers/hotels/nuitee/normalize";
 import { searchHotels } from "@/lib/providers/hotels/nuitee/search";
 import { prebookOffer, evaluatePrebookChange } from "@/lib/providers/hotels/nuitee/prebook";
-import { bookPrebook, generateClientReference } from "@/lib/providers/hotels/nuitee/book";
+import { bookPrebook, generateClientReference, getHotelBooking, findHotelBookingByClientReference, cancelHotelBooking } from "@/lib/providers/hotels/nuitee/book";
+import { computeFreeCancellationUntil } from "@/lib/providers/hotels/nuitee/normalize";
 import { buildRoomingSnapshot } from "@/lib/providers/hotels/nuitee/roomingSnapshot";
 import { ProviderError } from "@/lib/providers/errors";
 
@@ -573,5 +574,75 @@ describe("buildRoomingSnapshot (§7/§3 — our own record, never derived from N
     expect(snapshot).not.toHaveProperty("occupancy_number");
     expect(snapshot).not.toHaveProperty("adults");
     expect(snapshot).not.toHaveProperty("guests");
+  });
+});
+
+// Fase 3B.2 §25/AE — the same sandbox-only hard gate bookPrebook already
+// has, now also on the BOOK-lifecycle read/cancel calls: none of these may
+// ever run against a real Nuitee LIVE booking, even by accident.
+describe("AE — sandbox guard blocks getHotelBooking/findHotelBookingByClientReference/cancelHotelBooking outside explicit sandbox opt-in", () => {
+  it("getHotelBooking refuses without ALLOW_SANDBOX_PROVIDER_BOOKING", async () => {
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("getHotelBooking refuses in APP_MODE=production even with the flag set", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    vi.stubEnv("APP_MODE", "production");
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("getHotelBooking refuses when the key doesn't look like a sand_ sandbox key", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    vi.stubEnv("NUITEE_API_KEY", "live_something");
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("getHotelBooking succeeds when explicitly enabled, outside production, with a sandbox key", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const result = await getHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CONFIRMED" } }));
+    expect(result.bookingId).toBe("bk_1");
+  });
+
+  it("findHotelBookingByClientReference refuses without ALLOW_SANDBOX_PROVIDER_BOOKING", async () => {
+    await expect(findHotelBookingByClientReference("ref_1", fakeFetch(200, { data: [] }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("findHotelBookingByClientReference succeeds when explicitly enabled", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const result = await findHotelBookingByClientReference("ref_1", fakeFetch(200, { data: [{ bookingId: "bk_1", status: "CONFIRMED" }] }));
+    expect(result).toHaveLength(1);
+  });
+
+  it("cancelHotelBooking refuses without ALLOW_SANDBOX_PROVIDER_BOOKING", async () => {
+    await expect(cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED" } }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("cancelHotelBooking refuses in APP_MODE=production even with the flag set", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    vi.stubEnv("APP_MODE", "production");
+    await expect(cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED" } }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("cancelHotelBooking succeeds when explicitly enabled, distinguishing CANCELLED from CANCELLED_WITH_CHARGES", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const clean = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED", charges: 0, currency: "EUR" } }));
+    expect(clean).toEqual({ bookingId: "bk_1", status: "CANCELLED", charges: 0, currency: "EUR" });
+    const withCharges = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } }));
+    expect(withCharges.status).toBe("CANCELLED_WITH_CHARGES");
+    expect(withCharges.charges).toBe(15);
+  });
+});
+
+describe("computeFreeCancellationUntil — §4, never assumes RFN == free forever", () => {
+  it("NRFN never gets a free-cancellation deadline, regardless of cancelPolicyInfos", () => {
+    expect(computeFreeCancellationUntil("NRFN", [{ cancelTime: "2026-01-01T00:00:00Z", amount: 0 }])).toBeNull();
+  });
+  it("RFN with an empty cancelPolicyInfos (the only real sandbox shape observed so far) -> null, never assumed free", () => {
+    expect(computeFreeCancellationUntil("RFN", [])).toBeNull();
+    expect(computeFreeCancellationUntil("RFN", undefined)).toBeNull();
+  });
+  it("RFN with a real schedule whose earliest entry is free -> that entry's cancelTime", () => {
+    const deadline = computeFreeCancellationUntil("RFN", [
+      { cancelTime: "2026-09-10T00:00:00Z", amount: 0 },
+      { cancelTime: "2026-09-20T00:00:00Z", amount: 50 },
+    ]);
+    expect(deadline).toBe("2026-09-10T00:00:00Z");
+  });
+  it("RFN whose earliest entry already carries a fee -> null (not free right now either)", () => {
+    expect(computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-09-10T00:00:00Z", amount: 20 }])).toBeNull();
   });
 });

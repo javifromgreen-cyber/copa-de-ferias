@@ -176,22 +176,32 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
     return { ok: false, error: "Este intento no está listo para pagar." };
   }
 
-  // Fase 3B.1 §17 — TICKET_ONLY only, this phase: capture/finalization
-  // for TICKET_HOTEL and TICKET_HOTEL_FLIGHT doesn't exist yet, so a real
-  // authorization for those would leave a paid-but-unfulfillable order.
+  // Fase 3B.1 §17, extended Fase 3B.2 §0/§24 — TICKET_HOTEL_FLIGHT never
+  // gets a real authorization in this phase: flight fulfillment doesn't
+  // exist yet, so authorizing would leave a paid-but-unfulfillable order.
   // Checked here, before ever creating a PaymentIntent, is the preferred
-  // guard per this phase's own brief ("permitir pago real TEST únicamente
-  // para TICKET_ONLY") — capture.ts's progressCapturedCheckoutAttempt has
-  // its own, independent copy of this same check as defense in depth for
-  // an attempt that already reached PAYMENT_AUTHORIZED before this
+  // guard — capture.ts's progressCapturedCheckoutAttempt has its own,
+  // independent copy of this same check as defense in depth for an
+  // attempt that already reached PAYMENT_AUTHORIZED before this
   // restriction existed.
-  if (attempt.packageType !== "TICKET_ONLY") {
+  if (attempt.packageType === "TICKET_HOTEL_FLIGHT") {
     return { ok: false, error: "Fulfillment de esta modalidad aún no habilitado." };
   }
 
   const payable = await ensureCheckoutAttemptPayable(checkoutAttemptId, fetchImpl);
   if (!payable.ok) {
     return { ok: false, error: payable.error };
+  }
+
+  // Fase 3B.2 §4 — for TICKET_HOTEL, a real Stripe authorization may only
+  // ever be started against a hotel rate this phase can prove is safe to
+  // auto-book: REVERSIBLE with a real, sufficiently-future free-
+  // cancellation deadline. IRREVERSIBLE or UNKNOWN refuses here — no
+  // PaymentIntent is ever created — never a fabricated alternative rate.
+  if (attempt.packageType === "TICKET_HOTEL") {
+    if (!payable.snapshot.hotel || !payable.snapshot.hotel.autoBookability.autoBookable) {
+      return { ok: false, error: "Esta tarifa todavía no puede reservarse automáticamente. Elige otra opción de hotel." };
+    }
   }
 
   let amountMinorUnits: number;

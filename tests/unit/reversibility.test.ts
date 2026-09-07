@@ -8,7 +8,7 @@ import type { FlightCommercialProduct } from "@/lib/providers/flights/duffel/typ
 // beyond what Nuitee/Duffel actually told us.
 
 function room(overrides: Partial<HotelRoom> = {}): HotelRoom {
-  return { occupancyNumber: 1, roomName: "Doble", maxOccupancy: 2, adultCount: 2, board: "RO", price: { total: 100, currency: "EUR" }, includedTaxesAndFees: [], excludedTaxesAndFees: [], refundable: true, ...overrides };
+  return { occupancyNumber: 1, roomName: "Doble", maxOccupancy: 2, adultCount: 2, board: "RO", price: { total: 100, currency: "EUR" }, includedTaxesAndFees: [], excludedTaxesAndFees: [], refundable: true, freeCancellationUntil: null, ...overrides };
 }
 
 function commercialProduct(overrides: Partial<FlightCommercialProduct> = {}): FlightCommercialProduct {

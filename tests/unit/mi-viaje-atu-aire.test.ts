@@ -194,6 +194,49 @@ describe("buildAtuAireMiViajeView — TICKET_HOTEL shows hotel/rooms but never a
   });
 });
 
+describe("buildAtuAireMiViajeView — TICKET_HOTEL shows the richer real-BOOK snapshot facts (Fase 3B.2 §21/§22)", () => {
+  it("Z/AA — address/board/confirmationCode/pay-at-property taxes all surface, never provider cost/margin/clientReference", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        paymentProvider: "stripe",
+        hotelSelectionSnapshot: JSON.stringify({
+          hotelOfferId: "h1",
+          name: "Hotel Central Manchester",
+          nights: 2,
+          perPersonPrice: 90,
+          address: "Deansgate 1, Manchester",
+          board: "Solo alojamiento",
+          confirmationCode: "CONF-XYZ",
+          refundable: true,
+          bookingStatus: "CONFIRMED",
+          excludedTaxesAndFees: [{ description: "City tax", amount: 4.5, currency: "GBP" }],
+        }),
+      }),
+    );
+    expect(view.hotel).not.toBeNull();
+    expect(view.hotel?.address).toBe("Deansgate 1, Manchester");
+    expect(view.hotel?.board).toBe("Solo alojamiento");
+    expect(view.hotel?.confirmationCode).toBe("CONF-XYZ");
+    expect(view.hotel?.payAtPropertyTaxes).toEqual([{ description: "City tax", amount: 4.5, currency: "GBP" }]);
+    // Never a raw provider identifier — only the guest-facing confirmationCode.
+    expect(JSON.stringify(view.hotel)).not.toMatch(/clientReference|cdf_hotel_|costNet|margin/i);
+  });
+
+  it("a legacy/mock hotel snapshot without the new fields still renders — address/board/confirmationCode fall back to empty/null", () => {
+    const view = buildAtuAireMiViajeView(
+      baseBooking({
+        packageType: "TICKET_HOTEL",
+        hotelSelectionSnapshot: JSON.stringify({ hotelOfferId: "h1", name: "Hotel Central Manchester", nights: 2, perPersonPrice: 90 }),
+      }),
+    );
+    expect(view.hotel?.address).toBe("");
+    expect(view.hotel?.board).toBeNull();
+    expect(view.hotel?.confirmationCode).toBeNull();
+    expect(view.hotel?.payAtPropertyTaxes).toEqual([]);
+  });
+});
+
 describe("buildAtuAireMiViajeView — hotel dates/rooming come from frozen snapshots, never re-derived post-purchase (correction §12-16)", () => {
   const snapshotCheckIn = new Date(2026, 11, 4).toISOString();
   const snapshotCheckOut = new Date(2026, 11, 6).toISOString();

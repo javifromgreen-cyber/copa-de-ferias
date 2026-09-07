@@ -66,3 +66,55 @@ export function isNoViableReversibilityCombination(hotel: ReversibilityLevel | n
   if (!hotel || !flight) return false;
   return effectiveRiskLevel(hotel) === "IRREVERSIBLE_FOR_RISK" && effectiveRiskLevel(flight) === "IRREVERSIBLE_FOR_RISK";
 }
+
+/**
+ * Fase 3B.2 §4/§5 — the STRICTER gate for whether it is safe to start a
+ * real Stripe authorization + Nuitee BOOK against this specific hotel rate
+ * at all, deliberately separate from classifyHotelReversibility's
+ * FULLY/PARTIALLY/IRREVERSIBLE/UNKNOWN above (used elsewhere for the
+ * TICKET_HOTEL_FLIGHT combination gate and for the customer-facing
+ * `refundable` flag) — that classification only asks "can this ever be
+ * cancelled penalty-free", never "do we have a real deadline with enough
+ * margin to run Stripe auth -> BOOK -> capture before it expires", which
+ * is what auto-booking actually needs.
+ *
+ * `level` intentionally collapses two different situations into UNKNOWN:
+ * genuinely missing evidence (no `freeCancellationUntil` on some room) AND
+ * evidence that exists but doesn't leave enough operational margin right
+ * now. Both have the exact same consequence for this phase — refuse to
+ * authorize — and the spec's own three-bucket vocabulary (REVERSIBLE/
+ * IRREVERSIBLE/UNKNOWN) has no room for a fourth "known but too tight"
+ * bucket; `hotelSafeCancellationUntil` (when non-null) still lets a caller
+ * tell the two apart if it ever needs to. Reuses "FULLY_REVERSIBLE" as the
+ * REVERSIBLE outcome's level rather than inventing a parallel vocabulary —
+ * this is a strictly narrower condition than classifyHotelReversibility's
+ * own FULLY_REVERSIBLE (also requires a known, sufficiently-future
+ * deadline), never a contradictory one.
+ */
+export type HotelAutoBookability = { autoBookable: boolean; level: ReversibilityLevel; hotelSafeCancellationUntil: string | null };
+
+/**
+ * Purely internal, conservative buffer (never derived from any provider —
+ * same convention as PAYMENT_AUTHORIZATION_WINDOW_MS in payment.ts) that
+ * the real free-cancellation deadline must clear beyond "now" for the
+ * whole Stripe auth -> Nuitee BOOK -> Stripe capture sequence to be
+ * considered safe to even start.
+ */
+export const HOTEL_AUTO_BOOK_SAFETY_BUFFER_MS = 30 * 60 * 1000;
+
+export function classifyHotelAutoBookability(rooms: HotelRoom[], now: Date = new Date()): HotelAutoBookability {
+  if (rooms.length === 0) return { autoBookable: false, level: "UNKNOWN", hotelSafeCancellationUntil: null };
+  if (rooms.some((r) => !r.refundable)) return { autoBookable: false, level: "IRREVERSIBLE", hotelSafeCancellationUntil: null };
+
+  let earliestDeadlineMs: number | null = null;
+  for (const r of rooms) {
+    if (!r.freeCancellationUntil) return { autoBookable: false, level: "UNKNOWN", hotelSafeCancellationUntil: null };
+    const t = new Date(r.freeCancellationUntil).getTime();
+    if (earliestDeadlineMs === null || t < earliestDeadlineMs) earliestDeadlineMs = t;
+  }
+
+  const safeUntilMs = earliestDeadlineMs! - HOTEL_AUTO_BOOK_SAFETY_BUFFER_MS;
+  const safeUntilIso = new Date(safeUntilMs).toISOString();
+  if (safeUntilMs <= now.getTime()) return { autoBookable: false, level: "UNKNOWN", hotelSafeCancellationUntil: safeUntilIso };
+  return { autoBookable: true, level: "FULLY_REVERSIBLE", hotelSafeCancellationUntil: safeUntilIso };
+}

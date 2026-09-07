@@ -104,7 +104,17 @@ export async function nuiteeRequest<T>(req: NuiteeRequest, fetchImpl: typeof fet
     throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", `Nuitee returned ${response.status}.`, { httpStatus: response.status });
   }
   if (!response.ok) {
-    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", `Nuitee returned ${response.status}.`, { httpStatus: response.status });
+    // Fase 3B.2 §7 — this is the branch a Nuitee BOOK "error 4005 duplicate
+    // clientReference" response actually falls into (a definitive,
+    // provider-issued 4xx that isn't 401/403/429): capturing
+    // providerErrorCode here (previously discarded) is what lets a caller
+    // or a log reader recognize 4005 specifically, even though this
+    // codebase's own recovery logic (hotelFulfillment.ts) already
+    // reconciles via clientReference for ANY BOOK error uniformly, so a
+    // missed detection here would never cause a wrong decision — only a
+    // less legible one.
+    const detail = await parseNuiteeErrorDetail(response);
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", `Nuitee returned ${response.status}${detail.providerErrorCode ? ` (code ${detail.providerErrorCode})` : ""}.`, detail);
   }
 
   let json: unknown;

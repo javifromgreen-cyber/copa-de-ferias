@@ -1,5 +1,6 @@
 import type { RoomMixEntry } from "@/lib/pricing/roomMix";
 import type { RoomAssignment } from "@/lib/checkout-atu-aire/rooming";
+import type { HotelAutoBookability } from "./reversibility";
 
 /**
  * What the customer accepted before paying — the single source of truth
@@ -30,16 +31,22 @@ export type FinalQuoteSnapshotHotel = {
   provider: string;
   hotelId: string;
   name: string;
+  /** Fase 3B.2 §3/§22 — client-supplied at SEARCH time (same trust level as `name`; PREBOOK doesn't return hotel content), carried through for Mi Viaje's "dirección" display only. "" when not supplied. */
+  address: string;
   offerId: string;
   prebookId: string;
   checkIn: string; // yyyy-mm-dd
   checkOut: string; // yyyy-mm-dd
   roomMix: RoomMixEntry[];
   roomingIntent: RoomAssignment[];
+  /** Fase 3B.2 §22 — "régimen" for Mi Viaje. One rate combination shares one board across its rooms in every case this codebase has observed; taken from the first room. Null when Nuitee didn't provide one. */
+  board: string | null;
   price: { total: number; currency: string };
   includedTaxesAndFees: { description: string; amount: number; currency: string }[];
   excludedTaxesAndFees: { description: string; amount: number; currency: string }[];
   refundable: boolean;
+  /** Fase 3B.2 §4 — whether it is safe to start Stripe auth + Nuitee BOOK against THIS accepted rate right now; see classifyHotelAutoBookability. */
+  autoBookability: HotelAutoBookability;
 };
 
 export type FinalQuoteSnapshotFlightSegment = {

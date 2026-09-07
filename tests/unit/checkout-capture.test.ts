@@ -397,19 +397,13 @@ describe("T — cancelling an authorized-but-not-captured payment releases the h
   });
 });
 
-describe("U/V — TICKET_HOTEL and TICKET_HOTEL_FLIGHT can never capture in this phase", () => {
-  it("U — TICKET_HOTEL stays blocked at PAYMENT_AUTHORIZED, no capture attempted", async () => {
-    const attemptId = await buildAuthorizedAttempt({ packageType: "TICKET_HOTEL" });
-    const result = await progressCapturedCheckoutAttempt(attemptId);
-    expect(result.outcome).toBe("blocked");
-    expect(vi.mocked(getAuthorization)).not.toHaveBeenCalled();
-    expect(vi.mocked(captureAuthorization)).not.toHaveBeenCalled();
-
-    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
-    expect(attempt.status).toBe("payment_authorized"); // never advanced
-    expect(attempt.bookingId).toBeNull();
-  });
-
+// Fase 3B.2 — TICKET_HOTEL is no longer unconditionally blocked here: a
+// reversible, auto-bookable hotel now progresses through a real Nuitee
+// SANDBOX BOOK before capture (see hotelFulfillment.ts and its own
+// dedicated test file, checkout-hotel-fulfillment.test.ts). The
+// TICKET_HOTEL_FLIGHT barrier below is unchanged — flight fulfillment
+// still doesn't exist.
+describe("V — TICKET_HOTEL_FLIGHT can never capture in this phase", () => {
   it("V — TICKET_HOTEL_FLIGHT stays blocked at PAYMENT_AUTHORIZED, no capture attempted", async () => {
     const attemptId = await buildAuthorizedAttempt({ packageType: "TICKET_HOTEL_FLIGHT" });
     const result = await progressCapturedCheckoutAttempt(attemptId);

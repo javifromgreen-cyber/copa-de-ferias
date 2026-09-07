@@ -4,6 +4,58 @@ import { parseFinalQuoteSnapshot } from "./finalQuoteSnapshot";
 import { confirmTicketHold } from "./ticketHold";
 import { transitionCheckoutAttempt } from "./transitions";
 import { recordCheckoutAttemptEvent } from "./events";
+import type { HotelSnapshot } from "@/lib/mi-viaje/atuAireSnapshots";
+
+/**
+ * Fase 3B.2 audit finding — the SAME class of bug Fase 3B.1's own audit
+ * already fixed for priceBreakdownSnapshot: Mi Viaje's buildAtuAireMiViajeView
+ * (src/lib/mi-viaje/buildAtuAireView.ts) parses Booking.hotelSelectionSnapshot
+ * as `HotelSnapshot` ({hotelOfferId, name, nights, perPersonPrice, ...}) —
+ * a DIFFERENT, unrelated shape from FinalQuoteSnapshotHotel (offerId,
+ * hotelId, checkIn/checkOut, roomMix, price:{total,currency}, ...).
+ * Writing snapshot.hotel verbatim here (as this function did before this
+ * fix) would parse under HotelSnapshot but with `nights`/`hotelOfferId`/
+ * `perPersonPrice` silently `undefined` — never hit in practice yet
+ * because TICKET_HOTEL could never reach FINALIZING before this phase.
+ * Built from attempt.hotelBookSnapshot (the real Nuitee BOOK-time facts
+ * persisted by hotelFulfillment.ts) rather than the pre-BOOK snapshot —
+ * §21 "no recalcular estos datos desde SEARCH", and BOOK is the actual
+ * source of truth for what was purchased, not the prebook that preceded it.
+ */
+type RawHotelBookSnapshot = {
+  bookingId: string;
+  hotelConfirmationCode: string | null;
+  status: string;
+  hotelId: string;
+  name: string;
+  address: string;
+  checkIn: string;
+  checkOut: string;
+  roomMix: { type: string; count: number }[];
+  board: string | null;
+  price: { total: number; currency: string };
+  excludedTaxesAndFees: { description: string; amount: number; currency: string }[];
+  refundable: boolean;
+};
+
+function buildHotelSnapshotForBooking(offerId: string, partySize: number, raw: RawHotelBookSnapshot): HotelSnapshot {
+  const nights = Math.max(1, Math.round((new Date(raw.checkOut).getTime() - new Date(raw.checkIn).getTime()) / (24 * 60 * 60 * 1000)));
+  return {
+    hotelOfferId: offerId,
+    name: raw.name,
+    nights,
+    perPersonPrice: partySize > 0 ? raw.price.total / partySize : raw.price.total,
+    checkIn: raw.checkIn,
+    checkOut: raw.checkOut,
+    address: raw.address,
+    board: raw.board,
+    roomTypes: raw.roomMix.map((r) => r.type),
+    confirmationCode: raw.hotelConfirmationCode,
+    refundable: raw.refundable,
+    bookingStatus: raw.status,
+    excludedTaxesAndFees: raw.excludedTaxesAndFees,
+  };
+}
 
 export type FinalizeResult = { ok: true; alreadyFinalized: boolean; bookingId: string; reference: string; accessToken: string } | { ok: false; error: string };
 
@@ -66,6 +118,13 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
   }
   if (attempt.hotelStatus !== null && attempt.hotelStatus !== "confirmed") {
     return { ok: false, error: `Hotel component is ${attempt.hotelStatus}, not confirmed — refusing to finalize.` };
+  }
+  if (attempt.hotelStatus === "confirmed" && !attempt.hotelBookSnapshot) {
+    // Defense in depth — hotelFulfillment.ts's confirmBooking() always
+    // persists hotelBookSnapshot in the SAME write that sets hotelStatus
+    // to "confirmed", so this should be unreachable; refusing rather than
+    // finalizing with no real hotel facts to freeze onto the Booking.
+    return { ok: false, error: "Hotel component is confirmed but no hotelBookSnapshot was persisted — refusing to finalize." };
   }
   if (attempt.flightStatus !== null && attempt.flightStatus !== "confirmed") {
     return { ok: false, error: `Flight component is ${attempt.flightStatus}, not confirmed — refusing to finalize.` };
@@ -145,7 +204,10 @@ export async function finalizeConfirmedCheckoutAttempt(checkoutAttemptId: string
           packageType: attempt.packageType,
           partySize: attempt.partySize,
           ticketCount: attempt.partySize,
-          hotelSelectionSnapshot: snapshot.hotel ? JSON.stringify(snapshot.hotel) : "",
+          hotelSelectionSnapshot:
+            snapshot.hotel && attempt.hotelBookSnapshot
+              ? JSON.stringify(buildHotelSnapshotForBooking(snapshot.hotel.offerId, attempt.partySize, JSON.parse(attempt.hotelBookSnapshot) as RawHotelBookSnapshot))
+              : "",
           flightSelectionSnapshot: snapshot.flight ? JSON.stringify(snapshot.flight) : "",
           roomingSnapshot: snapshot.hotel ? JSON.stringify(snapshot.hotel.roomingIntent) : "",
           // Fase 3B.1 audit finding — this must match the shape Mi Viaje

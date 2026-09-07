@@ -17,6 +17,19 @@ export type HotelSnapshot = {
   // buildAtuAireView.ts) rather than assume they're always present.
   checkIn?: string;
   checkOut?: string;
+  // Fase 3B.2 §21/§22 — richer facts frozen from a real Nuitee SANDBOX
+  // BOOK (see finalize.ts), all optional: a legacy/demo/mock booking, or
+  // one from before this phase, simply won't have them. Never provider
+  // cost/margin/clientReference (§22's own "no exponer" rule) — only what
+  // a traveler may see.
+  address?: string;
+  board?: string | null;
+  roomTypes?: string[];
+  /** Guest-facing hotel confirmation code — never Nuitee's own internal bookingId. */
+  confirmationCode?: string | null;
+  refundable?: boolean;
+  bookingStatus?: string;
+  excludedTaxesAndFees?: { description: string; amount: number; currency: string }[];
 };
 
 export type RoomingSnapshotEntry = { type: "single" | "double" | "triple"; travelerIndices: number[] };

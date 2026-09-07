@@ -35,6 +35,8 @@ export type PrepareCheckoutAttemptHotelInput = {
   expectedRooms: { roomName: string; occupancyNumber: number }[];
   /** Not present on HotelPrebook — carried through separately for the snapshot. */
   hotelName: string;
+  /** Fase 3B.2 §3 — same treatment as hotelName; see QuoteRevalidationHotelInput's own doc comment. */
+  hotelAddress?: string;
 };
 
 /**

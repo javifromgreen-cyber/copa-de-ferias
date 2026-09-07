@@ -766,6 +766,21 @@ enum CheckoutAttemptEventType {
   payment_capture_failed
   payment_capture_ambiguous
   fulfillment_barrier_blocked
+
+  // Fase 3B.2 — Nuitee sandbox hotel BOOK fulfillment (see
+  // src/lib/checkout-saga/hotelFulfillment.ts). sanitizedDetail carries
+  // only Nuitee's own status/error taxonomy — never guest PII, never a
+  // raw provider payload, never the API key.
+  hotel_not_auto_bookable
+  hotel_safe_window_expired
+  hotel_book_started
+  hotel_booked
+  hotel_book_reconciled
+  hotel_book_failed
+  hotel_book_ambiguous
+  hotel_cancel_started
+  hotel_cancelled
+  hotel_cancel_ambiguous
 }
 
 model CheckoutAttempt {
@@ -860,9 +875,27 @@ model CheckoutAttempt {
 
   // Opaque provider reference strings — populated in a future phase once
   // Stripe/Nuitee/Duffel are actually wired. "" until then.
+  // Fase 3B.2 — hotelProviderReference now holds Nuitee's own bookingId
+  // once BOOK succeeds (see hotelFulfillment.ts).
   paymentProviderReference String @default("")
   hotelProviderReference   String @default("")
   flightProviderReference  String @default("")
+
+  // Fase 3B.2 §7/§9 — the deterministic clientReference generated and
+  // persisted BEFORE the first Nuitee BOOK call is ever made for this
+  // attempt (never regenerated on retry — this IS the idempotency key
+  // Nuitee's own duplicate-detection, error 4005, keys off). "" until a
+  // hotel BOOK attempt has actually started.
+  hotelClientReference String @default("")
+
+  // Fase 3B.2 §9/§21 — the full, sanitized Nuitee BOOK result (bookingId,
+  // supplierBookingId, hotelConfirmationCode, status, price/currency,
+  // cancellation terms, taxes, our own roomingSnapshot — see
+  // hotelFulfillment.ts) persisted the instant BOOK succeeds or is
+  // reconciled, BEFORE Stripe capture is ever attempted. finalize.ts
+  // copies this verbatim onto Booking's own hotel snapshot — never
+  // recalculated from SEARCH. "" until hotelStatus reaches "confirmed".
+  hotelBookSnapshot String @default("")
 
   // Fase 3A §5/§7/§8 — the Stripe PaymentIntent id this attempt currently
   // authorizes against (manual capture, never captured in this phase —

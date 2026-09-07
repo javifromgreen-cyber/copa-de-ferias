@@ -23,6 +23,17 @@ import type { HotelOption, HotelRate, HotelRoom, HotelSearchResult, TaxAndFee } 
 type RawAmount = { amount: number; currency: string };
 type RawTaxAndFee = { included: boolean; description: string; amount: number; currency: string };
 type RawRetailRate = { total: RawAmount[]; taxesAndFees?: RawTaxAndFee[] };
+/**
+ * Fase 3B.2 §4 — `cancelPolicyInfos` is Nuitee's own time-based fee
+ * schedule (each entry: "cancelling on/after `cancelTime` costs `amount`").
+ * Real sandbox captures seen so far always returned this as `[]`, even for
+ * an NRFN room — so this codebase has never actually observed a populated
+ * schedule. Parsed defensively here regardless: see
+ * computeFreeCancellationUntil below for exactly how a genuine free-window
+ * deadline is derived from it, and its own doc comment for why an empty
+ * array is treated as "no evidence" rather than "free forever".
+ */
+type RawCancelPolicyInfo = { cancelTime: string; amount: number };
 export type RawRate = {
   occupancyNumber: number;
   name?: string;
@@ -31,7 +42,7 @@ export type RawRate = {
   boardType?: string | null;
   boardName?: string | null;
   retailRate: RawRetailRate;
-  cancellationPolicies?: { refundableTag: "RFN" | "NRFN" };
+  cancellationPolicies?: { refundableTag: "RFN" | "NRFN"; cancelPolicyInfos?: RawCancelPolicyInfo[] };
 };
 type RawRoomType = {
   offerId: string;
@@ -71,6 +82,26 @@ export function normalizeTaxesAndFees(raw: RawTaxAndFee[] | undefined): { includ
   return { included, excluded };
 }
 
+/**
+ * Fase 3B.2 §4 — the real, evidence-based free-cancellation deadline for
+ * one room, NEVER inferred from `refundableTag` alone ("No asumir: RFN ==
+ * siempre gratis"). Only ever non-null when the schedule itself proves a
+ * free window: NRFN rooms never get one, and an RFN room with an empty or
+ * missing `cancelPolicyInfos` (the only shape this codebase has ever
+ * actually observed in a real sandbox capture) stays null too — "we don't
+ * know" is a distinct, honest outcome from "not refundable", never
+ * collapsed into it. When populated, the earliest-dated entry describes
+ * the boundary a fee schedule starts from; if that boundary itself already
+ * carries a nonzero fee, cancellation is not free even right now, so this
+ * still returns null rather than a fabricated "free until" instant.
+ */
+export function computeFreeCancellationUntil(refundableTag: "RFN" | "NRFN" | undefined, infos: RawCancelPolicyInfo[] | undefined): string | null {
+  if (refundableTag !== "RFN" || !infos || infos.length === 0) return null;
+  const sorted = [...infos].sort((a, b) => new Date(a.cancelTime).getTime() - new Date(b.cancelTime).getTime());
+  if (sorted[0].amount !== 0) return null;
+  return sorted[0].cancelTime;
+}
+
 /** Shared by SEARCH (roomTypes[].rates[]) and PREBOOK (same nested shape, leaner — no name/maxOccupancy guaranteed). */
 export function normalizeRoom(raw: RawRate): HotelRoom {
   if (typeof raw?.occupancyNumber !== "number" || !raw?.retailRate) {
@@ -88,6 +119,7 @@ export function normalizeRoom(raw: RawRate): HotelRoom {
     includedTaxesAndFees: included,
     excludedTaxesAndFees: excluded,
     refundable: raw.cancellationPolicies?.refundableTag === "RFN",
+    freeCancellationUntil: computeFreeCancellationUntil(raw.cancellationPolicies?.refundableTag, raw.cancellationPolicies?.cancelPolicyInfos),
   };
 }
 

@@ -3,7 +3,7 @@ import { searchHotels } from "./search";
 
 export { searchHotels } from "./search";
 export { prebookOffer, evaluatePrebookChange } from "./prebook";
-export { bookPrebook, generateClientReference } from "./book";
+export { bookPrebook, generateClientReference, getHotelBooking, findHotelBookingByClientReference, cancelHotelBooking } from "./book";
 export { buildRoomingSnapshot } from "./roomingSnapshot";
 export { roomMixToOccupancies } from "./occupancies";
 export type * from "./types";

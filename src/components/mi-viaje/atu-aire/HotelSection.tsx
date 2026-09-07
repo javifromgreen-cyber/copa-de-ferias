@@ -18,7 +18,8 @@ export function HotelSection({ view }: { view: AtuAireMiViajeView }) {
       </summary>
 
       <div className="mb-6 rounded-sm border border-carbon/15 p-5">
-        <h3 className="mb-3 text-base font-semibold">{view.hotel.name}</h3>
+        <h3 className="mb-1 text-base font-semibold">{view.hotel.name}</h3>
+        {view.hotel.address && <p className="mb-3 text-sm text-carbon/60">{view.hotel.address}</p>}
         <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <dt className="text-xs text-carbon/50 uppercase">Check-in</dt>
@@ -38,7 +39,24 @@ export function HotelSection({ view }: { view: AtuAireMiViajeView }) {
             <dt className="text-xs text-carbon/50 uppercase">Estado</dt>
             <dd className="font-medium">{view.hotel.statusLabel}</dd>
           </div>
+          {view.hotel.board && (
+            <div>
+              <dt className="text-xs text-carbon/50 uppercase">Régimen</dt>
+              <dd>{view.hotel.board}</dd>
+            </div>
+          )}
+          {view.hotel.confirmationCode && (
+            <div>
+              <dt className="text-xs text-carbon/50 uppercase">Referencia del hotel</dt>
+              <dd>{view.hotel.confirmationCode}</dd>
+            </div>
+          )}
         </dl>
+        {view.hotel.payAtPropertyTaxes.length > 0 && (
+          <p className="mt-4 text-xs text-carbon/60">
+            Tasas a pagar en destino: {view.hotel.payAtPropertyTaxes.map((t) => `${t.description} (${t.amount.toFixed(2)} ${t.currency})`).join(", ")}.
+          </p>
+        )}
       </div>
 
       {view.rooms ? (

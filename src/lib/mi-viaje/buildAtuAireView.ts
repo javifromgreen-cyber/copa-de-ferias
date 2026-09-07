@@ -90,7 +90,18 @@ export type AtuAireMiViajeView = {
     emergencyContactName: string;
     emergencyContactPhone: string;
   }>;
-  hotel: { name: string; nights: number; checkIn: Date; checkOut: Date; statusLabel: string } | null;
+  hotel: {
+    name: string;
+    nights: number;
+    checkIn: Date;
+    checkOut: Date;
+    statusLabel: string;
+    address: string;
+    board: string | null;
+    confirmationCode: string | null;
+    /** §22 — "tasas a pagar en destino si existen"; never included/provider-cost taxes. */
+    payAtPropertyTaxes: { description: string; amount: number; currency: string }[];
+  } | null;
   rooms: Array<{ label: string; travelerNames: string[] }> | null;
   flights: {
     outbound: { originAirport: string; destinationAirport: string; departure: Date; statusLabel: string };
@@ -243,7 +254,17 @@ export function buildAtuAireMiViajeView(booking: AtuAireBookingInput, opts: { st
         ? { checkIn: new Date(snapshot.checkIn), checkOut: new Date(snapshot.checkOut) }
         : deriveHotelWindow(booking.trip.events.map((e) => e.matchDate));
       const hotelDoc = typeDocument(booking.documents, "hotel");
-      hotel = { name: snapshot.name, nights: snapshot.nights, checkIn, checkOut, statusLabel: hotelDoc ? hotelStatusLabel(hotelDoc.status) : "Reserva confirmada" };
+      hotel = {
+        name: snapshot.name,
+        nights: snapshot.nights,
+        checkIn,
+        checkOut,
+        statusLabel: hotelDoc ? hotelStatusLabel(hotelDoc.status) : "Reserva confirmada",
+        address: snapshot.address ?? "",
+        board: snapshot.board ?? null,
+        confirmationCode: snapshot.confirmationCode ?? null,
+        payAtPropertyTaxes: snapshot.excludedTaxesAndFees ?? [],
+      };
 
       // Same rule: the exact room assignment bought, from roomingSnapshot
       // — never recomputed from today's computeRequiredRoomMix table
