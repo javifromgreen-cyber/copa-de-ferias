@@ -226,7 +226,14 @@ export async function createPaymentAuthorization(checkoutAttemptId: string, fetc
 
   await transitionCheckoutAttempt(checkoutAttemptId, "payment_authorizing");
   const paymentAuthorizationExpiresAt = new Date(Date.now() + PAYMENT_AUTHORIZATION_WINDOW_MS);
-  await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { paymentStatus: "authorizing", paymentAuthorizationExpiresAt } });
+  // paymentProviderChoice defaults to "demo" (see its own schema doc
+  // comment: "no real payment provider chosen" until a real one is
+  // actually used) — this is the exact moment a real Stripe PaymentIntent
+  // is about to be created for this attempt, so this is where it becomes
+  // true that the provider IS Stripe. finalize.ts later copies this
+  // field verbatim onto Booking.paymentProvider, which is what Mi Viaje's
+  // payment method label is derived from — never from APP_MODE.
+  await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { paymentStatus: "authorizing", paymentAuthorizationExpiresAt, paymentProviderChoice: "stripe" } });
 
   const idempotencyKey = paymentIntentCreateIdempotencyKey(checkoutAttemptId, payable.quoteVersion);
   let authorization: PaymentAuthorization;

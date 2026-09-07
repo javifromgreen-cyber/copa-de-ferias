@@ -405,6 +405,38 @@ describe("buildAtuAireMiViajeView — payment never exposes internal cost/fee br
   });
 });
 
+// ---------------------------------------------------------------------
+// Payment method label — audited after a real Stripe TEST booking
+// (CDF-80E7FE53) incorrectly showed "Simulado (modo demo)". The label
+// must come from Booking.paymentProvider (a persisted, historical fact —
+// see payment.ts: CheckoutAttempt.paymentProviderChoice is set to
+// "stripe" the moment a real PaymentIntent is created), never from
+// APP_MODE or any other live environment flag.
+// ---------------------------------------------------------------------
+describe("buildAtuAireMiViajeView — payment method label reflects the persisted provider, never APP_MODE (real-checkout audit)", () => {
+  it("1 — a booking from the real Stripe checkout (paymentProvider=stripe) never shows the demo label", () => {
+    const view = buildAtuAireMiViajeView(baseBooking({ paymentProvider: "stripe" }));
+    expect(view.payment.methodLabel).not.toBe("Simulado (modo demo)");
+  });
+
+  it("2 — a Stripe TEST booking shows the correct, environment-honest method label", () => {
+    const view = buildAtuAireMiViajeView(baseBooking({ paymentProvider: "stripe" }), { stripeTestMode: true });
+    expect(view.payment.methodLabel).toBe("Tarjeta (Stripe TEST)");
+  });
+
+  it("2b — a Stripe booking outside TEST mode shows the plain card label, no TEST indication", () => {
+    const view = buildAtuAireMiViajeView(baseBooking({ paymentProvider: "stripe" }), { stripeTestMode: false });
+    expect(view.payment.methodLabel).toBe("Tarjeta");
+  });
+
+  it("3 — a legacy/demo booking (paymentProvider=demo) keeps showing the demo label, TEST mode or not", () => {
+    const demoTest = buildAtuAireMiViajeView(baseBooking({ paymentProvider: "demo" }), { stripeTestMode: true });
+    const demoLive = buildAtuAireMiViajeView(baseBooking({ paymentProvider: "demo" }), { stripeTestMode: false });
+    expect(demoTest.payment.methodLabel).toBe("Simulado (modo demo)");
+    expect(demoLive.payment.methodLabel).toBe("Simulado (modo demo)");
+  });
+});
+
 describe("buildAtuAireMiViajeView — multi-match never fuses two Events into one ticket (§9/§10)", () => {
   it("each Event gets its own independent ticket entry", () => {
     const view = buildAtuAireMiViajeView(

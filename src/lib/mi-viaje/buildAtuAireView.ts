@@ -118,11 +118,33 @@ const ACTION_TYPE_FALLBACK_HREF: Record<BookingActionType, string> = {
   other: "#ayuda",
 };
 
-const PAYMENT_METHOD_LABELS: Record<PaymentProviderKind, string> = {
+const PAYMENT_METHOD_LABELS: Record<Exclude<PaymentProviderKind, "stripe">, string> = {
   demo: "Simulado (modo demo)",
-  stripe: "Tarjeta",
   paypal: "PayPal",
 };
+
+/**
+ * Real-checkout audit — the method shown here comes exclusively from
+ * `Booking.paymentProvider` (itself copied from CheckoutAttempt.
+ * paymentProviderChoice, set the moment a real Stripe PaymentIntent is
+ * created — see payment.ts), NEVER from APP_MODE or any other live
+ * environment flag: a booking is either genuinely "demo" (the legacy/
+ * seed checkout path, which never touches Stripe) or genuinely "stripe"
+ * (this real checkout saga), and that fact is a persisted, historical
+ * property of the booking itself.
+ *
+ * `stripeTestMode` is the one exception — deliberately NOT persisted per
+ * booking. Every Stripe call in this codebase is hard-gated to TEST mode
+ * only (getStripeClient() throws otherwise — see stripe/client.ts), so
+ * live capture literally cannot happen yet; `stripe` bookings today are
+ * therefore always TEST by construction, and this flag exists only to
+ * show that fact as a small dev-environment indicator, never to decide
+ * WHICH provider was used.
+ */
+function paymentMethodLabel(provider: PaymentProviderKind, stripeTestMode: boolean): string {
+  if (provider === "stripe") return stripeTestMode ? "Tarjeta (Stripe TEST)" : "Tarjeta";
+  return PAYMENT_METHOD_LABELS[provider];
+}
 
 function eventDocument(documents: AtuAireBookingInput["documents"], eventId: string) {
   return documents.find((d) => d.type === "ticket" && d.eventId === eventId) ?? null;
@@ -152,7 +174,7 @@ function documentLabel(doc: { type: BookingDocumentType; eventId: string }, even
  * snapshot captured at booking time, and the only price shown is the
  * total already paid.
  */
-export function buildAtuAireMiViajeView(booking: AtuAireBookingInput): AtuAireMiViajeView {
+export function buildAtuAireMiViajeView(booking: AtuAireBookingInput, opts: { stripeTestMode: boolean } = { stripeTestMode: false }): AtuAireMiViajeView {
   const packageType = booking.packageType ?? "TICKET_ONLY";
   const partySize = booking.partySize ?? booking.travelers.length;
   const modalityCopy = PACKAGE_TYPE_COPY[packageType];
@@ -314,7 +336,7 @@ export function buildAtuAireMiViajeView(booking: AtuAireBookingInput): AtuAireMi
       currency: booking.currency,
       statusLabel: booking.bookingStatus === "confirmed" || booking.bookingStatus === "cancellation_requested" ? "Pagado" : bookingStatusLabel(booking.bookingStatus),
       paidAtLabel: formatDate(booking.createdAt),
-      methodLabel: PAYMENT_METHOD_LABELS[booking.paymentProvider],
+      methodLabel: paymentMethodLabel(booking.paymentProvider, opts.stripeTestMode),
     },
     necessaryActions,
   };

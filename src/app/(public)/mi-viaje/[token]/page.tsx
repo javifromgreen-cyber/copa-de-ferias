@@ -12,6 +12,7 @@ import { BedIcon, ClipboardIcon, ChatIcon, SlidersIcon, PassportIcon, CalendarIc
 import { groupBookedRooms } from "@/lib/checkout/rooms";
 import { MiViajeAtuAire } from "@/components/mi-viaje/atu-aire/MiViajeAtuAire";
 import { buildAtuAireMiViajeView } from "@/lib/mi-viaje/buildAtuAireView";
+import { stripeConfig } from "@/lib/env";
 
 // Must always reflect the traveler's live booking state (data just saved,
 // change requests, passport status) — never cache this per-token page.
@@ -48,7 +49,7 @@ export default async function MiViajeDashboard({ params }: { params: Promise<{ t
   // only and GROUP_CDF's own checkout/Mi Viaje flow must keep working
   // exactly as before.
   if (booking.trip.travelMode === "A_TU_AIRE") {
-    const view = buildAtuAireMiViajeView(booking);
+    const view = buildAtuAireMiViajeView(booking, { stripeTestMode: stripeConfig.looksLikeTestKey });
     return (
       <>
         <TrackOnMount event="my_trip_view" payload={{ bookingId: booking.id }} />
