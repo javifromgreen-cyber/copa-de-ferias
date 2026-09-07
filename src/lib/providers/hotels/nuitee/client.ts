@@ -12,11 +12,20 @@ const BOOK_BASE_URL = "https://book.liteapi.travel/v3.0";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export type NuiteeRequest = {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   host: "search" | "book";
   path: string;
   body?: unknown;
   timeoutMs?: number;
+  /**
+   * Fase 3B.2 correction — LiteAPI's cancel-booking endpoint
+   * (`PUT /bookings/{bookingId}`) can answer with 204/no body instead of a
+   * JSON payload; that must never be treated as INVALID_PROVIDER_RESPONSE
+   * (a real error) nor silently parsed as success. When true, a 204 or an
+   * empty 2xx body resolves to `null` instead of throwing — the caller
+   * decides what "no body" means for that specific endpoint.
+   */
+  allowEmptyResponse?: boolean;
 };
 
 /**
@@ -117,9 +126,19 @@ export async function nuiteeRequest<T>(req: NuiteeRequest, fetchImpl: typeof fet
     throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", `Nuitee returned ${response.status}${detail.providerErrorCode ? ` (code ${detail.providerErrorCode})` : ""}.`, detail);
   }
 
+  if (response.status === 204) {
+    if (req.allowEmptyResponse) return null as T;
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", "Nuitee returned 204 No Content for a request that expects a body.");
+  }
+
+  const text = await response.text();
+  if (!text) {
+    if (req.allowEmptyResponse) return null as T;
+    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", "Nuitee response body was empty.");
+  }
   let json: unknown;
   try {
-    json = await response.json();
+    json = JSON.parse(text);
   } catch {
     throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", "Nuitee response was not valid JSON.");
   }

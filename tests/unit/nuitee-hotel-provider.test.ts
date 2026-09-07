@@ -618,14 +618,6 @@ describe("AE — sandbox guard blocks getHotelBooking/findHotelBookingByClientRe
     vi.stubEnv("APP_MODE", "production");
     await expect(cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED" } }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
   });
-  it("cancelHotelBooking succeeds when explicitly enabled, distinguishing CANCELLED from CANCELLED_WITH_CHARGES", async () => {
-    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
-    const clean = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED", charges: 0, currency: "EUR" } }));
-    expect(clean).toEqual({ bookingId: "bk_1", status: "CANCELLED", charges: 0, currency: "EUR" });
-    const withCharges = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } }));
-    expect(withCharges.status).toBe("CANCELLED_WITH_CHARGES");
-    expect(withCharges.charges).toBe(15);
-  });
 });
 
 // Fase 3B.2 correction (user-verified against LiteAPI's current official
@@ -677,6 +669,90 @@ describe("BOOK-lifecycle sandbox gate — full (key prefix x ALLOW_SANDBOX_PROVI
     vi.stubEnv("NUITEE_API_KEY", "sandbox_fake_for_unit_tests_only");
     vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "false");
     await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+});
+
+/**
+ * Fase 3B.2 correction (user-verified against LiteAPI's current official
+ * docs) — the cancel endpoint is `PUT /v3.0/bookings/{bookingId}`, NOT a
+ * `/cancel` sub-path. cancelHotelBooking() (book.ts) now owns its own
+ * full reconciliation: a 204/empty body or a thrown error from the PUT
+ * itself is NEVER treated as compensated — only a subsequent GET's own
+ * real status decides, and if that GET also can't produce one, the
+ * outcome is "unknown" (never "resolved").
+ */
+function sequencedFetch(steps: Array<{ status: number; body?: unknown } | { throwError: true }>): typeof fetch {
+  let i = 0;
+  return vi.fn(async () => {
+    const step = steps[Math.min(i, steps.length - 1)];
+    i++;
+    if ("throwError" in step) throw new Error("simulated network/timeout error");
+    if (step.body === undefined) return new Response(null, { status: step.status });
+    return new Response(JSON.stringify(step.body), { status: step.status });
+  }) as unknown as typeof fetch;
+}
+
+describe("cancelHotelBooking — PUT /v3.0/bookings/{bookingId}, correct contract per §15", () => {
+  it("A — PUTs to the exact endpoint, never a /cancel sub-path", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED" } });
+    await cancelHotelBooking("bk_1", fetchImpl);
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://book.liteapi.travel/v3.0/bookings/bk_1");
+    expect(init.method).toBe("PUT");
+  });
+
+  it("B — 200 CANCELLED with no charges resolves as a clean, nameable outcome", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const outcome = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED" } }));
+    expect(outcome).toEqual({ outcome: "resolved", result: { bookingId: "bk_1", status: "CANCELLED", charges: null, currency: null } });
+  });
+
+  it("C — 200 CANCELLED_WITH_CHARGES resolves with the charges figure intact, never collapsed into CANCELLED", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const outcome = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } }));
+    expect(outcome).toEqual({ outcome: "resolved", result: { bookingId: "bk_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } });
+  });
+
+  it("D — a 204/empty response never assumes compensation; a GET confirms the real state", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = sequencedFetch([{ status: 204 }, { status: 200, body: { data: { bookingId: "bk_1", status: "CANCELLED" } } }]);
+    const outcome = await cancelHotelBooking("bk_1", fetchImpl);
+    expect(outcome).toEqual({ outcome: "resolved", result: { bookingId: "bk_1", status: "CANCELLED", charges: null, currency: null } });
+    const calls = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1].method).toBe("PUT");
+    expect(calls[1][0]).toBe("https://book.liteapi.travel/v3.0/bookings/bk_1");
+    expect(calls[1][1].method).toBe("GET");
+  });
+
+  it("E — a PUT network/timeout error, followed by a GET showing CANCELLED, reconciles as resolved", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = sequencedFetch([{ throwError: true }, { status: 200, body: { data: { bookingId: "bk_1", status: "CANCELLED" } } }]);
+    const outcome = await cancelHotelBooking("bk_1", fetchImpl);
+    expect(outcome).toEqual({ outcome: "resolved", result: { bookingId: "bk_1", status: "CANCELLED", charges: null, currency: null } });
+  });
+
+  it("F — a PUT error + an inconclusive GET status -> unknown, never treated as compensated", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = sequencedFetch([{ throwError: true }, { status: 200, body: { data: { bookingId: "bk_1", status: "PENDING" } } }]);
+    const outcome = await cancelHotelBooking("bk_1", fetchImpl);
+    expect(outcome.outcome).toBe("unknown");
+  });
+
+  it("F2 — a PUT error + the follow-up GET also unreachable -> unknown", async () => {
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const fetchImpl = sequencedFetch([{ throwError: true }, { throwError: true }]);
+    const outcome = await cancelHotelBooking("bk_1", fetchImpl);
+    expect(outcome.outcome).toBe("unknown");
+  });
+
+  it("G — no POST /cancel sub-path remains anywhere in the codebase", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const content = await fs.readFile(path.join(process.cwd(), "src/lib/providers/hotels/nuitee/book.ts"), "utf8");
+    expect(content).not.toContain("}/cancel");
+    expect(content).toMatch(/method:\s*"PUT"/);
   });
 });
 

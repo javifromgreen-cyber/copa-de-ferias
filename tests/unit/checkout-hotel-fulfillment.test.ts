@@ -367,7 +367,7 @@ describe("L — a definitive capture failure attempts to cancel the hotel", () =
     // "unknown"/ambiguous instead, see test O). captureAuthorization is
     // therefore never even reached in this scenario.
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi({ status: "voided", rawStatus: "canceled" }));
-    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ bookingId: "nuitee_booking_1", status: "CANCELLED", charges: 0, currency: "EUR" });
+    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ outcome: "resolved", result: { bookingId: "nuitee_booking_1", status: "CANCELLED", charges: 0, currency: "EUR" } });
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
     expect(vi.mocked(cancelHotelBooking)).toHaveBeenCalledWith("nuitee_booking_1", undefined);
@@ -381,7 +381,7 @@ describe("M — cancel CANCELLED with zero charges -> compensation completed", (
     const attemptId = await buildHotelAuthorizedAttempt();
     vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi({ status: "voided", rawStatus: "canceled" }));
-    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ bookingId: "nuitee_booking_1", status: "CANCELLED", charges: 0, currency: "EUR" });
+    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ outcome: "resolved", result: { bookingId: "nuitee_booking_1", status: "CANCELLED", charges: 0, currency: "EUR" } });
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
     expect(result.outcome).toBe("failed");
@@ -396,7 +396,7 @@ describe("N — cancel CANCELLED_WITH_CHARGES -> RECOVERY_REQUIRED", () => {
     const attemptId = await buildHotelAuthorizedAttempt();
     vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi({ status: "voided", rawStatus: "canceled" }));
-    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ bookingId: "nuitee_booking_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" });
+    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ outcome: "resolved", result: { bookingId: "nuitee_booking_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } });
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
     expect(result.outcome).toBe("recovery_required");
@@ -407,12 +407,14 @@ describe("N — cancel CANCELLED_WITH_CHARGES -> RECOVERY_REQUIRED", () => {
 });
 
 describe("O — an ambiguous cancel result -> RECOVERY_REQUIRED", () => {
-  it("never releases/asserts compensated when both cancel and GET are unreachable", async () => {
+  it("never releases/asserts compensated when cancelHotelBooking itself cannot resolve a real status", async () => {
     const attemptId = await buildHotelAuthorizedAttempt();
     vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi({ status: "voided", rawStatus: "canceled" }));
-    vi.mocked(cancelHotelBooking).mockRejectedValueOnce(new Error("network"));
-    vi.mocked(getHotelBooking).mockRejectedValueOnce(new Error("network"));
+    // cancelHotelBooking() (book.ts) now owns its own PUT+GET
+    // reconciliation and never throws — an unresolved outcome from it
+    // means BOTH failed internally.
+    vi.mocked(cancelHotelBooking).mockResolvedValueOnce({ outcome: "unknown", reason: "cancel_and_get_both_unreachable" });
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
     expect(result.outcome).toBe("recovery_required");

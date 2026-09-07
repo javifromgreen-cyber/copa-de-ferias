@@ -2,7 +2,7 @@ import type { CheckoutAttempt } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { recordCheckoutAttemptEvent } from "./events";
 import { parseFinalQuoteSnapshot, type FinalQuoteSnapshot, type FinalQuoteSnapshotHotel } from "./finalQuoteSnapshot";
-import { bookPrebook, getHotelBooking, findHotelBookingByClientReference, cancelHotelBooking } from "@/lib/providers/hotels/nuitee";
+import { bookPrebook, findHotelBookingByClientReference, cancelHotelBooking } from "@/lib/providers/hotels/nuitee";
 import type { HotelBookingGuest, HotelBookingResult } from "@/lib/providers/hotels/nuitee/types";
 import { ProviderError } from "@/lib/providers/errors";
 import { cancelAuthorization } from "@/lib/providers/payments/stripe/authorization";
@@ -270,52 +270,54 @@ export async function progressHotelFulfillment(checkoutAttemptId: string, fetchI
   return { outcome: "confirmed" };
 }
 
+/**
+ * §15 — only an unambiguous CANCELLED (never CANCELLED_WITH_CHARGES)
+ * counts as clean, and only when `charges`, if present at all, is not a
+ * positive number: Nuitee's own CANCELLED/CANCELLED_WITH_CHARGES status
+ * split IS the charge signal (a plain CANCELLED never carries a separate
+ * "confirmed zero" field in every shape this codebase has had to
+ * consider) — but a status/charges combination that actively
+ * CONTRADICTS itself (CANCELLED with a positive charges figure) is never
+ * trusted over the more conservative reading.
+ */
 function isCleanCancel(status: string, charges: number | null): boolean {
-  return status.trim().toUpperCase() === "CANCELLED" && charges === 0;
+  if (status.trim().toUpperCase() !== "CANCELLED") return false;
+  if (typeof charges === "number" && charges > 0) return false;
+  return true;
 }
 
 /**
- * §14/§15 — cancels an already-CONFIRMED hotel booking (compensation: a
- * definitive Stripe capture failure after the hotel was booked, OR a
- * post-BOOK validation failure per §11). Distinguishes CANCELLED from
- * CANCELLED_WITH_CHARGES explicitly (§15) — only an unambiguous,
- * confirmed zero-charge CANCELLED counts as clean; a null/unknown
- * `charges` is NOT treated as zero (§15 "confirmación inequívoca de coste
- * cero", never an assumption). Never touches CheckoutAttempt.status.
+ * §14/§15, corrected against LiteAPI's verified official docs — cancels
+ * an already-CONFIRMED hotel booking (compensation: a definitive Stripe
+ * capture failure after the hotel was booked, OR a post-BOOK validation
+ * failure per §11). cancelHotelBooking() (book.ts) now owns its OWN full
+ * reconciliation (PUT, then GET on 204/failure) and never throws — it
+ * always resolves to either a real, nameable status or an explicit
+ * "unknown" outcome, so this function's only job is deciding what that
+ * outcome means for the CheckoutAttempt. Never touches
+ * CheckoutAttempt.status beyond hotelStatus.
  */
 export async function compensateConfirmedHotelBooking(checkoutAttemptId: string, hotelBookingId: string, fetchImpl?: typeof fetch): Promise<HotelCompensationOutcome> {
   await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { hotelStatus: "cancelling" } });
   await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancel_started", { providerReference: hotelBookingId });
 
-  let cancelResult;
-  try {
-    cancelResult = await cancelHotelBooking(hotelBookingId, fetchImpl);
-  } catch {
-    // §15 — the cancel call itself failed/timed out (includes a
-    // 204/no-detail-style response our adapter couldn't parse): GET the
-    // booking before considering compensation resolved either way.
-    let fresh;
-    try {
-      fresh = await getHotelBooking(hotelBookingId, fetchImpl);
-    } catch {
-      await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancel_ambiguous", { sanitizedDetail: JSON.stringify({ reason: "cancel_and_get_both_unreachable" }) });
-      return { outcome: "recovery_required", reason: "cancel_unverifiable" };
-    }
-    // A GET can report status but never an unambiguous zero-charge
-    // confirmation — per §15 that alone can never count as "clean".
-    await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancel_ambiguous", { sanitizedDetail: JSON.stringify({ reason: "cancel_call_failed_get_status", status: fresh.status }) });
+  const cancelOutcome = await cancelHotelBooking(hotelBookingId, fetchImpl);
+
+  if (cancelOutcome.outcome === "unknown") {
+    await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancel_ambiguous", { sanitizedDetail: JSON.stringify({ reason: cancelOutcome.reason }) });
     return { outcome: "recovery_required", reason: "cancel_unverifiable" };
   }
 
-  if (isCleanCancel(cancelResult.status, cancelResult.charges)) {
+  const { result } = cancelOutcome;
+  if (isCleanCancel(result.status, result.charges)) {
     await prisma.checkoutAttempt.update({ where: { id: checkoutAttemptId }, data: { hotelStatus: "cancelled" } });
-    await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancelled", { providerReference: hotelBookingId, sanitizedDetail: JSON.stringify({ status: cancelResult.status }) });
+    await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancelled", { providerReference: hotelBookingId, sanitizedDetail: JSON.stringify({ status: result.status }) });
     return { outcome: "compensated_clean" };
   }
 
   await recordCheckoutAttemptEvent(checkoutAttemptId, "hotel_cancel_ambiguous", {
     providerReference: hotelBookingId,
-    sanitizedDetail: JSON.stringify({ status: cancelResult.status, charges: cancelResult.charges }),
+    sanitizedDetail: JSON.stringify({ status: result.status, charges: result.charges }),
   });
-  return { outcome: "recovery_required", reason: `cancel_not_clean:${cancelResult.status}` };
+  return { outcome: "recovery_required", reason: `cancel_not_clean:${result.status}` };
 }

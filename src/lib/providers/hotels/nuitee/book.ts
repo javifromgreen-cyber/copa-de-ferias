@@ -1,7 +1,7 @@
 import { nuiteeRequest } from "./client";
 import { isSandboxProviderBookingAllowed, nuiteeConfig } from "@/lib/env";
 import { ProviderError } from "@/lib/providers/errors";
-import type { HotelBookingGuest, HotelBookingResult, HotelCancelResult } from "./types";
+import type { HotelBookingGuest, HotelBookingResult, HotelCancelOutcome } from "./types";
 
 function toHotelBookingResult(raw: RawBookingResult): HotelBookingResult {
   return {
@@ -99,18 +99,13 @@ export async function bookPrebook(prebookId: string, clientReference: string, ho
  * bookingId in some earlier, now-uncertain attempt — or simply to
  * re-verify a previously-confirmed booking before trusting it.
  *
- * UNVERIFIED ENDPOINT — this codebase has never been able to reach the
- * real Nuitee/LiteAPI sandbox from this environment (network egress is
- * blocked here), so `GET /bookings/{bookingId}` is this file's best-effort
- * reading of LiteAPI's documented booking-retrieval contract, not a
- * captured real response like bookPrebook's own shape. If the real path
- * or shape differs, the only consequence is that this call throws
- * INVALID_PROVIDER_RESPONSE/NETWORK_ERROR — every caller in this codebase
- * already treats that as "cannot confirm" and falls back to
- * RECOVERY_REQUIRED rather than guessing, so a wrong endpoint here can
- * never cause a double booking or a silent charge — see the final report
- * for the explicit recommendation to verify this against LiteAPI's real
- * docs or a controlled manual call before relying on it in production.
+ * `GET /bookings/{bookingId}` — verified by the user against LiteAPI's
+ * current official docs (this sandbox has no network access to confirm
+ * it directly). The exact response body shape beyond {bookingId, status}
+ * is still this file's best-effort reading; any mismatch there still only
+ * ever throws INVALID_PROVIDER_RESPONSE, which every caller treats as
+ * "cannot confirm" and falls back to RECOVERY_REQUIRED — never a double
+ * booking or a silent charge.
  */
 function assertSandboxBookingAllowed(): void {
   if (!isSandboxProviderBookingAllowed()) {
@@ -140,9 +135,8 @@ export async function getHotelBooking(bookingId: string, fetchImpl?: typeof fetc
  * EXACTAMENTE una reserva CONFIRMED", the caller (hotelFulfillment.ts)
  * decides what 0/1/>1 results each mean, this function never guesses.
  *
- * Same UNVERIFIED ENDPOINT caveat as getHotelBooking above — best-effort
- * `GET /bookings?clientReference=...`, never confirmed against a real
- * response from this sandbox.
+ * `GET /bookings?clientReference=...` — same as getHotelBooking above,
+ * verified by the user against LiteAPI's current official docs.
  */
 export async function findHotelBookingByClientReference(clientReference: string, fetchImpl?: typeof fetch): Promise<HotelBookingResult[]> {
   assertSandboxBookingAllowed();
@@ -152,31 +146,69 @@ export async function findHotelBookingByClientReference(clientReference: string,
 }
 
 /**
- * Fase 3B.2 §15 — cancels a confirmed Nuitee booking (compensation: Stripe
- * capture failed definitively AFTER the hotel was already booked). Nuitee
- * is documented to answer either `CANCELLED` (no charges) or
- * `CANCELLED_WITH_CHARGES` — this function reports both distinctly and
- * NEVER collapses them; hotelFulfillment.ts is the one place that decides
- * what each means for the CheckoutAttempt (§15: clean cancel only for
- * CANCELLED with a confirmed-zero cost, RECOVERY_REQUIRED otherwise).
+ * Fase 3B.2 §15, corrected against LiteAPI's verified official docs —
+ * cancels a confirmed Nuitee booking via `PUT /bookings/{bookingId}` (NOT
+ * a `/cancel` sub-path — that endpoint never existed on the real API).
+ * Nuitee answers either `CANCELLED` (no charges) or
+ * `CANCELLED_WITH_CHARGES` — reported distinctly, never collapsed.
  *
- * Same UNVERIFIED ENDPOINT caveat as getHotelBooking/findHotelBookingByClientReference
- * above — best-effort `POST /bookings/{bookingId}/cancel`. A thrown error
- * here is always treated as "cancellation outcome unknown" by the caller,
- * never as "cancelled" — see §15 "Si cancel endpoint devuelve 204/sin
- * detalle: GET booking después y confirmar estado", which
- * hotelFulfillment.ts implements by following this call with a
- * getHotelBooking() re-check rather than trusting this response alone.
+ * This function owns its OWN reconciliation end-to-end — it never returns
+ * a "maybe cancelled" guess to its caller:
+ *  - the PUT itself can answer 204/empty body (a real, documented
+ *    possibility, not an error) — never treated as compensated on its
+ *    own; a follow-up GET decides the real status first.
+ *  - a PUT that throws (network/timeout, or any other provider error) is
+ *    likewise never assumed to mean anything — the same GET follow-up
+ *    decides it.
+ *  - if that GET ALSO can't produce a real, nameable status (throws, or
+ *    returns something other than the two known cancel statuses), the
+ *    outcome is "unknown" — the caller (hotelFulfillment.ts) must treat
+ *    that as RECOVERY_REQUIRED, never as compensated.
+ *
+ * The exact response body shape beyond {bookingId, status, charges?} is
+ * still this file's best-effort reading (method + path are the part the
+ * user verified); a shape mismatch only ever produces "unknown" here, per
+ * the same fail-safe convention as every other BOOK-lifecycle call.
  */
-export async function cancelHotelBooking(bookingId: string, fetchImpl?: typeof fetch): Promise<HotelCancelResult> {
-  assertSandboxBookingAllowed();
-  const response = await nuiteeRequest<{ data: { bookingId: string; status: string; charges?: number | null; currency?: string | null } }>(
-    { method: "POST", host: "book", path: `/bookings/${encodeURIComponent(bookingId)}/cancel`, timeoutMs: 15_000 },
-    fetchImpl,
-  );
-  const raw = response.data;
-  if (!raw?.bookingId || !raw?.status) {
-    throw new ProviderError("INVALID_PROVIDER_RESPONSE", "nuitee", "Nuitee cancel-booking response is missing required fields.");
+async function fetchCurrentCancelStatus(bookingId: string, fetchImpl?: typeof fetch): Promise<HotelCancelOutcome> {
+  let fresh: HotelBookingResult;
+  try {
+    fresh = await getHotelBooking(bookingId, fetchImpl);
+  } catch {
+    return { outcome: "unknown", reason: "cancel_unverifiable_get_unreachable" };
   }
-  return { bookingId: raw.bookingId, status: raw.status, charges: raw.charges ?? null, currency: raw.currency ?? null };
+  const status = fresh.status.trim().toUpperCase();
+  if (status === "CANCELLED" || status === "CANCELLED_WITH_CHARGES") {
+    // A GET response has no dedicated charges field of its own — the
+    // status string itself is the only charge signal Nuitee's vocabulary
+    // gives us here; `charges: null` for the WITH_CHARGES case is not
+    // "confirmed zero", it is "unknown amount", and isCleanCancel()
+    // callers must never read null as zero.
+    return { outcome: "resolved", result: { bookingId, status: fresh.status, charges: null, currency: fresh.currency || null } };
+  }
+  return { outcome: "unknown", reason: `cancel_unverifiable_get_status:${fresh.status}` };
+}
+
+export async function cancelHotelBooking(bookingId: string, fetchImpl?: typeof fetch): Promise<HotelCancelOutcome> {
+  assertSandboxBookingAllowed();
+
+  let response: { data: { bookingId: string; status: string; charges?: number | null; currency?: string | null } } | null;
+  try {
+    response = await nuiteeRequest<{ data: { bookingId: string; status: string; charges?: number | null; currency?: string | null } } | null>(
+      { method: "PUT", host: "book", path: `/bookings/${encodeURIComponent(bookingId)}`, timeoutMs: 15_000, allowEmptyResponse: true },
+      fetchImpl,
+    );
+  } catch {
+    // PUT itself failed (network/timeout/any provider error) — never
+    // assumed to mean cancelled OR not-cancelled; reconcile via GET.
+    return fetchCurrentCancelStatus(bookingId, fetchImpl);
+  }
+
+  const raw = response?.data;
+  if (!raw?.bookingId || !raw?.status) {
+    // 204/empty body, or a body missing the fields we need — same rule:
+    // never assume compensation, confirm the real state via GET.
+    return fetchCurrentCancelStatus(bookingId, fetchImpl);
+  }
+  return { outcome: "resolved", result: { bookingId: raw.bookingId, status: raw.status, charges: raw.charges ?? null, currency: raw.currency ?? null } };
 }

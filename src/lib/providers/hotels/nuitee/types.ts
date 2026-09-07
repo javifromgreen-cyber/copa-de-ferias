@@ -128,16 +128,25 @@ export type HotelBookingResult = {
 };
 
 /**
- * Fase 3B.2 §15 — the result of cancelHotelBooking. `status` is Nuitee's
- * own raw string (e.g. "CANCELLED" / "CANCELLED_WITH_CHARGES") —
- * deliberately never narrowed to a closed union here, since this codebase
- * has never observed a real cancel response; hotelFulfillment.ts is the
- * one place that interprets it, and does so defensively (§15: only a
- * confirmed CANCELLED with `charges` confirmed as zero counts as a clean
- * compensation — anything else, including a status this code doesn't
- * recognize, is RECOVERY_REQUIRED).
+ * Fase 3B.2 §15, corrected against LiteAPI's verified docs — the resolved
+ * outcome of a cancellation, once cancelHotelBooking() has finished its
+ * own PUT + (if needed) GET-reconciliation. `status` is Nuitee's own raw
+ * string ("CANCELLED" / "CANCELLED_WITH_CHARGES") — deliberately never
+ * narrowed to a closed union here; hotelFulfillment.ts still decides what
+ * each means for the CheckoutAttempt (only a confirmed CANCELLED with no
+ * positive `charges` counts as a clean compensation).
  */
 export type HotelCancelResult = { bookingId: string; status: string; charges: number | null; currency: string | null };
+
+/**
+ * cancelHotelBooking()'s own return type — "resolved" means the PUT
+ * itself, or a GET performed after a 204/empty body or a PUT failure,
+ * produced a real, nameable status; "unknown" means neither could
+ * determine the real outcome, so the caller must never treat this as
+ * compensated (§15's "nunca considerar cancelación compensada... si el
+ * resultado económico es ambiguo").
+ */
+export type HotelCancelOutcome = { outcome: "resolved"; result: HotelCancelResult } | { outcome: "unknown"; reason: string };
 
 /** Our own record of who we assigned to which room — see roomingSnapshot.ts; never reconstructed from HotelBookingResult (§7). */
 export type RoomingSnapshotRoom = {
