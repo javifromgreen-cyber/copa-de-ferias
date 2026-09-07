@@ -9,6 +9,7 @@ import { bookPrebook, generateClientReference, getHotelBooking, findHotelBooking
 import { computeFreeCancellationUntil } from "@/lib/providers/hotels/nuitee/normalize";
 import { buildRoomingSnapshot } from "@/lib/providers/hotels/nuitee/roomingSnapshot";
 import { ProviderError } from "@/lib/providers/errors";
+import { nuiteeConfig } from "@/lib/env";
 
 const FAKE_SANDBOX_KEY = "sand_fake_for_unit_tests_only";
 
@@ -624,6 +625,58 @@ describe("AE — sandbox guard blocks getHotelBooking/findHotelBookingByClientRe
     const withCharges = await cancelHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CANCELLED_WITH_CHARGES", charges: 15, currency: "EUR" } }));
     expect(withCharges.status).toBe("CANCELLED_WITH_CHARGES");
     expect(withCharges.charges).toBe(15);
+  });
+});
+
+// Fase 3B.2 correction (user-verified against LiteAPI's current official
+// docs) — sandbox keys may start with EITHER `sand_` OR `sandbox_`; both
+// must be accepted, while `prod_` (or anything else) must always be
+// rejected for BOOK-lifecycle calls, regardless of the gate flag.
+describe("nuiteeConfig.looksLikeSandboxKey — accepts both sand_ and sandbox_, never a prod_ key", () => {
+  it("sand_... -> true", () => {
+    vi.stubEnv("NUITEE_API_KEY", "sand_abc123");
+    expect(nuiteeConfig.looksLikeSandboxKey).toBe(true);
+  });
+  it("sandbox_... -> true", () => {
+    vi.stubEnv("NUITEE_API_KEY", "sandbox_abc123");
+    expect(nuiteeConfig.looksLikeSandboxKey).toBe(true);
+  });
+  it("prod_... -> false", () => {
+    vi.stubEnv("NUITEE_API_KEY", "prod_abc123");
+    expect(nuiteeConfig.looksLikeSandboxKey).toBe(false);
+  });
+});
+
+describe("BOOK-lifecycle sandbox gate — full (key prefix x ALLOW_SANDBOX_PROVIDER_BOOKING) matrix", () => {
+  it("sand_... + gate=true -> allowed", async () => {
+    vi.stubEnv("NUITEE_API_KEY", "sand_fake_for_unit_tests_only");
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const result = await getHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CONFIRMED" } }));
+    expect(result.bookingId).toBe("bk_1");
+  });
+
+  it("sandbox_... + gate=true -> allowed", async () => {
+    vi.stubEnv("NUITEE_API_KEY", "sandbox_fake_for_unit_tests_only");
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    const result = await getHotelBooking("bk_1", fakeFetch(200, { data: { bookingId: "bk_1", status: "CONFIRMED" } }));
+    expect(result.bookingId).toBe("bk_1");
+  });
+
+  it("prod_... -> blocked always, even with gate=true", async () => {
+    vi.stubEnv("NUITEE_API_KEY", "prod_fake_for_unit_tests_only");
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "true");
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(bookPrebook("pb_1", "ref_1", { firstName: "Test", lastName: "Sandbox", email: "test@example.com" }, [], fakeFetch(200, {}))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+
+  it("gate absent/false -> blocked always, even with a valid sand_/sandbox_ key", async () => {
+    vi.stubEnv("NUITEE_API_KEY", "sand_fake_for_unit_tests_only");
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "");
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+
+    vi.stubEnv("NUITEE_API_KEY", "sandbox_fake_for_unit_tests_only");
+    vi.stubEnv("ALLOW_SANDBOX_PROVIDER_BOOKING", "false");
+    await expect(getHotelBooking("bk_1", fakeFetch(200, { data: {} }))).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
   });
 });
 

@@ -145,9 +145,19 @@ export const nuiteeConfig = {
   get isConfigured() {
     return Boolean(this.apiKey);
   },
-  /** True when the key itself has Nuitee's own sandbox prefix — a second, independent signal, not a substitute for a real API check. */
+  /**
+   * True when the key itself has one of Nuitee's own documented sandbox
+   * prefixes — a second, independent signal, not a substitute for a real
+   * API check. Fase 3B.2 audit (verified against LiteAPI's current
+   * official docs) — Nuitee sandbox keys may start with either `sand_` OR
+   * `sandbox_`; both must be accepted here, or a genuinely valid sandbox
+   * key using the second prefix would be wrongly refused by every BOOK-
+   * lifecycle call (bookPrebook/getHotelBooking/
+   * findHotelBookingByClientReference/cancelHotelBooking). A `prod_`
+   * (or any other) key never matches either prefix and stays rejected.
+   */
   get looksLikeSandboxKey() {
-    return this.apiKey.startsWith("sand_");
+    return this.apiKey.startsWith("sand_") || this.apiKey.startsWith("sandbox_");
   },
 };
 

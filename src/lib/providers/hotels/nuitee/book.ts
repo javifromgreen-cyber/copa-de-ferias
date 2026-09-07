@@ -65,7 +65,7 @@ export async function bookPrebook(prebookId: string, clientReference: string, ho
     throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "bookPrebook is disabled — set ALLOW_SANDBOX_PROVIDER_BOOKING=true outside APP_MODE=production to use it explicitly (e.g. for manual verification).");
   }
   if (!nuiteeConfig.looksLikeSandboxKey) {
-    throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "bookPrebook refuses to run: NUITEE_API_KEY does not look like a sand_ sandbox key.");
+    throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "bookPrebook refuses to run: NUITEE_API_KEY does not look like a sand_/sandbox_ sandbox key.");
   }
 
   const response = await nuiteeRequest<{ data: RawBookingResult }>(
@@ -117,7 +117,7 @@ function assertSandboxBookingAllowed(): void {
     throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "Nuitee BOOK-lifecycle calls are disabled — set ALLOW_SANDBOX_PROVIDER_BOOKING=true outside APP_MODE=production.");
   }
   if (!nuiteeConfig.looksLikeSandboxKey) {
-    throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "Nuitee BOOK-lifecycle calls refuse to run: NUITEE_API_KEY does not look like a sand_ sandbox key.");
+    throw new ProviderError("PROVIDER_UNAVAILABLE", "nuitee", "Nuitee BOOK-lifecycle calls refuse to run: NUITEE_API_KEY does not look like a sand_/sandbox_ sandbox key.");
   }
 }
 
