@@ -49,11 +49,11 @@ export type QuoteRevalidationHotelInput = {
   hotelName: string;
   /** Fase 3B.2 §3 — same client-supplied, carried-through-verbatim treatment as hotelName (see FinalQuoteSnapshotHotel.address's own doc comment). Optional so existing callers/persisted JSON without it keep working. */
   hotelAddress?: string;
-  /** Fase 3B.2 — resolveAutoHotelSelection's own output, carried through verbatim; see FinalQuoteSnapshotHotel's doc comment for the trust model. */
+  /** searchHotelShortlist's own output, carried through verbatim; see FinalQuoteSnapshotHotel's doc comment — distanceToStadiumKm is informational/audit only, never a BOOK gate; hotelStarCategory/stadiumHotelRadiusKm are legacy, not a user-selected contract. */
   stars: number;
   hotelStarCategory: number;
   distanceToStadiumKm: number;
-  stadiumHotelRadiusKm: number;
+  stadiumHotelRadiusKm: number | null;
 };
 export type QuoteRevalidationFlightInput = {
   searchSessionId: string;

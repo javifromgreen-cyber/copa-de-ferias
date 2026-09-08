@@ -2,11 +2,9 @@
 
 import { prisma } from "@/lib/db";
 import { searchHotels } from "@/lib/providers/hotels/nuitee/search";
-import { prebookOffer } from "@/lib/providers/hotels/nuitee/prebook";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import { isoCountryCodeForTripCountry } from "@/lib/checkout-atu-aire/tripCountryCode";
-import { rankHotelCandidates } from "@/lib/checkout-atu-aire/hotelAutoSelection";
-import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility";
+import { buildHotelShortlist } from "@/lib/checkout-atu-aire/hotelAutoSelection";
 import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roundTripSearch";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
 import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
@@ -39,49 +37,50 @@ function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-export type ResolvedAutoHotel = {
+export type HotelShortlistOption = {
+  hotelId: string;
   offerId: string;
-  hotelName: string;
-  hotelAddress: string;
-  /** The star rating Nuitee actually reported for this hotel — always equal to hotelStarCategory by construction (only exact-category candidates are ever ranked), carried separately so a later defensive check (hotelFulfillment.ts, right before BOOK) never has to trust that equality blindly. */
-  stars: number;
-  /** The category the customer selected — 3 or 4, never a range. */
-  hotelStarCategory: number;
+  name: string;
+  stars: number | null;
+  address: string;
+  city: string;
+  /** Proximity to the STADIUM only — never a "city center" concept, never hidden: shown on every card so the customer knows exactly what they're choosing. */
+  distanceToStadiumKm: number;
   expectedTotalPrice: number;
   expectedRooms: { roomName: string; occupancyNumber: number }[];
-  /** § — proximity to the STADIUM only; never a "city center" concept. */
-  distanceToStadiumKm: number;
-  stadiumHotelRadiusKm: number;
+  board: string | null;
+  /** Whether every room in the chosen rate is refundable — shown as the card's "useful tarifa info", never provider cost/margin/clientReference/Nuitee internals. */
+  refundable: boolean;
 };
 
-export type ResolveAutoHotelResult = { ok: true; hotel: ResolvedAutoHotel; checkIn: string; checkOut: string } | { ok: false; error: string };
-
-/** How many ranked candidates to try PREBOOKing before giving up — bounds both response time and Nuitee sandbox call volume. */
-const MAX_AUTO_HOTEL_ATTEMPTS = 6;
-
-function noHotelsAvailableMessage(starCategory: number): string {
-  return `No hay hoteles de ${starCategory} estrellas disponibles cerca del estadio para estas fechas.`;
-}
+export type SearchHotelShortlistResult = { ok: true; hotels: HotelShortlistOption[]; checkIn: string; checkOut: string } | { ok: false; error: string };
 
 /**
- * Fase 3B.2 — replaces the old "show every Nuitee hotel, let the customer
- * pick" flow entirely. The customer only ever chooses a star CATEGORY (3
- * or 4); this resolves ONE specific hotel automatically:
- *
- *   SEARCH (exact category) -> rank candidates (proximity-to-stadium
- *   FILTER, then cheapest-in-zone wins — see hotelAutoSelection.ts) ->
- *   PREBOOK the best candidate to confirm it's still real and
- *   auto-bookable -> on failure, try the next candidate of the SAME
- *   category within the SAME radius (never a silent 4★->3★ downgrade,
- *   never falling back to showing the list).
- *
- * Still SEARCH+PREBOOK only — never BOOK, never an Order, exactly like
- * the rest of this file's actions. The later CONTINUAR step
- * (prepareCheckoutAttempt -> runQuoteRevalidation) re-PREBOOKs this exact
- * offerId again before payment, same as it always has — this function
- * only decides WHICH hotel/offer that step will be asked to confirm.
+ * Wide enough to virtually never starve the shortlist, without an
+ * artificial hard cutoff that could leave the customer with zero
+ * options — Nuitee provides inventory, buildHotelShortlist ranks it by
+ * proximity and truncates to the top 3; this radius only bounds how much
+ * inventory is fetched, it is never used to eliminate a candidate.
  */
-export async function resolveAutoHotelSelection(input: { tripSlug: string; partySize: number; travelOriginCountry: string; hotelStarCategory: number; fetchImpl?: typeof fetch }): Promise<ResolveAutoHotelResult> {
+const HOTEL_SEARCH_RADIUS_KM = 15;
+
+/**
+ * Fase 3B.2, corrected — replaces both the old "show every Nuitee hotel"
+ * flow AND the later "pick a star category, we auto-select ONE hotel"
+ * flow. The customer no longer picks anything up front: Copa de Ferias
+ * searches automatically and shows a SHORTLIST of up to 3 concrete,
+ * available hotels, ranked by proximity to the stadium (price only
+ * breaks a practical tie — see hotelAutoSelection.ts), and the customer
+ * picks ONE explicitly.
+ *
+ * SEARCH only — no PREBOOK here at all. PREBOOK/revalidation of the
+ * customer's actual choice happens exactly where it always has: inside
+ * prepareCheckoutAttempt -> runQuoteRevalidation, at CONTINUAR. If that
+ * PREBOOK finds the chosen option no longer viable, this function is
+ * simply called again to refresh the shortlist — never a silent
+ * substitution of a different hotel.
+ */
+export async function searchHotelShortlist(input: { tripSlug: string; partySize: number; travelOriginCountry: string; fetchImpl?: typeof fetch }): Promise<SearchHotelShortlistResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug }, include: { events: true } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
     return { ok: false, error: "Este producto no está disponible." };
@@ -90,18 +89,17 @@ export async function resolveAutoHotelSelection(input: { tripSlug: string; party
     return { ok: false, error: "Este producto todavía no tiene partidos configurados." };
   }
   // Still a business gate on supported destinations (independent of the
-  // SEARCH mechanism below, which no longer uses this code at all).
+  // SEARCH mechanism below).
   if (!isoCountryCodeForTripCountry(trip.country)) {
     return { ok: false, error: "No se puede buscar hotel para este destino todavía (país sin mapear)." };
   }
 
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
   const stadiumEvent = sortedEvents.find((e) => e.primaryEvent) ?? sortedEvents[0];
-  if (stadiumEvent.stadiumLatitude === null || stadiumEvent.stadiumLongitude === null || stadiumEvent.stadiumHotelRadiusKm === null) {
-    return { ok: false, error: "Este partido todavía no tiene configurada la ubicación del estadio para la selección automática de hotel." };
+  if (stadiumEvent.stadiumLatitude === null || stadiumEvent.stadiumLongitude === null) {
+    return { ok: false, error: "Este partido todavía no tiene configurada la ubicación del estadio para mostrar hoteles." };
   }
   const stadium = { lat: stadiumEvent.stadiumLatitude, lng: stadiumEvent.stadiumLongitude };
-  const stadiumHotelRadiusKm = stadiumEvent.stadiumHotelRadiusKm;
 
   const checkIn = addDays(sortedEvents[0].matchDate, -1);
   const checkOut = addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1);
@@ -109,63 +107,46 @@ export async function resolveAutoHotelSelection(input: { tripSlug: string; party
 
   let searchResult;
   try {
-    // Fase 3B.2 correction — LiteAPI/Nuitee's own official geographic
-    // SEARCH (latitude/longitude/radius, radius in METERS) is the primary
-    // location filter: never fetch a whole city's hotels by cityName and
-    // reduce locally. rankHotelCandidates below still re-verifies stars
-    // and re-computes Haversine distance on the response as a second,
-    // defensive check — Nuitee filters for efficiency, CDF verifies for
-    // safety.
+    // Nuitee's official geographic SEARCH (latitude/longitude/radius,
+    // radius in METERS), centered on the stadium — a generous, fixed
+    // radius so there is enough inventory to rank from, never a small
+    // radius that could return zero hotels. No starRating filter: every
+    // category is a valid shortlist candidate now.
     searchResult = await searchHotels({
       latitude: stadium.lat,
       longitude: stadium.lng,
-      radiusMeters: stadiumHotelRadiusKm * 1000,
+      radiusMeters: HOTEL_SEARCH_RADIUS_KM * 1000,
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
       currency: trip.currency,
       guestNationality: input.travelOriginCountry,
       mix,
-      starRatings: [input.hotelStarCategory],
       fetchImpl: input.fetchImpl,
     });
   } catch (err) {
     return { ok: false, error: `Búsqueda de hotel no disponible: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const ranked = rankHotelCandidates({ hotels: searchResult.hotels, starCategory: input.hotelStarCategory, stadium, stadiumHotelRadiusKm });
-  if (ranked.length === 0) {
-    return { ok: false, error: noHotelsAvailableMessage(input.hotelStarCategory) };
+  const shortlist = buildHotelShortlist({ hotels: searchResult.hotels, stadium });
+  if (shortlist.length === 0) {
+    return { ok: false, error: "No hay hoteles disponibles para estas fechas." };
   }
 
-  for (const candidate of ranked.slice(0, MAX_AUTO_HOTEL_ATTEMPTS)) {
-    let prebook;
-    try {
-      prebook = await prebookOffer(candidate.rate.offerId, input.fetchImpl);
-    } catch {
-      continue; // this candidate is no longer bookable — try the next one in the SAME category/zone.
-    }
-    if (prebook.hotelId !== candidate.hotel.hotelId) continue;
-    if (!classifyHotelAutoBookability(prebook.rooms).autoBookable) continue; // lost reversibility/safe-window between SEARCH and PREBOOK.
+  const hotels: HotelShortlistOption[] = shortlist.map((c) => ({
+    hotelId: c.hotel.hotelId,
+    offerId: c.rate.offerId,
+    name: c.hotel.name,
+    stars: c.hotel.stars,
+    address: c.hotel.address,
+    city: c.hotel.city,
+    distanceToStadiumKm: c.distanceToStadiumKm,
+    expectedTotalPrice: c.rate.price.total,
+    expectedRooms: c.rate.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
+    board: c.rate.rooms[0]?.board ?? null,
+    refundable: c.rate.rooms.every((r) => r.refundable),
+  }));
 
-    return {
-      ok: true,
-      hotel: {
-        offerId: prebook.offerId,
-        hotelName: candidate.hotel.name,
-        hotelAddress: candidate.hotel.address,
-        stars: input.hotelStarCategory,
-        hotelStarCategory: input.hotelStarCategory,
-        expectedTotalPrice: prebook.price.total,
-        expectedRooms: prebook.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
-        distanceToStadiumKm: candidate.distanceToStadiumKm,
-        stadiumHotelRadiusKm,
-      },
-      checkIn: toIsoDate(checkIn),
-      checkOut: toIsoDate(checkOut),
-    };
-  }
-
-  return { ok: false, error: noHotelsAvailableMessage(input.hotelStarCategory) };
+  return { ok: true, hotels, checkIn: toIsoDate(checkIn), checkOut: toIsoDate(checkOut) };
 }
 
 export type { RealFlightSegmentDTO, RealFlightSliceDTO, RealCommercialProductDTO, StoredFlightOffer };

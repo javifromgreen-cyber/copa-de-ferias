@@ -616,51 +616,54 @@ describe("AF — no Stripe capture is ever attempted while the hotel isn't CONFI
   });
 });
 
-// Fase 3B.2 — the defensive pre-BOOK guard: the automatic hotel
-// resolution should always already deliver a hotel of the exact
-// requested category, inside the configured radius — but this codebase
-// never trusts that alone right before a real BOOK call. Any mismatch
-// must refuse to BOOK, void the Stripe authorization, and fail the
-// attempt, exactly like not_auto_bookable/window_expired already do.
-describe("AG — a star-category mismatch (stars !== hotelStarCategory) blocks BOOK entirely", () => {
-  it("never calls bookPrebook, voids Stripe, and fails the attempt", async () => {
+// Corrected — hotelStarCategory/stadiumHotelRadiusKm are legacy,
+// informational-only fields now, never a user-selected contract, so BOOK
+// must never be gated by them. distanceToStadiumKm is audit data only.
+describe("AG — K: BOOK is never blocked by a star-category mismatch (stars !== hotelStarCategory) — that guard was removed", () => {
+  it("proceeds to bookPrebook and confirms normally despite the mismatch", async () => {
     const attemptId = await buildHotelAuthorizedAttempt({ hotel: { stars: 3, hotelStarCategory: 4 } });
+    vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi());
+    vi.mocked(captureAuthorization).mockResolvedValueOnce(fakeCaptured());
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
-    expect(result.outcome).toBe("failed");
-    expect(vi.mocked(bookPrebook)).not.toHaveBeenCalled();
-    expect(vi.mocked(cancelAuthorization)).toHaveBeenCalled();
-
-    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
-    expect(attempt.hotelStatus).toBe("failed");
+    expect(result.outcome).toBe("confirmed");
+    expect(vi.mocked(bookPrebook)).toHaveBeenCalled();
   });
 });
 
-describe("AH — a hotel outside stadiumHotelRadiusKm (distanceToStadiumKm > stadiumHotelRadiusKm) blocks BOOK entirely", () => {
-  it("never calls bookPrebook, voids Stripe, and fails the attempt", async () => {
+describe("AH — K: BOOK is never blocked by exceeding stadiumHotelRadiusKm — that guard was removed", () => {
+  it("proceeds to bookPrebook and confirms normally for a hotel far beyond the legacy radius", async () => {
     const attemptId = await buildHotelAuthorizedAttempt({ hotel: { distanceToStadiumKm: 10, stadiumHotelRadiusKm: 5 } });
+    vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
     vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi());
+    vi.mocked(captureAuthorization).mockResolvedValueOnce(fakeCaptured());
 
     const result = await progressCapturedCheckoutAttempt(attemptId);
-    expect(result.outcome).toBe("failed");
-    expect(vi.mocked(bookPrebook)).not.toHaveBeenCalled();
-    expect(vi.mocked(cancelAuthorization)).toHaveBeenCalled();
+    expect(result.outcome).toBe("confirmed");
+    expect(vi.mocked(bookPrebook)).toHaveBeenCalled();
+  });
 
-    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
-    expect(attempt.hotelStatus).toBe("failed");
+  it("also proceeds when stadiumHotelRadiusKm is null (legacy field not configured)", async () => {
+    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { distanceToStadiumKm: 10, stadiumHotelRadiusKm: null } });
+    vi.mocked(bookPrebook).mockResolvedValueOnce(fakeBooked());
+    vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi());
+    vi.mocked(captureAuthorization).mockResolvedValueOnce(fakeCaptured());
+
+    const result = await progressCapturedCheckoutAttempt(attemptId);
+    expect(result.outcome).toBe("confirmed");
   });
 });
 
-describe("AI — the FinalQuoteSnapshot retains the audit fields (category, delivered stars, distance, radius)", () => {
-  it("hotelStarCategory/stars/distanceToStadiumKm/stadiumHotelRadiusKm all round-trip through the persisted snapshot", async () => {
-    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { stars: 4, hotelStarCategory: 4, distanceToStadiumKm: 2.3, stadiumHotelRadiusKm: 5 } });
+describe("AI — S: the FinalQuoteSnapshot retains distanceToStadiumKm as audit data", () => {
+  it("distanceToStadiumKm/stars/hotelStarCategory/stadiumHotelRadiusKm all round-trip through the persisted snapshot", async () => {
+    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { stars: 4, hotelStarCategory: 4, distanceToStadiumKm: 2.3, stadiumHotelRadiusKm: null } });
     const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     const snapshot = JSON.parse(attempt.finalQuoteSnapshot) as FinalQuoteSnapshot;
-    expect(snapshot.hotel?.hotelStarCategory).toBe(4);
-    expect(snapshot.hotel?.stars).toBe(4);
     expect(snapshot.hotel?.distanceToStadiumKm).toBe(2.3);
-    expect(snapshot.hotel?.stadiumHotelRadiusKm).toBe(5);
+    expect(snapshot.hotel?.stars).toBe(4);
+    expect(snapshot.hotel?.hotelStarCategory).toBe(4);
+    expect(snapshot.hotel?.stadiumHotelRadiusKm).toBeNull();
   });
 });
 

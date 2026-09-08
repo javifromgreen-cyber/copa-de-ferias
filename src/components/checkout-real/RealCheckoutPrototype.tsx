@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { prepareRealCheckoutAttempt, type RealCheckoutTicketOption } from "@/server/actions/prepare-checkout-attempt";
-import { resolveAutoHotelSelection, searchViableFlightOrigins, getFlightSessionOffers, type ResolvedAutoHotel, type RealRoundTripOfferDTO, type ViableFlightOrigin } from "@/server/actions/real-checkout-search";
+import { searchHotelShortlist, searchViableFlightOrigins, getFlightSessionOffers, type HotelShortlistOption, type RealRoundTripOfferDTO, type ViableFlightOrigin } from "@/server/actions/real-checkout-search";
 import type { PrepareCheckoutAttemptResult } from "@/lib/checkout-saga/prepareCheckoutAttempt";
 import { COUNTRIES, isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { buildOutboundOptions, buildReturnOptions, resolveOffer, formatSliceTime, type DaypartPreference } from "./flightSelectionClient";
@@ -16,11 +16,16 @@ import { PaymentAuthorizationPanel } from "./PaymentAuthorizationPanel";
  * flow's UI, modality-aware (TICKET_ONLY / TICKET_HOTEL /
  * TICKET_HOTEL_FLIGHT) with a real Duffel round-trip flight picker.
  *
- * Fase 3B.2 — the hotel side is no longer a picker at all: the customer
- * only chooses a star CATEGORY (3★/4★), and resolveAutoHotelSelection
- * resolves (SEARCH + rank by proximity-to-stadium then price + PREBOOK)
- * exactly ONE hotel automatically, shown as a single card. Never a raw
- * Nuitee list, never an alternative shown once resolved.
+ * Fase 3B.2, corrected — the hotel side is no longer a raw Nuitee list,
+ * and no longer asks the customer to pick a star category first either:
+ * searchHotelShortlist searches automatically (centered on the stadium,
+ * a generous radius so it never starves) and ranks by proximity to the
+ * stadium (price only breaks a practical tie), returning up to 3
+ * concrete, available hotels. The customer picks ONE explicitly; PREBOOK
+ * of that exact choice happens where it always has, inside
+ * prepareRealCheckoutAttempt at CONTINUAR. If that PREBOOK finds the
+ * choice no longer viable, the shortlist is refreshed and the customer
+ * must pick again — never a silent substitution.
  *
  * Fase 2.6 §2/§4 — the flight side is now: "Buscar aeropuertos de
  * salida" (one search per candidate Spanish origin, server-side; only
@@ -83,11 +88,13 @@ export function RealCheckoutPrototype({
   const [travelers, setTravelers] = useState<Traveler[]>([{ ...EMPTY_TRAVELER }]);
   const [buyer, setBuyer] = useState({ firstName: "", lastName: "", email: "", phone: "" });
 
-  // --- Hotel auto-selection state (Fase 3B.2) ---
-  const [hotelStarCategory, setHotelStarCategory] = useState<3 | 4 | null>(null);
+  // --- Hotel shortlist state (Fase 3B.2, corrected) ---
   const [hotelStatus, setHotelStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [hotelError, setHotelError] = useState<string | null>(null);
-  const [resolvedHotel, setResolvedHotel] = useState<ResolvedAutoHotel | null>(null);
+  const [hotelOptions, setHotelOptions] = useState<HotelShortlistOption[]>([]);
+  const [selectedHotelOfferId, setSelectedHotelOfferId] = useState<string | null>(null);
+  /** Shown after a CONTINUAR attempt finds the chosen hotel no longer viable — the shortlist is refreshed and the customer must pick again, never a silent substitution. */
+  const [hotelStaleNotice, setHotelStaleNotice] = useState<string | null>(null);
 
   // --- Flight picker state (Fase 2.6 §2/§4) ---
   const [originStatus, setOriginStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
@@ -110,6 +117,7 @@ export function RealCheckoutPrototype({
   const requiresHotel = packageType !== "TICKET_ONLY";
   const requiresFlight = packageType === "TICKET_HOTEL_FLIGHT";
   const flightEligible = isFlightPackageEligible(travelOriginCountry);
+  const selectedHotel = hotelOptions.find((h) => h.offerId === selectedHotelOfferId) ?? null;
 
   const outboundOptions = flightOffersStatus === "loaded" ? buildOutboundOptions(flightOffers, outboundPref) : [];
   const returnOptions = flightOffersStatus === "loaded" && outboundKey ? buildReturnOptions(flightOffers, outboundKey, returnPref) : [];
@@ -138,35 +146,56 @@ export function RealCheckoutPrototype({
     setSelectedFareOfferId(null);
   }
 
+  function resetHotelSelection() {
+    setHotelOptions([]);
+    setSelectedHotelOfferId(null);
+    setHotelStatus("idle");
+    setHotelError(null);
+    setHotelStaleNotice(null);
+  }
+
   function setPackageTypeSafe(next: PackageType) {
     if (next === "TICKET_HOTEL_FLIGHT" && !flightEligible) return;
     setPackageType(next);
-    setHotelStarCategory(null);
-    setResolvedHotel(null);
-    setHotelStatus("idle");
-    setHotelError(null);
+    resetHotelSelection();
     resetFlightSelection();
   }
 
   /**
-   * Fase 3B.2 — picking (or changing) the star category invalidates any
-   * prior selection and re-resolves from scratch. Never reuses a hotel of
-   * the wrong category.
+   * Searches automatically (no "buscar hoteles" button, no star category
+   * to pick first) and ranks by proximity to the stadium — up to 3
+   * concrete, available hotels. Selecting one, or a prior selection going
+   * stale after CONTINUAR, both clear `selectedHotelOfferId` so the
+   * customer always picks explicitly again from the fresh list.
    */
-  async function handleSelectHotelCategory(category: 3 | 4) {
-    setHotelStarCategory(category);
-    setResolvedHotel(null);
+  async function refreshHotelShortlist() {
+    setSelectedHotelOfferId(null);
     setHotelStatus("loading");
     setHotelError(null);
-    const res = await resolveAutoHotelSelection({ tripSlug, partySize, travelOriginCountry, hotelStarCategory: category });
+    const res = await searchHotelShortlist({ tripSlug, partySize, travelOriginCountry });
     if (res.ok) {
-      setResolvedHotel(res.hotel);
+      setHotelOptions(res.hotels);
       setHotelStatus("loaded");
     } else {
+      setHotelOptions([]);
       setHotelError(res.error);
       setHotelStatus("error");
     }
   }
+
+  // Search automatically whenever the hotel step becomes relevant, and
+  // again whenever partySize/travelOriginCountry change (both affect
+  // occupancy/pricing, so a stale shortlist must never be reused).
+  // Deferred via setTimeout(0) so the fetch (and its setState calls)
+  // never run synchronously within the effect body itself.
+  useEffect(() => {
+    if (!requiresHotel) return;
+    const timer = setTimeout(() => {
+      refreshHotelShortlist();
+    }, 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requiresHotel, partySize, travelOriginCountry]);
 
   async function handleSearchOrigins() {
     resetFlightSelection();
@@ -201,9 +230,22 @@ export function RealCheckoutPrototype({
     return { firstName: t.firstName, lastName: t.lastName, title: t.title || undefined, gender: t.gender || undefined, birthDate: t.birthDate || undefined, email: t.email || undefined, phone: t.phone || undefined };
   }
 
+  /**
+   * §12 — the internal PREBOOK/revalidation of the customer's chosen hotel
+   * (inside prepareRealCheckoutAttempt -> runQuoteRevalidation) is the
+   * only place PREBOOK ever happens. If it reports the hotel as no longer
+   * available/changed, this substring match catches every one of that
+   * step's own hotel-specific failure messages — never a flight/ticket
+   * failure, which never mentions "hotel".
+   */
+  function isHotelStaleFailure(error: string): boolean {
+    return error.toLowerCase().includes("hotel");
+  }
+
   async function handleContinuar() {
     setStatus("checking");
     setResult(null);
+    setHotelStaleNotice(null);
     const res = await prepareRealCheckoutAttempt({
       tripSlug,
       packageType,
@@ -214,22 +256,32 @@ export function RealCheckoutPrototype({
       ticketOfferId,
       ticketQuantity: partySize,
       hotel:
-        requiresHotel && resolvedHotel
+        requiresHotel && selectedHotel
           ? {
-              offerId: resolvedHotel.offerId,
-              expectedTotalPrice: resolvedHotel.expectedTotalPrice,
-              expectedRooms: resolvedHotel.expectedRooms,
-              hotelName: resolvedHotel.hotelName,
-              hotelAddress: resolvedHotel.hotelAddress,
-              stars: resolvedHotel.stars,
-              hotelStarCategory: resolvedHotel.hotelStarCategory,
-              distanceToStadiumKm: resolvedHotel.distanceToStadiumKm,
-              stadiumHotelRadiusKm: resolvedHotel.stadiumHotelRadiusKm,
+              offerId: selectedHotel.offerId,
+              expectedTotalPrice: selectedHotel.expectedTotalPrice,
+              expectedRooms: selectedHotel.expectedRooms,
+              hotelName: selectedHotel.name,
+              hotelAddress: selectedHotel.address,
+              stars: selectedHotel.stars ?? 0,
+              hotelStarCategory: selectedHotel.stars ?? 0,
+              distanceToStadiumKm: selectedHotel.distanceToStadiumKm,
+              stadiumHotelRadiusKm: null,
             }
           : undefined,
       flight: requiresFlight && selectedOriginSessionId && finalFlightOffer && outboundKey && returnKey ? { searchSessionId: selectedOriginSessionId, offerId: finalFlightOffer.offerId, outboundSliceKey: outboundKey, returnSliceKey: returnKey } : undefined,
     });
     setResult(res);
+
+    if (!res.ok && requiresHotel && isHotelStaleFailure(res.error)) {
+      // §12 — never substitute silently: refresh the shortlist and force
+      // the customer to pick again.
+      setHotelStaleNotice("Esta opción ya no está disponible. Hemos actualizado los hoteles disponibles.");
+      await refreshHotelShortlist();
+      setStatus("error");
+      return;
+    }
+
     setStatus(res.ok ? "ready" : "error");
     if (res.ok) router.replace(`/viajes/${tripSlug}/reservar-real?attempt=${res.accessToken}`);
   }
@@ -317,38 +369,34 @@ export function RealCheckoutPrototype({
 
       {requiresHotel && (
         <div className="space-y-3">
-          <h2 className="font-display text-xl uppercase">Hotel</h2>
-          <p className="text-sm text-carbon/70">Seleccionamos automáticamente hoteles cercanos al estadio y buscamos la mejor tarifa disponible dentro de la categoría elegida.</p>
-          <div className="flex gap-3 text-sm">
-            <button
-              type="button"
-              onClick={() => handleSelectHotelCategory(3)}
-              className={`rounded-sm border px-4 py-2 ${hotelStarCategory === 3 ? "border-carbon bg-carbon text-ivory" : "border-carbon/30"}`}
-            >
-              3 estrellas
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSelectHotelCategory(4)}
-              className={`rounded-sm border px-4 py-2 ${hotelStarCategory === 4 ? "border-carbon bg-carbon text-ivory" : "border-carbon/30"}`}
-            >
-              4 estrellas
-            </button>
-          </div>
-          {hotelStatus === "loading" && <p className="text-sm text-carbon/70">Buscando la mejor opción…</p>}
-          {hotelStatus === "error" && (
+          <h2 className="font-display text-xl uppercase">Elige tu hotel</h2>
+          <p className="text-sm text-carbon/70">Te mostramos hasta 3 opciones disponibles para tus fechas, priorizando las más próximas al estadio.</p>
+          {hotelStaleNotice && (
+            <p role="alert" className="text-sm text-red-700">
+              {hotelStaleNotice}
+            </p>
+          )}
+          {hotelStatus === "loading" && <p className="text-sm text-carbon/70">Buscando las mejores opciones…</p>}
+          {hotelStatus === "error" && !hotelStaleNotice && (
             <p role="alert" className="text-sm text-red-700">
               {hotelError}
             </p>
           )}
-          {hotelStatus === "loaded" && resolvedHotel && (
-            <div className="border border-carbon p-3 text-sm">
-              <span className="font-semibold">
-                HOTEL {resolvedHotel.stars}★ — {resolvedHotel.hotelName}
-              </span>
-              <div className="text-carbon/60">{resolvedHotel.hotelAddress}</div>
-              <div className="text-carbon/60">{resolvedHotel.expectedRooms.map((r) => r.roomName).join(", ")}</div>
-              <div className="text-carbon/60">{resolvedHotel.distanceToStadiumKm.toFixed(1)} km del estadio</div>
+          {hotelStatus === "loaded" && hotelOptions.length > 0 && (
+            <div className="space-y-2">
+              {hotelOptions.map((h) => (
+                <label key={h.offerId} className={`block cursor-pointer border p-3 text-sm ${selectedHotelOfferId === h.offerId ? "border-carbon" : "border-carbon/20"}`}>
+                  <input type="radio" name="hotel" className="mr-2" checked={selectedHotelOfferId === h.offerId} onChange={() => setSelectedHotelOfferId(h.offerId)} />
+                  <span className="font-semibold">{h.name}</span>
+                  {h.stars != null && <span className="ml-2 text-carbon/60">{h.stars}★</span>}
+                  <div className="text-carbon/60">{h.address}</div>
+                  <div className="text-carbon/60">{h.distanceToStadiumKm.toFixed(1)} km del estadio</div>
+                  <div className="text-carbon/60">{h.expectedRooms.map((r) => r.roomName).join(", ")}</div>
+                  <div className="text-carbon/60">
+                    {h.board ? `Régimen: ${h.board}` : "Solo alojamiento"} · {h.refundable ? "Cancelación gratuita" : "No reembolsable"}
+                  </div>
+                </label>
+              ))}
             </div>
           )}
         </div>

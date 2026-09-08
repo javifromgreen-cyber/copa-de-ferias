@@ -48,17 +48,24 @@ export type FinalQuoteSnapshotHotel = {
   /** Fase 3B.2 §4 — whether it is safe to start Stripe auth + Nuitee BOOK against THIS accepted rate right now; see classifyHotelAutoBookability. */
   autoBookability: HotelAutoBookability;
   /**
-   * Fase 3B.2 — audit trail for the automatic hotel resolution
-   * (resolveAutoHotelSelection). Same client-carried-through trust level
-   * as `name`/`address` above — the real gate against a stale/tampered
-   * value is the defensive equality check hotelFulfillment.ts runs again
-   * right before BOOK (stars == hotelStarCategory, distanceToStadiumKm <=
-   * stadiumHotelRadiusKm), never this snapshot alone.
+   * Corrected — audit trail for the automatic hotel shortlist
+   * (searchHotelShortlist) the customer picked from. Informational only:
+   * `distanceToStadiumKm` is real (haversineDistanceKm against the
+   * stadium) and used to display "X km del estadio" in Mi Viaje, but it
+   * is never a BOOK gate — a hotel far from the stadium can legitimately
+   * be the one the customer chose. `stars` is this hotel's real,
+   * Nuitee-reported star rating. `hotelStarCategory` and
+   * `stadiumHotelRadiusKm` are LEGACY fields from an earlier design (a
+   * user-selected 3★/4★ category with a hard proximity radius) — kept
+   * for schema/snapshot compatibility only, never read as a source of
+   * truth or a BOOK gate by this flow. `hotelStarCategory` is always just
+   * `stars` echoed back; `stadiumHotelRadiusKm` is whatever the Event's
+   * legacy field held, or null.
    */
   stars: number;
   hotelStarCategory: number;
   distanceToStadiumKm: number;
-  stadiumHotelRadiusKm: number;
+  stadiumHotelRadiusKm: number | null;
 };
 
 export type FinalQuoteSnapshotFlightSegment = {
