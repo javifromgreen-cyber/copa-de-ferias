@@ -231,6 +231,15 @@ describe("K — the shortlist is never emptied merely by information only PREBOO
   });
 });
 
+describe("P — excludeHotelIds leaves a hotel out of the ranking entirely (Round 5: candidates already PREBOOK-validated or already found invalid this resolution are never retried)", () => {
+  it("a hotel in excludeHotelIds never appears in the result, even if it would otherwise rank first", () => {
+    const excluded = hotel({ hotelId: "h_excluded", coordinates: atDistanceKm(1) });
+    const included = hotel({ hotelId: "h_included", coordinates: atDistanceKm(5) });
+    const shortlist = buildHotelShortlist({ hotels: [excluded, included], stadium: STADIUM, excludeHotelIds: new Set(["h_excluded"]) });
+    expect(ids(shortlist)).toEqual(["h_included"]);
+  });
+});
+
 describe("distance is real haversine math, never a textual/estimated distance", () => {
   it("zero distance for the same point", () => {
     expect(haversineDistanceKm(STADIUM, STADIUM)).toBeCloseTo(0, 6);

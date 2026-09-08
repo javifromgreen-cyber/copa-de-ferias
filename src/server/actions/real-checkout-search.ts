@@ -3,12 +3,14 @@
 import type { PackageType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { searchHotels } from "@/lib/providers/hotels/nuitee/search";
+import { prebookOffer } from "@/lib/providers/hotels/nuitee/prebook";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
 import { computeOrganizationFee, type OrganizationFeeGlobalConfig } from "@/lib/pricing/organizationFee";
 import { computeQuote } from "@/lib/pricing/quote";
 import { isoCountryCodeForTripCountry } from "@/lib/checkout-atu-aire/tripCountryCode";
-import { buildHotelShortlist, HOTEL_SHORTLIST_SIZE, type HotelCandidate } from "@/lib/checkout-atu-aire/hotelAutoSelection";
-import type { HotelOption } from "@/lib/providers/hotels/nuitee/types";
+import { buildHotelShortlist, HOTEL_SHORTLIST_SIZE } from "@/lib/checkout-atu-aire/hotelAutoSelection";
+import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility";
+import type { HotelOption, HotelPrebook } from "@/lib/providers/hotels/nuitee/types";
 import type { LatLng } from "@/lib/geo/distance";
 import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roundTripSearch";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
@@ -77,31 +79,59 @@ export type SearchHotelShortlistResult = { ok: true; hotels: HotelShortlistOptio
 
 /**
  * Progressive SEARCH radius (km), centered on the stadium — starts close
- * and only widens when the closer radius didn't yield enough valid
+ * and only widens when the closer radius didn't yield enough VALIDATED
  * candidates yet. Never a single fixed cutoff that could turn real
- * inventory into "no hotels": a hotel at 20km or 40km can still end up
+ * inventory into "no hotels": a hotel at 20km or 80km can still end up
  * in the shortlist if that's genuinely the best available inventory for
- * the dates. Stops expanding as soon as HOTEL_SHORTLIST_SIZE valid
- * candidates are found, or the progression is exhausted.
+ * the dates. 80km is a last-resort fallback tier, not a promise to the
+ * customer — never a distance we advertise, only the widest ring
+ * attempted before genuinely giving up. Stops expanding as soon as
+ * HOTEL_SHORTLIST_SIZE valid candidates are found, or the progression
+ * (together with MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION below) is exhausted.
  */
-const HOTEL_SEARCH_RADIUS_PROGRESSION_KM = [5, 10, 20, 40];
+const HOTEL_SEARCH_RADIUS_PROGRESSION_KM = [5, 10, 20, 40, 80];
 
 /**
- * Fase 3B.2, corrected — replaces both the old "show every Nuitee hotel"
- * flow AND the later "pick a star category, we auto-select ONE hotel"
- * flow. The customer no longer picks anything up front: Copa de Ferias
- * searches automatically and shows a SHORTLIST of up to 3 concrete,
- * available hotels, ranked by proximity to the stadium (price only
- * breaks a practical tie — see hotelAutoSelection.ts), and the customer
- * picks ONE explicitly.
+ * Bounds total PREBOOK calls across one shortlist resolution (every
+ * radius tier combined) — never PREBOOKs the whole inventory. A generous
+ * enough budget to realistically reach 3 validated hotels even with a
+ * few invalid candidates along the way, without opening a loop/abuse
+ * vector.
+ */
+const MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION = 8;
+
+/**
+ * Fase 3B.2, corrected twice — replaces both the old "show every Nuitee
+ * hotel" flow AND the later "pick a star category, we auto-select ONE
+ * hotel" flow. The customer no longer picks anything up front: Copa de
+ * Ferias searches automatically and shows a SHORTLIST of up to 3
+ * concrete, available hotels, ranked by proximity to the stadium (price
+ * only breaks a practical tie — see hotelAutoSelection.ts), and the
+ * customer picks ONE explicitly.
  *
- * Runs a progressive-radius SEARCH (fetchExpandingHotelCandidates below)
- * — never PREBOOK here at all. PREBOOK/revalidation of the customer's
- * actual choice happens exactly where it always has: inside
- * prepareCheckoutAttempt -> runQuoteRevalidation, at CONTINUAR. If that
- * PREBOOK finds the chosen option no longer viable, this function is
- * simply called again to refresh the shortlist — never a silent
- * substitution of a different hotel.
+ * Second correction — every card shown here is now PREBOOK-validated
+ * before it's ever shown: SEARCH alone (even with a reliable
+ * refundableTag) cannot prove a rate is genuinely bookable, since
+ * Nuitee's SEARCH response often omits the cancellation-policy detail
+ * PREBOOK actually confirms. resolveValidatedHotelShortlist below walks
+ * the distance-ranked candidates in order, PREBOOKs each one (bounded by
+ * MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION), and only a candidate that passes
+ * the full reversibility/safe-window/autoBookability gate — the exact
+ * same one PREBOOK-time gate this codebase has always used — becomes a
+ * visible card. An invalid candidate is never retried within the same
+ * resolution, even if a wider radius tier's SEARCH response includes it
+ * again.
+ *
+ * PREBOOK here is safe to use freely: it's Nuitee's own revalidation
+ * step, never an irreversible reservation — no BOOK, no Stripe, no
+ * charge. The customer's actual choice is still independently
+ * revalidated once more at CONTINUAR (prepareCheckoutAttempt ->
+ * runQuoteRevalidation) immediately before payment — not a "duplicate"
+ * PREBOOK, but the domain's own mandatory final revalidation
+ * (state can genuinely change in the minutes between browsing the
+ * shortlist and paying). If that final PREBOOK finds the choice no
+ * longer viable, this function is simply called again to refresh the
+ * shortlist — never a silent substitution of a different hotel.
  */
 export async function searchHotelShortlist(input: { tripSlug: string; partySize: number; travelOriginCountry: string; ticketOfferId: string; packageType: PackageType; fetchImpl?: typeof fetch }): Promise<SearchHotelShortlistResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug }, include: { events: true } });
@@ -132,9 +162,9 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   const checkOut = addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1);
   const mix = computeRequiredRoomMix(input.partySize);
 
-  let shortlist: HotelCandidate[];
+  let validated: ValidatedHotelCandidate[];
   try {
-    shortlist = await fetchExpandingHotelCandidates({
+    validated = await resolveValidatedHotelShortlist({
       stadium,
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
@@ -147,7 +177,7 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
     return { ok: false, error: `Búsqueda de hotel no disponible: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  if (shortlist.length === 0) {
+  if (validated.length === 0) {
     return { ok: false, error: "No hay hoteles disponibles para estas fechas." };
   }
 
@@ -172,23 +202,26 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
     },
   });
 
-  const hotels: HotelShortlistOption[] = shortlist.map((c) => {
+  const hotels: HotelShortlistOption[] = validated.map((v) => {
+    // The PREBOOK-revalidated price, never the original SEARCH price —
+    // if PREBOOK moved the price, the card reflects the new one, so what
+    // the customer sees here is already what CONTINUAR will confirm.
     // Flight cost isn't known yet at this step (hotel is picked before
     // flight) — the preview below is ticket+hotel only; CONTINUAR still
     // computes the real, authoritative total once flight (if any) joins.
-    const quote = computeQuote({ costs: { ticketCostNetTotal, hotelCostNetTotal: c.rate.price.total, flightCostNetTotal: 0, hostCostNetTotal: 0 }, orgFee, buffer: 0, paymentMethodInternalCost: 0 });
+    const quote = computeQuote({ costs: { ticketCostNetTotal, hotelCostNetTotal: v.prebook.price.total, flightCostNetTotal: 0, hostCostNetTotal: 0 }, orgFee, buffer: 0, paymentMethodInternalCost: 0 });
     return {
-      hotelId: c.hotel.hotelId,
-      offerId: c.rate.offerId,
-      name: c.hotel.name,
-      stars: c.hotel.stars,
-      address: c.hotel.address,
-      city: c.hotel.city,
-      distanceToStadiumKm: c.distanceToStadiumKm,
-      expectedTotalPrice: c.rate.price.total,
-      expectedRooms: c.rate.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
-      board: c.rate.rooms[0]?.board ?? null,
-      refundable: c.rate.rooms.every((r) => r.refundable),
+      hotelId: v.hotel.hotelId,
+      offerId: v.prebook.offerId,
+      name: v.hotel.name,
+      stars: v.hotel.stars,
+      address: v.hotel.address,
+      city: v.hotel.city,
+      distanceToStadiumKm: v.distanceToStadiumKm,
+      expectedTotalPrice: v.prebook.price.total,
+      expectedRooms: v.prebook.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
+      board: v.prebook.rooms[0]?.board ?? null,
+      refundable: v.prebook.rooms.every((r) => r.refundable),
       publicPriceTotal: quote.commercialTotal,
       publicPricePerPerson: quote.commercialTotal / input.partySize,
       currency: trip.currency,
@@ -198,15 +231,29 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   return { ok: true, hotels, checkIn: toIsoDate(checkIn), checkOut: toIsoDate(checkOut) };
 }
 
+type ValidatedHotelCandidate = {
+  hotel: HotelOption;
+  distanceToStadiumKm: number;
+  /** The real PREBOOK response for this hotel — price/rooms shown to the customer come from here, never from SEARCH's own (unconfirmed) rate. */
+  prebook: HotelPrebook;
+};
+
 /**
- * The progressive-radius expansion itself: one SEARCH call per radius in
- * HOTEL_SEARCH_RADIUS_PROGRESSION_KM, accumulating hotels (deduplicated
- * by hotelId — a wider radius's response naturally re-includes closer
- * hotels) and re-ranking after each step. Stops issuing further SEARCH
- * calls the moment HOTEL_SHORTLIST_SIZE valid candidates are found — no
- * unnecessary duplicate calls once the shortlist is already full.
+ * The progressive-radius SEARCH + progressive PREBOOK-validation loop:
+ * for each radius tier (widening only if still short of
+ * HOTEL_SHORTLIST_SIZE validated candidates), rank the accumulated
+ * SEARCH pool by distance (excluding hotels already validated or
+ * already found invalid THIS resolution — never retried), and PREBOOK
+ * each ranked candidate in order until either 3 are validated or
+ * MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION is reached — whichever comes
+ * first, across the whole resolution, not per tier. A candidate is
+ * "valid" only once its own PREBOOK response passes the same
+ * reversibility/safe-window/autoBookability gate used everywhere else
+ * in this codebase (classifyHotelAutoBookability) — a thrown PREBOOK
+ * error, a hotelId mismatch, or a failed gate all mark that hotel
+ * invalid for the rest of this resolution.
  */
-async function fetchExpandingHotelCandidates(params: {
+async function resolveValidatedHotelShortlist(params: {
   stadium: LatLng;
   checkin: string;
   checkout: string;
@@ -214,9 +261,11 @@ async function fetchExpandingHotelCandidates(params: {
   guestNationality: string;
   mix: ReturnType<typeof computeRequiredRoomMix>;
   fetchImpl?: typeof fetch;
-}): Promise<HotelCandidate[]> {
+}): Promise<ValidatedHotelCandidate[]> {
   const byHotelId = new Map<string, HotelOption>();
-  let shortlist: HotelCandidate[] = [];
+  const invalidHotelIds = new Set<string>();
+  const validated: ValidatedHotelCandidate[] = [];
+  let attempts = 0;
 
   for (const radiusKm of HOTEL_SEARCH_RADIUS_PROGRESSION_KM) {
     const searchResult = await searchHotels({
@@ -232,11 +281,37 @@ async function fetchExpandingHotelCandidates(params: {
     });
     for (const hotel of searchResult.hotels) byHotelId.set(hotel.hotelId, hotel);
 
-    shortlist = buildHotelShortlist({ hotels: [...byHotelId.values()], stadium: params.stadium });
-    if (shortlist.length >= HOTEL_SHORTLIST_SIZE) break;
+    const excludeHotelIds = new Set<string>([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]);
+    const ranked = buildHotelShortlist({
+      hotels: [...byHotelId.values()],
+      stadium: params.stadium,
+      maxResults: MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION,
+      excludeHotelIds,
+    });
+
+    for (const candidate of ranked) {
+      if (validated.length >= HOTEL_SHORTLIST_SIZE || attempts >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
+      attempts++;
+
+      let prebook: HotelPrebook;
+      try {
+        prebook = await prebookOffer(candidate.rate.offerId, params.fetchImpl);
+      } catch {
+        invalidHotelIds.add(candidate.hotel.hotelId); // lost availability, or PREBOOK itself failed — never retried this resolution.
+        continue;
+      }
+      if (prebook.hotelId !== candidate.hotel.hotelId || !classifyHotelAutoBookability(prebook.rooms).autoBookable) {
+        invalidHotelIds.add(candidate.hotel.hotelId); // NRFN, unsafe window, or otherwise not auto-bookable — never retried this resolution.
+        continue;
+      }
+
+      validated.push({ hotel: candidate.hotel, distanceToStadiumKm: candidate.distanceToStadiumKm, prebook });
+    }
+
+    if (validated.length >= HOTEL_SHORTLIST_SIZE || attempts >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
   }
 
-  return shortlist;
+  return validated;
 }
 
 export type { RealFlightSegmentDTO, RealFlightSliceDTO, RealCommercialProductDTO, StoredFlightOffer };

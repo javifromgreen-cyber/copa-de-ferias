@@ -58,8 +58,30 @@ function baseArgs(overrides: { partySize?: number; travelOriginCountry?: string;
 }
 
 const FUTURE_CANCEL_DEADLINE = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+/** Within classifyHotelAutoBookability's 30-minute safety buffer — RFN, but not safely auto-bookable. */
+const UNSAFE_CANCEL_DEADLINE = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-type HotelFixture = { hotelId: string; offerId: string; stars: number; price: number; lat: number; lng: number; name?: string; refundable?: boolean; unknownCancellationInfo?: boolean };
+type HotelFixture = {
+  hotelId: string;
+  offerId: string;
+  stars: number;
+  price: number;
+  lat: number;
+  lng: number;
+  name?: string;
+  refundable?: boolean;
+  unknownCancellationInfo?: boolean;
+  /**
+   * What PREBOOK responds with for this hotel's offerId, once
+   * resolveValidatedHotelShortlist attempts it. Defaults to "valid" (RFN
+   * + a safe future cancelTime) — the candidate clears
+   * classifyHotelAutoBookability and becomes a visible card. "fails"
+   * simulates PREBOOK itself erroring (e.g. lost availability, a 404).
+   */
+  prebookOutcome?: "valid" | "nrfn" | "unsafe_window" | "fails";
+  /** PREBOOK's own price, when it must differ from the SEARCH price — the card must reflect this, never the original SEARCH price. Defaults to `price`. */
+  prebookPrice?: number;
+};
 
 function nuiteeSearchBody(hotels: HotelFixture[]) {
   return {
@@ -95,9 +117,52 @@ function atDistanceKm(km: number): { lat: number; lng: number } {
   return { lat: STADIUM_LAT + km * 0.009, lng: STADIUM_LNG };
 }
 
-/** A router fetch mock: every SEARCH radius returns the same `hotels` list. searchHotelShortlist never calls PREBOOK/BOOK. */
+/**
+ * PREBOOK's own response shape for one fixture — same nested
+ * roomTypes[].rates[] shape SEARCH uses, per normalize.ts. Driven only by
+ * `prebookOutcome`/`prebookPrice`, deliberately independent of the
+ * fixture's SEARCH-time `refundable`/`unknownCancellationInfo` flags: the
+ * whole point of this correction is that PREBOOK is the one authority
+ * that decides real eligibility, regardless of what SEARCH could or
+ * couldn't confirm.
+ */
+function nuiteePrebookBody(fixture: HotelFixture) {
+  const price = fixture.prebookPrice ?? fixture.price;
+  const cancellationPolicies =
+    fixture.prebookOutcome === "nrfn"
+      ? { refundableTag: "NRFN" as const }
+      : fixture.prebookOutcome === "unsafe_window"
+        ? { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: UNSAFE_CANCEL_DEADLINE, amount: 0 }] }
+        : { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] };
+  return {
+    data: {
+      prebookId: `prebook_${fixture.offerId}`,
+      offerId: fixture.offerId,
+      hotelId: fixture.hotelId,
+      currency: "EUR",
+      price,
+      checkin: "2026-11-14",
+      checkout: "2026-11-16",
+      roomTypes: [
+        {
+          rates: [
+            {
+              occupancyNumber: 1,
+              name: "Doble",
+              adultCount: 2,
+              retailRate: { total: [{ amount: price, currency: "EUR" }] },
+              cancellationPolicies,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/** A router fetch mock: every SEARCH radius (including the 80km last-resort tier) returns the same `hotels` list, and PREBOOK is answered per each fixture's own `prebookOutcome`. */
 function makeFetchImpl(hotels: HotelFixture[]) {
-  return makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels });
+  return makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels, 80: hotels });
 }
 
 /**
@@ -105,10 +170,17 @@ function makeFetchImpl(hotels: HotelFixture[]) {
  * geographic SEARCH behaves: a wider radius's response is a superset of
  * a narrower one's (so fixtures for a bigger radius should normally
  * include the smaller radius's hotels too, plus whatever new hotels
- * that wider circle reaches).
+ * that wider circle reaches). Also answers `/rates/prebook` for any
+ * offerId appearing in any radius tier's fixtures, per that fixture's own
+ * `prebookOutcome` — "fails" answers with a 404 (lost availability),
+ * exactly like resolveValidatedHotelShortlist's own catch branch expects.
  */
 function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>) {
   const calls: { url: string; body: unknown }[] = [];
+  const fixturesByOfferId = new Map<string, HotelFixture>();
+  for (const hotels of Object.values(hotelsByRadiusKm)) {
+    for (const h of hotels) fixturesByOfferId.set(h.offerId, h);
+  }
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const body = init?.body ? JSON.parse(init.body as string) : null;
@@ -117,6 +189,14 @@ function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>
       const radiusKm = (body as { radius: number }).radius / 1000;
       const hotels = hotelsByRadiusKm[radiusKm] ?? [];
       return new Response(JSON.stringify(nuiteeSearchBody(hotels)), { status: 200 });
+    }
+    if (/rates\/prebook/.test(url)) {
+      const offerId = (body as { offerId: string }).offerId;
+      const fixture = fixturesByOfferId.get(offerId);
+      if (!fixture || fixture.prebookOutcome === "fails") {
+        return new Response(JSON.stringify({ error: "not available" }), { status: 404 });
+      }
+      return new Response(JSON.stringify(nuiteePrebookBody(fixture)), { status: 200 });
     }
     throw new Error(`unexpected call to ${url}`);
   }) as unknown as typeof fetch;
@@ -192,14 +272,17 @@ describe("D — hotels repeated across radius expansions are deduplicated", () =
 });
 
 describe("E — a hotel beyond the old 15km cutoff can still appear if it's among the best available options", () => {
-  it("only a 22km hotel exists at all -> the expansion reaches 40km and returns it", async () => {
+  it("only a 22km hotel exists at all -> the expansion reaches 40km and returns it, still trying the 80km last-resort tier since only 1 candidate was ever found (never a false 'no hotels' with only 1 of 3 slots filled)", async () => {
     const veryFar: HotelFixture = { hotelId: "hotel_22km", offerId: "offer_22km", stars: 4, price: 100, ...atDistanceKm(22) };
-    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [], 10: [], 20: [], 40: [veryFar] });
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [], 10: [], 20: [], 40: [veryFar], 80: [veryFar] });
 
     const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(searchCallRadiiKm(calls)).toEqual([5, 10, 20, 40]);
+    // Only 1 candidate ever exists, so validated.length never reaches
+    // HOTEL_SHORTLIST_SIZE — the full progression, 80km included, is
+    // genuinely exhausted rather than stopping early.
+    expect(searchCallRadiiKm(calls)).toEqual([5, 10, 20, 40, 80]);
     expect(result.hotels).toHaveLength(1);
     expect(result.hotels[0].distanceToStadiumKm).toBeGreaterThan(15);
   });
@@ -296,17 +379,148 @@ describe("O — a definitively non-refundable hotel is still discarded entirely 
   });
 });
 
-describe("L/V/W — searchHotelShortlist only ever calls SEARCH, never PREBOOK/BOOK", () => {
-  it("no request to /rates/prebook or /rates/book is made, at any radius", async () => {
+describe("L/V/W — searchHotelShortlist validates candidates via PREBOOK (safe revalidation, never a reservation) but never calls BOOK", () => {
+  it("calls SEARCH and PREBOOK for the shortlisted candidate, but /rates/book is never called", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl, calls } = makeFetchImpl(hotels);
 
-    await searchHotelShortlist(baseArgs({ fetchImpl }));
-    expect(calls.some((c) => /rates\/prebook/.test(c.url))).toBe(false);
-    expect(calls.some((c) => /rates\/book/.test(c.url))).toBe(false);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
     expect(calls.some((c) => /hotels\/rates/.test(c.url))).toBe(true);
+    expect(calls.some((c) => /rates\/prebook/.test(c.url))).toBe(true);
+    expect(calls.some((c) => /rates\/book/.test(c.url))).toBe(false);
   });
 });
+
+// Round 5 correction — the public shortlist must only ever contain
+// PREBOOK-validated candidates, so a candidate that fails PREBOOK
+// (NRFN, unsafe window, or lost availability) never shows up, is never
+// retried within the same resolution, and never PREBOOKs more of the
+// inventory than necessary. Letters below follow the user's own A-P
+// list for this correction (distinct from this file's older A-W labels
+// above, which predate PREBOOK validation).
+
+describe("PREBOOK-validation A — every visible card has actually passed PREBOOK", () => {
+  it("issues a PREBOOK call carrying the offerId of the hotel shown in the result", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url));
+    expect(prebookCalls.some((c) => (c.body as { offerId: string }).offerId === "offer_1")).toBe(true);
+    expect(result.hotels[0].hotelId).toBe("hotel_1");
+  });
+});
+
+describe("PREBOOK-validation B — a hotel that turns out NRFN only at PREBOOK time never appears in the shortlist", () => {
+  it("2 candidates, the closer one NRFN-at-PREBOOK -> only the other appears", async () => {
+    const bad: HotelFixture = { hotelId: "h_bad", offerId: "o_bad", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(1) };
+    const good: HotelFixture = { hotelId: "h_good", offerId: "o_good", stars: 4, price: 120, ...atDistanceKm(3) };
+    const { fetchImpl } = makeFetchImpl([bad, good]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels.map((h) => h.hotelId)).toEqual(["h_good"]);
+  });
+});
+
+describe("PREBOOK-validation C — a hotel whose PREBOOK reveals an unsafe cancellation window never appears", () => {
+  it("2 candidates, the closer one unsafe-window-at-PREBOOK -> only the other appears", async () => {
+    const bad: HotelFixture = { hotelId: "h_unsafe", offerId: "o_unsafe", stars: 4, price: 100, prebookOutcome: "unsafe_window", ...atDistanceKm(1) };
+    const good: HotelFixture = { hotelId: "h_good2", offerId: "o_good2", stars: 4, price: 120, ...atDistanceKm(3) };
+    const { fetchImpl } = makeFetchImpl([bad, good]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels.map((h) => h.hotelId)).toEqual(["h_good2"]);
+  });
+});
+
+describe("PREBOOK-validation D — when the closest candidate fails PREBOOK, the next-closest is tried", () => {
+  it("closer hotel loses availability at PREBOOK -> the farther one is validated and shown, 2 PREBOOK calls total", async () => {
+    const closer: HotelFixture = { hotelId: "h_closer", offerId: "o_closer", stars: 4, price: 100, prebookOutcome: "fails", ...atDistanceKm(1) };
+    const farther: HotelFixture = { hotelId: "h_farther", offerId: "o_farther", stars: 4, price: 120, ...atDistanceKm(3) };
+    const { fetchImpl, calls } = makeFetchImpl([closer, farther]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels.map((h) => h.hotelId)).toEqual(["h_farther"]);
+    expect(calls.filter((c) => /rates\/prebook/.test(c.url))).toHaveLength(2);
+  });
+});
+
+describe("PREBOOK-validation G — never PREBOOKs the whole inventory once 3 valid candidates are found", () => {
+  it("10 valid hotels within 5km -> exactly 3 PREBOOK calls are made, not 10", async () => {
+    const hotels: HotelFixture[] = Array.from({ length: 10 }, (_, i) => ({ hotelId: `h${i}`, offerId: `o${i}`, stars: 4, price: 100, ...atDistanceKm(i + 1) }));
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels).toHaveLength(3);
+    expect(calls.filter((c) => /rates\/prebook/.test(c.url))).toHaveLength(3);
+  });
+});
+
+describe("PREBOOK-validation H — a candidate discarded at PREBOOK is never retried in the same resolution", () => {
+  it("a hotel present at both the 5km and every wider tier, invalid at PREBOOK, is only ever PREBOOKed once", async () => {
+    const bad: HotelFixture = { hotelId: "h_bad_repeat", offerId: "o_bad_repeat", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(2) };
+    const good: HotelFixture = { hotelId: "h_good_repeat", offerId: "o_good_repeat", stars: 4, price: 100, ...atDistanceKm(7) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [bad], 10: [bad, good], 20: [bad, good], 40: [bad, good], 80: [bad, good] });
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels.map((h) => h.hotelId)).toEqual(["h_good_repeat"]);
+    const badPrebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url) && (c.body as { offerId: string }).offerId === "o_bad_repeat");
+    expect(badPrebookCalls).toHaveLength(1);
+  });
+});
+
+describe("PREBOOK-validation I — the visible price reflects PREBOOK's revalidated price, not the original SEARCH price", () => {
+  it("PREBOOK returns a different price than SEARCH -> expectedTotalPrice/publicPriceTotal reflect the PREBOOK number", async () => {
+    const hotel: HotelFixture = { hotelId: "hotel_repriced", offerId: "offer_repriced", stars: 4, price: 100, prebookPrice: 130, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([hotel]);
+    const result = await searchHotelShortlist(baseArgs({ partySize: 2, fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const h = result.hotels[0];
+    expect(h.expectedTotalPrice).toBe(130);
+    // ticketCostNetTotal (50*2=100) + hotelCostNetTotal (130, the PREBOOK price, never the original SEARCH price of 100) = 230 net minimum.
+    expect(h.publicPriceTotal).toBeGreaterThan(230);
+  });
+});
+
+describe("PREBOOK-validation J — the returned offerId is the same one a later CONTINUAR re-PREBOOK would use", () => {
+  it("the shortlist option's offerId equals PREBOOK's own offerId (no invented second identifier)", async () => {
+    const hotel: HotelFixture = { hotelId: "hotel_1", offerId: "offer_original", stars: 4, price: 150, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([hotel]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels[0].offerId).toBe("offer_original");
+  });
+});
+
+describe("PREBOOK-validation L — 0 options is only reported after exhausting the full radius progression", () => {
+  it("no hotel is ever PREBOOK-valid -> every radius tier (5/10/20/40/80) is attempted before ok:false", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_bad", offerId: "offer_bad", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(false);
+    expect(searchCallRadiiKm(calls)).toEqual([5, 10, 20, 40, 80]);
+  });
+});
+
+// K (PREBOOK reuse at selection, mandatory final revalidation before
+// READY_TO_PAY) needs no new test here: runQuoteRevalidation already
+// unconditionally re-PREBOOKs at CONTINUAR regardless of this
+// resolution's own PREBOOK — see quoteRevalidation.test.ts /
+// prepare-checkout-attempt.test.ts, both untouched by this correction.
+// M/N (no real BOOK/Stripe capture from this file) are covered by the
+// L/V/W block above and by this file never importing anything from
+// providers/payments/stripe or nuitee/book. O/P (TICKET_ONLY still
+// green, flight still gated) are covered by this file's untouched
+// flight-side describe blocks below and by the full suite run.
 
 // SEARCH still uses Nuitee's official geographic search (latitude/
 // longitude/radius), progressively expanded — never a starRating filter

@@ -3,20 +3,29 @@ import { haversineDistanceKm, type LatLng } from "@/lib/geo/distance";
 
 /**
  * Fase 3B.2, corrected — the checkout no longer shows the customer a raw
- * Nuitee hotel list, nor makes them pick a star category first: it builds
- * a SHORTLIST of up to 3 concrete hotels, ranked primarily by proximity
- * to the STADIUM, and lets the customer pick one of those. This module is
- * the pure ranking core — no I/O, no PREBOOK/network calls (the impure
- * orchestrator that calls this lives in src/server/actions/
- * real-checkout-search.ts).
+ * Nuitee hotel list, nor makes them pick a star category first: it shows
+ * up to 3 concrete hotels, ranked primarily by proximity to the STADIUM,
+ * and lets the customer pick one of those. This module is the pure
+ * ranking core — no I/O, no PREBOOK/network calls.
  *
- * Correction from the previous design: distance is no longer a hard
- * filter (`distanceToStadiumKm <= someRadius`) that can leave the
- * customer with zero options — it is only ever a RANKING signal. The
- * product promise is "we show you up to 3 available options, prioritizing
- * the ones closest to the stadium", never "hotels near the stadium,
- * guaranteed" — a hotel at 7km or 10km can still legitimately appear if
- * it is among the best available options for the dates.
+ * IMPORTANT — corrected again: `buildHotelShortlist` here only ranks
+ * SEARCH-time candidates worth ATTEMPTING; it is NOT the final public
+ * shortlist by itself. SEARCH alone (even with a reliable refundableTag)
+ * cannot prove a rate is genuinely safe to show — Nuitee's SEARCH
+ * response often omits cancelPolicyInfos even for a rate that PREBOOK
+ * later confirms is fine, and occasionally a SEARCH-time rate turns out
+ * unavailable/changed by the time it's revalidated. The impure
+ * orchestrator (src/server/actions/real-checkout-search.ts) walks this
+ * ranking in order and PREBOOKs each candidate to confirm it for real
+ * before it's ever shown to the customer — only PREBOOK-validated
+ * candidates become the actual public shortlist.
+ *
+ * Distance is never a hard filter (`distanceToStadiumKm <= someRadius`)
+ * that can leave the customer with zero options — it is only ever a
+ * RANKING signal. The product promise is "we show you up to 3 available
+ * options, prioritizing the ones closest to the stadium", never "hotels
+ * near the stadium, guaranteed" — a hotel at 7km or 40km can still
+ * legitimately appear if it is among the best available options.
  */
 
 export type HotelCandidate = {
@@ -121,17 +130,21 @@ function compareCandidates(a: HotelCandidate, b: HotelCandidate): number {
 export type BuildHotelShortlistParams = {
   hotels: HotelOption[];
   stadium: LatLng;
-  /** Defaults to HOTEL_SHORTLIST_SIZE (3) — the public "hasta 3 opciones" cap. */
+  /** Defaults to HOTEL_SHORTLIST_SIZE (3) — bounds how many candidates come back, so a caller attempting PREBOOK on them never has to slice the list itself. */
   maxResults?: number;
+  /** Hotels to leave out of the ranking entirely — already PREBOOK-validated (in the public shortlist) or already found invalid this resolution. Never retried within the same resolution — see real-checkout-search.ts's invalidHotelIds tracking. */
+  excludeHotelIds?: ReadonlySet<string>;
 };
 
 /**
  * Eligibility (before ranking, every candidate must clear this):
+ *  - the hotel isn't in `excludeHotelIds`;
  *  - the hotel has at least one rate SEARCH can reliably vouch for (see
  *    cheapestReliablyEligibleRate's own doc comment — only a definitive
  *    NRFN excludes a rate here; the full reversibility/safe-window/
- *    autoBookability gate still applies in full after PREBOOK, never
- *    loosened there); the cheapest such rate is the one this hotel is
+ *    autoBookability gate still applies in full via PREBOOK, which the
+ *    caller runs against this function's own output — see this file's
+ *    header comment); the cheapest such rate is the one this hotel is
  *    represented by (never multiple cards for the same hotel);
  *  - the hotel has reliable coordinates, so a real distance can be
  *    computed — never a guessed/omitted distance.
@@ -147,6 +160,7 @@ export function buildHotelShortlist(params: BuildHotelShortlistParams): HotelCan
   const candidates: HotelCandidate[] = [];
 
   for (const hotel of params.hotels) {
+    if (params.excludeHotelIds?.has(hotel.hotelId)) continue;
     const rate = cheapestReliablyEligibleRate(hotel);
     if (!rate) continue;
     if (!hotel.coordinates) continue; // no reliable location data, never guessed.
