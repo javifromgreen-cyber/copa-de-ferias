@@ -48,7 +48,7 @@ export type FinalQuoteSnapshotHotel = {
   /** Fase 3B.2 §4 — whether it is safe to start Stripe auth + Nuitee BOOK against THIS accepted rate right now; see classifyHotelAutoBookability. */
   autoBookability: HotelAutoBookability;
   /**
-   * Fase 3B.3 — audit trail for the automatic hotel resolution
+   * Fase 3B.2 — audit trail for the automatic hotel resolution
    * (resolveAutoHotelSelection). Same client-carried-through trust level
    * as `name`/`address` above — the real gate against a stale/tampered
    * value is the defensive equality check hotelFulfillment.ts runs again

@@ -3,7 +3,7 @@ import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility"
 import { haversineDistanceKm, type LatLng } from "@/lib/geo/distance";
 
 /**
- * Fase 3B.3 — the checkout no longer shows the customer a raw Nuitee hotel
+ * Fase 3B.2 — the checkout no longer shows the customer a raw Nuitee hotel
  * list to pick from: it resolves ONE specific hotel automatically. This
  * module is the pure ranking core of that resolution — no I/O, no
  * PREBOOK/network calls (the impure orchestrator that calls this lives in

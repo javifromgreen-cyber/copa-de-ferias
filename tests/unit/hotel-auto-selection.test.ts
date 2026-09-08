@@ -5,7 +5,7 @@ import { haversineDistanceKm } from "@/lib/geo/distance";
 import { rankHotelCandidates, type HotelCandidate } from "@/lib/checkout-atu-aire/hotelAutoSelection";
 import type { HotelOption, HotelRoom } from "@/lib/providers/hotels/nuitee/types";
 
-// Fase 3B.3 — pure-logic tests for the automatic, hidden hotel selection
+// Fase 3B.2 — pure-logic tests for the automatic, hidden hotel selection
 // (proximity-to-stadium FILTER, then cheapest-in-zone wins) plus static
 // checks that the new UI never shows the old raw hotel list or the
 // banned "céntrico"/city-center concept. Nothing here touches Nuitee or

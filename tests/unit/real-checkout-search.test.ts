@@ -189,6 +189,86 @@ describe("W/X — resolveAutoHotelSelection only ever calls SEARCH/PREBOOK, neve
   });
 });
 
+// Fase 3B.2 correction — LiteAPI/Nuitee's own official geographic SEARCH
+// (POST /v3.0/hotels/rates with latitude/longitude/radius) is now the
+// PRIMARY location filter, never a cityName-then-locally-reduce two-step.
+type SearchRequestBody = { latitude?: number; longitude?: number; radius?: number; starRating?: number[]; cityName?: string; countryCode?: string };
+
+function capturedSearchBody(calls: { url: string; body: unknown }[]): SearchRequestBody {
+  const call = calls.find((c) => /hotels\/rates/.test(c.url));
+  expect(call).toBeDefined();
+  return call!.body as SearchRequestBody;
+}
+
+describe("Y — SEARCH sends the stadium's own coordinates and radius (in meters), never cityName", () => {
+  it("sends the Event's stadiumLatitude", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(capturedSearchBody(calls).latitude).toBe(STADIUM_LAT);
+  });
+
+  it("sends the Event's stadiumLongitude", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(capturedSearchBody(calls).longitude).toBe(STADIUM_LNG);
+  });
+
+  it("converts stadiumHotelRadiusKm (5 km) to radius in METERS (5000)", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(capturedSearchBody(calls).radius).toBe(5000);
+  });
+
+  it("sends starRating [3] for a 3★ request", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 3, price: 90, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 3, fetchImpl });
+    expect(capturedSearchBody(calls).starRating).toEqual([3]);
+  });
+
+  it("sends starRating [4] for a 4★ request", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(capturedSearchBody(calls).starRating).toEqual([4]);
+  });
+
+  it("never sends cityName/countryCode for this geographic search", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    const body = capturedSearchBody(calls);
+    expect(body.cityName).toBeUndefined();
+    expect(body.countryCode).toBeUndefined();
+  });
+});
+
+describe("Z — the local Haversine filter still runs defensively, even though Nuitee already filters by radius server-side", () => {
+  it("discards a hotel outside the real radius, even if the (mocked) Nuitee response includes it — Nuitee filters for efficiency, CDF verifies for safety", async () => {
+    const reallyFar: HotelFixture = { hotelId: "hotel_far", offerId: "offer_far", stars: 4, price: 50, ...atDistanceKm(50) };
+    const { fetchImpl } = makeFetchImpl([reallyFar]);
+
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("No hay hoteles de 4 estrellas disponibles cerca del estadio para estas fechas.");
+  });
+
+  it("still exposes exactly one resolved hotel, never a list, when the geo search legitimately returns an in-range candidate", async () => {
+    const inRange: HotelFixture = { hotelId: "hotel_ok", offerId: "offer_ok", stars: 4, price: 120, ...atDistanceKm(2) };
+    const { fetchImpl } = makeFetchImpl([inRange]);
+
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotel).not.toHaveProperty("hotels");
+    expect(typeof result.hotel.distanceToStadiumKm).toBe("number");
+  });
+});
+
 function duffelSeg(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     origin: { iata_code: "MAD" },

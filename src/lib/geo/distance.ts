@@ -1,5 +1,5 @@
 /**
- * Fase 3B.3 — pure, dependency-free great-circle distance. The only
+ * Fase 3B.2 — pure, dependency-free great-circle distance. The only
  * distance concept this codebase's automatic hotel selection uses:
  * `distanceToStadiumKm`, always measured against a stadium's own
  * coordinates, never a neighborhood name, a "city center" point, a

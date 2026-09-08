@@ -859,7 +859,7 @@ async function main() {
     homeTeam: "Manchester City",
     awayTeam: "Manchester United",
     stadium: "Etihad Stadium",
-    // Fase 3B.3 — the automatic hotel selection's only geographic
+    // Fase 3B.2 — the automatic hotel selection's only geographic
     // reference point. Real Etihad Stadium coordinates; 5km is a
     // reasonable "close to the stadium" threshold for a mid-size city
     // center like Manchester — configured here per-Event, never

@@ -16,7 +16,7 @@ import { PaymentAuthorizationPanel } from "./PaymentAuthorizationPanel";
  * flow's UI, modality-aware (TICKET_ONLY / TICKET_HOTEL /
  * TICKET_HOTEL_FLIGHT) with a real Duffel round-trip flight picker.
  *
- * Fase 3B.3 — the hotel side is no longer a picker at all: the customer
+ * Fase 3B.2 — the hotel side is no longer a picker at all: the customer
  * only chooses a star CATEGORY (3★/4★), and resolveAutoHotelSelection
  * resolves (SEARCH + rank by proximity-to-stadium then price + PREBOOK)
  * exactly ONE hotel automatically, shown as a single card. Never a raw
@@ -83,7 +83,7 @@ export function RealCheckoutPrototype({
   const [travelers, setTravelers] = useState<Traveler[]>([{ ...EMPTY_TRAVELER }]);
   const [buyer, setBuyer] = useState({ firstName: "", lastName: "", email: "", phone: "" });
 
-  // --- Hotel auto-selection state (Fase 3B.3) ---
+  // --- Hotel auto-selection state (Fase 3B.2) ---
   const [hotelStarCategory, setHotelStarCategory] = useState<3 | 4 | null>(null);
   const [hotelStatus, setHotelStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [hotelError, setHotelError] = useState<string | null>(null);
@@ -149,7 +149,7 @@ export function RealCheckoutPrototype({
   }
 
   /**
-   * Fase 3B.3 — picking (or changing) the star category invalidates any
+   * Fase 3B.2 — picking (or changing) the star category invalidates any
    * prior selection and re-resolves from scratch. Never reuses a hotel of
    * the wrong category.
    */

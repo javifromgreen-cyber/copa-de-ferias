@@ -214,7 +214,7 @@ export async function progressHotelFulfillment(checkoutAttemptId: string, fetchI
   }
 
   // attempt.hotelStatus === "prebooked" or "validated" — the fresh path.
-  // Fase 3B.3 — defense-in-depth: the automatic hotel resolution only
+  // Fase 3B.2 — defense-in-depth: the automatic hotel resolution only
   // ever selects a hotel of the exact requested category, inside the
   // configured stadium radius, so this should always already hold — but
   // per the spec's own explicit requirement, re-verify it right here,

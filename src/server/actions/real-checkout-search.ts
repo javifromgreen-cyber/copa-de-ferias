@@ -64,7 +64,7 @@ function noHotelsAvailableMessage(starCategory: number): string {
 }
 
 /**
- * Fase 3B.3 — replaces the old "show every Nuitee hotel, let the customer
+ * Fase 3B.2 — replaces the old "show every Nuitee hotel, let the customer
  * pick" flow entirely. The customer only ever chooses a star CATEGORY (3
  * or 4); this resolves ONE specific hotel automatically:
  *
@@ -89,8 +89,9 @@ export async function resolveAutoHotelSelection(input: { tripSlug: string; party
   if (trip.events.length === 0) {
     return { ok: false, error: "Este producto todavía no tiene partidos configurados." };
   }
-  const countryCode = isoCountryCodeForTripCountry(trip.country);
-  if (!countryCode) {
+  // Still a business gate on supported destinations (independent of the
+  // SEARCH mechanism below, which no longer uses this code at all).
+  if (!isoCountryCodeForTripCountry(trip.country)) {
     return { ok: false, error: "No se puede buscar hotel para este destino todavía (país sin mapear)." };
   }
 
@@ -108,9 +109,17 @@ export async function resolveAutoHotelSelection(input: { tripSlug: string; party
 
   let searchResult;
   try {
+    // Fase 3B.2 correction — LiteAPI/Nuitee's own official geographic
+    // SEARCH (latitude/longitude/radius, radius in METERS) is the primary
+    // location filter: never fetch a whole city's hotels by cityName and
+    // reduce locally. rankHotelCandidates below still re-verifies stars
+    // and re-computes Haversine distance on the response as a second,
+    // defensive check — Nuitee filters for efficiency, CDF verifies for
+    // safety.
     searchResult = await searchHotels({
-      cityName: trip.city,
-      countryCode,
+      latitude: stadium.lat,
+      longitude: stadium.lng,
+      radiusMeters: stadiumHotelRadiusKm * 1000,
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
       currency: trip.currency,

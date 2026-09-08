@@ -302,7 +302,7 @@ model Event {
   matchDate DateTime
   kickoff   DateTime?
 
-  // Fase 3B.3 — the ONLY geographic reference point for automatic hotel
+  // Fase 3B.2 — the ONLY geographic reference point for automatic hotel
   // selection is THE STADIUM (never a "city center" concept). Nullable
   // because older/less-complete Events may not have this configured yet —
   // auto hotel selection simply refuses to run without it (§ "sin datos

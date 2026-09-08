@@ -134,7 +134,7 @@ function reversibleHotelSnapshot(partySize: number, overrides: Partial<FinalQuot
     excludedTaxesAndFees: [{ description: "City tax", amount: 5, currency: "EUR" }],
     refundable: true,
     autoBookability: { autoBookable: true, level: "FULLY_REVERSIBLE", hotelSafeCancellationUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() },
-    // Fase 3B.3 — defaults that satisfy hotelFulfillment.ts's own
+    // Fase 3B.2 — defaults that satisfy hotelFulfillment.ts's own
     // pre-BOOK category/radius guard, so every pre-existing test in this
     // file (which doesn't care about that guard) keeps passing unchanged.
     stars: 3,
@@ -616,7 +616,7 @@ describe("AF — no Stripe capture is ever attempted while the hotel isn't CONFI
   });
 });
 
-// Fase 3B.3 — the defensive pre-BOOK guard: the automatic hotel
+// Fase 3B.2 — the defensive pre-BOOK guard: the automatic hotel
 // resolution should always already deliver a hotel of the exact
 // requested category, inside the configured radius — but this codebase
 // never trusts that alone right before a real BOOK call. Any mismatch

@@ -49,7 +49,7 @@ export type QuoteRevalidationHotelInput = {
   hotelName: string;
   /** Fase 3B.2 §3 — same client-supplied, carried-through-verbatim treatment as hotelName (see FinalQuoteSnapshotHotel.address's own doc comment). Optional so existing callers/persisted JSON without it keep working. */
   hotelAddress?: string;
-  /** Fase 3B.3 — resolveAutoHotelSelection's own output, carried through verbatim; see FinalQuoteSnapshotHotel's doc comment for the trust model. */
+  /** Fase 3B.2 — resolveAutoHotelSelection's own output, carried through verbatim; see FinalQuoteSnapshotHotel's doc comment for the trust model. */
   stars: number;
   hotelStarCategory: number;
   distanceToStadiumKm: number;
