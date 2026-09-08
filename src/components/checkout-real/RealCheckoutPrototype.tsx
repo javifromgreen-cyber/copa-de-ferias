@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { prepareRealCheckoutAttempt, type RealCheckoutTicketOption } from "@/server/actions/prepare-checkout-attempt";
-import { searchRealHotelOptions, searchViableFlightOrigins, getFlightSessionOffers, type RealHotelOption, type RealRoundTripOfferDTO, type ViableFlightOrigin } from "@/server/actions/real-checkout-search";
+import { resolveAutoHotelSelection, searchViableFlightOrigins, getFlightSessionOffers, type ResolvedAutoHotel, type RealRoundTripOfferDTO, type ViableFlightOrigin } from "@/server/actions/real-checkout-search";
 import type { PrepareCheckoutAttemptResult } from "@/lib/checkout-saga/prepareCheckoutAttempt";
 import { COUNTRIES, isFlightPackageEligible } from "@/lib/checkout-atu-aire/countries";
 import { buildOutboundOptions, buildReturnOptions, resolveOffer, formatSliceTime, type DaypartPreference } from "./flightSelectionClient";
@@ -14,9 +14,13 @@ import { PaymentAuthorizationPanel } from "./PaymentAuthorizationPanel";
 /**
  * Fase 2.5 §7-§17, corrected in Fase 2.6 — the new real pre-payment
  * flow's UI, modality-aware (TICKET_ONLY / TICKET_HOTEL /
- * TICKET_HOTEL_FLIGHT) with a real Nuitee hotel picker (SEARCH only —
- * PREBOOK happens exclusively inside prepareCheckoutAttempt at
- * CONTINUAR) and a real Duffel round-trip flight picker.
+ * TICKET_HOTEL_FLIGHT) with a real Duffel round-trip flight picker.
+ *
+ * Fase 3B.3 — the hotel side is no longer a picker at all: the customer
+ * only chooses a star CATEGORY (3★/4★), and resolveAutoHotelSelection
+ * resolves (SEARCH + rank by proximity-to-stadium then price + PREBOOK)
+ * exactly ONE hotel automatically, shown as a single card. Never a raw
+ * Nuitee list, never an alternative shown once resolved.
  *
  * Fase 2.6 §2/§4 — the flight side is now: "Buscar aeropuertos de
  * salida" (one search per candidate Spanish origin, server-side; only
@@ -79,11 +83,11 @@ export function RealCheckoutPrototype({
   const [travelers, setTravelers] = useState<Traveler[]>([{ ...EMPTY_TRAVELER }]);
   const [buyer, setBuyer] = useState({ firstName: "", lastName: "", email: "", phone: "" });
 
-  // --- Hotel picker state (§8/§9) ---
+  // --- Hotel auto-selection state (Fase 3B.3) ---
+  const [hotelStarCategory, setHotelStarCategory] = useState<3 | 4 | null>(null);
   const [hotelStatus, setHotelStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
-  const [hotelOptions, setHotelOptions] = useState<RealHotelOption[]>([]);
   const [hotelError, setHotelError] = useState<string | null>(null);
-  const [selectedHotel, setSelectedHotel] = useState<RealHotelOption | null>(null);
+  const [resolvedHotel, setResolvedHotel] = useState<ResolvedAutoHotel | null>(null);
 
   // --- Flight picker state (Fase 2.6 §2/§4) ---
   const [originStatus, setOriginStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
@@ -137,17 +141,26 @@ export function RealCheckoutPrototype({
   function setPackageTypeSafe(next: PackageType) {
     if (next === "TICKET_HOTEL_FLIGHT" && !flightEligible) return;
     setPackageType(next);
-    setSelectedHotel(null);
+    setHotelStarCategory(null);
+    setResolvedHotel(null);
+    setHotelStatus("idle");
+    setHotelError(null);
     resetFlightSelection();
   }
 
-  async function handleSearchHotels() {
+  /**
+   * Fase 3B.3 — picking (or changing) the star category invalidates any
+   * prior selection and re-resolves from scratch. Never reuses a hotel of
+   * the wrong category.
+   */
+  async function handleSelectHotelCategory(category: 3 | 4) {
+    setHotelStarCategory(category);
+    setResolvedHotel(null);
     setHotelStatus("loading");
     setHotelError(null);
-    setSelectedHotel(null);
-    const res = await searchRealHotelOptions({ tripSlug, partySize, travelOriginCountry });
+    const res = await resolveAutoHotelSelection({ tripSlug, partySize, travelOriginCountry, hotelStarCategory: category });
     if (res.ok) {
-      setHotelOptions(res.hotels);
+      setResolvedHotel(res.hotel);
       setHotelStatus("loaded");
     } else {
       setHotelError(res.error);
@@ -200,7 +213,20 @@ export function RealCheckoutPrototype({
       travelers: requiresFlight ? travelers.map(toDuffelTraveler) : travelers.map((t) => ({ firstName: t.firstName, lastName: t.lastName })),
       ticketOfferId,
       ticketQuantity: partySize,
-      hotel: requiresHotel && selectedHotel ? { offerId: selectedHotel.offerId, expectedTotalPrice: 0, expectedRooms: selectedHotel.rooms.map((r) => ({ occupancyNumber: r.occupancyNumber, roomName: r.roomName })), hotelName: selectedHotel.name, hotelAddress: selectedHotel.address } : undefined,
+      hotel:
+        requiresHotel && resolvedHotel
+          ? {
+              offerId: resolvedHotel.offerId,
+              expectedTotalPrice: resolvedHotel.expectedTotalPrice,
+              expectedRooms: resolvedHotel.expectedRooms,
+              hotelName: resolvedHotel.hotelName,
+              hotelAddress: resolvedHotel.hotelAddress,
+              stars: resolvedHotel.stars,
+              hotelStarCategory: resolvedHotel.hotelStarCategory,
+              distanceToStadiumKm: resolvedHotel.distanceToStadiumKm,
+              stadiumHotelRadiusKm: resolvedHotel.stadiumHotelRadiusKm,
+            }
+          : undefined,
       flight: requiresFlight && selectedOriginSessionId && finalFlightOffer && outboundKey && returnKey ? { searchSessionId: selectedOriginSessionId, offerId: finalFlightOffer.offerId, outboundSliceKey: outboundKey, returnSliceKey: returnKey } : undefined,
     });
     setResult(res);
@@ -292,26 +318,37 @@ export function RealCheckoutPrototype({
       {requiresHotel && (
         <div className="space-y-3">
           <h2 className="font-display text-xl uppercase">Hotel</h2>
-          <Button type="button" variant="secondary" onClick={handleSearchHotels} disabled={hotelStatus === "loading"}>
-            {hotelStatus === "loading" ? "Buscando hoteles..." : "Buscar hoteles"}
-          </Button>
+          <p className="text-sm text-carbon/70">Seleccionamos automáticamente hoteles cercanos al estadio y buscamos la mejor tarifa disponible dentro de la categoría elegida.</p>
+          <div className="flex gap-3 text-sm">
+            <button
+              type="button"
+              onClick={() => handleSelectHotelCategory(3)}
+              className={`rounded-sm border px-4 py-2 ${hotelStarCategory === 3 ? "border-carbon bg-carbon text-ivory" : "border-carbon/30"}`}
+            >
+              3 estrellas
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectHotelCategory(4)}
+              className={`rounded-sm border px-4 py-2 ${hotelStarCategory === 4 ? "border-carbon bg-carbon text-ivory" : "border-carbon/30"}`}
+            >
+              4 estrellas
+            </button>
+          </div>
+          {hotelStatus === "loading" && <p className="text-sm text-carbon/70">Buscando la mejor opción…</p>}
           {hotelStatus === "error" && (
             <p role="alert" className="text-sm text-red-700">
               {hotelError}
             </p>
           )}
-          {hotelStatus === "loaded" && hotelOptions.length === 0 && <p className="text-sm text-carbon/70">No hay hoteles disponibles para estas fechas.</p>}
-          {hotelStatus === "loaded" && hotelOptions.length > 0 && (
-            <div className="space-y-2">
-              {hotelOptions.map((h) => (
-                <label key={h.hotelId} className={`block cursor-pointer border p-3 text-sm ${selectedHotel?.hotelId === h.hotelId ? "border-carbon" : "border-carbon/20"}`}>
-                  <input type="radio" name="hotel" className="mr-2" checked={selectedHotel?.hotelId === h.hotelId} onChange={() => setSelectedHotel(h)} />
-                  <span className="font-semibold">{h.name}</span>
-                  {h.stars != null && <span className="ml-2 text-carbon/60">{h.stars}★</span>}
-                  <div className="text-carbon/60">{h.address}</div>
-                  <div className="text-carbon/60">{h.rooms.map((r) => `${r.roomName}${r.board ? ` (${r.board})` : ""}`).join(", ")}</div>
-                </label>
-              ))}
+          {hotelStatus === "loaded" && resolvedHotel && (
+            <div className="border border-carbon p-3 text-sm">
+              <span className="font-semibold">
+                HOTEL {resolvedHotel.stars}★ — {resolvedHotel.hotelName}
+              </span>
+              <div className="text-carbon/60">{resolvedHotel.hotelAddress}</div>
+              <div className="text-carbon/60">{resolvedHotel.expectedRooms.map((r) => r.roomName).join(", ")}</div>
+              <div className="text-carbon/60">{resolvedHotel.distanceToStadiumKm.toFixed(1)} km del estadio</div>
             </div>
           )}
         </div>

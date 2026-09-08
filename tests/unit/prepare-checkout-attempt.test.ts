@@ -216,7 +216,7 @@ describe("Fase 2.6 §3/§8 — travelOriginCountry: a distinct concept from nati
       packageType: "TICKET_HOTEL_FLIGHT",
       travelOriginCountry: "ES",
       travelers: [{ ...COMPLETE_TRAVELER, nationality: "IT" }],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -229,7 +229,7 @@ describe("Fase 2.6 §3/§8 — travelOriginCountry: a distinct concept from nati
       packageType: "TICKET_HOTEL_FLIGHT",
       travelOriginCountry: "AR",
       travelers: [{ ...COMPLETE_TRAVELER, nationality: "ES" }],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       // Deliberately no `flight` — the server-side eligibility gate must
       // reject before ever looking for one.
     });
@@ -268,7 +268,7 @@ describe("AC — happy path TICKET_HOTEL", () => {
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -291,7 +291,7 @@ describe("AD — happy path TICKET_HOTEL_FLIGHT", () => {
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -311,7 +311,7 @@ describe("AE — a provider failure yields FAILED, never READY_TO_PAY", () => {
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 404, body: {} }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_gone", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_gone", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -389,7 +389,7 @@ describe("AK/AL — no BOOK and no Order are ever executed", () => {
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -418,7 +418,7 @@ describe("§15 — partySize must equal Duffel passengerIds.length for flight mo
       packageType: "TICKET_HOTEL_FLIGHT",
       partySize: 2, // but only 1 passengerId
       travelers: [COMPLETE_TRAVELER, { ...COMPLETE_TRAVELER, email: "alan@example.com" }],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -434,7 +434,7 @@ describe("Fase 2.6 §2/§6 E/F — a client cannot substitute the search context
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: "off_not_in_this_session", outboundSliceKey, returnSliceKey },
       fetchImpl: routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]),
     });
@@ -447,7 +447,7 @@ describe("Fase 2.6 §2/§6 E/F — a client cannot substitute the search context
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: "session-that-does-not-exist", offerId: "off_rt_1", outboundSliceKey, returnSliceKey },
       fetchImpl: routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]),
     });
@@ -462,7 +462,7 @@ describe("Fase 2.6 §2/§6 E/F — a client cannot substitute the search context
       packageType: "TICKET_HOTEL_FLIGHT",
       partySize: 3, // the session was searched for 1 traveler
       travelers: [COMPLETE_TRAVELER, { ...COMPLETE_TRAVELER, email: "b@example.com" }, { ...COMPLETE_TRAVELER, email: "c@example.com" }],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl: routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]),
     });
@@ -495,7 +495,7 @@ describe("§18 — both hotel and flight irreversible/unknown -> no viable combi
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -513,7 +513,7 @@ describe("§16 — a material hotel change (cancellation policy) blocks READY_TO
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody({ cancellationChanged: true }) }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -524,7 +524,7 @@ describe("§16 — a material hotel change (cancellation policy) blocks READY_TO
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody({ price: 250, roomTypes: [{ rates: [{ occupancyNumber: 1, name: "Doble", adultCount: 2, retailRate: { total: [{ amount: 250, currency: "EUR" }], taxesAndFees: [] }, cancellationPolicies: { refundableTag: "RFN" } }] }] }) }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -538,7 +538,7 @@ describe("§16 — a material hotel change (cancellation policy) blocks READY_TO
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody({ roomTypes: [{ rates: [{ occupancyNumber: 1, name: "Suite", adultCount: 2, retailRate: { total: [{ amount: 200, currency: "EUR" }], taxesAndFees: [] }, cancellationPolicies: { refundableTag: "RFN" } }] }] }) }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -558,7 +558,7 @@ describe("§14 — Duffel revalidation detecting a changed itinerary blocks READ
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -582,7 +582,7 @@ describe("U/V/W — READY_TO_PAY carries every field the real summary screen nee
     const fetchImpl = routedFetch([{ test: /rates\/prebook/, status: 200, body: nuiteePrebookBody() }]);
     const input = await baseInput({
       packageType: "TICKET_HOTEL",
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       fetchImpl,
     });
     const result = await prepareCheckoutAttempt(input);
@@ -606,7 +606,7 @@ describe("U/V/W — READY_TO_PAY carries every field the real summary screen nee
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -639,7 +639,7 @@ describe("Y/Z/AA/AB — no Booking, no PaymentIntent, no Nuitee BOOK, no Duffel 
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });
@@ -674,7 +674,7 @@ describe("Y/Z/AA/AB — no Booking, no PaymentIntent, no Nuitee BOOK, no Duffel 
     const input = await baseInput({
       packageType: "TICKET_HOTEL_FLIGHT",
       travelers: [COMPLETE_TRAVELER],
-      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test" },
+      hotel: { offerId: "hotel_offer_1", expectedTotalPrice: 200, expectedRooms: [{ occupancyNumber: 1, roomName: "Doble" }], hotelName: "Hotel Test", stars: 3, hotelStarCategory: 3, distanceToStadiumKm: 1, stadiumHotelRadiusKm: 5 },
       flight: { searchSessionId: session.id, offerId: offer.offerId, outboundSliceKey, returnSliceKey },
       fetchImpl,
     });

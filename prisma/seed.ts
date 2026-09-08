@@ -859,6 +859,14 @@ async function main() {
     homeTeam: "Manchester City",
     awayTeam: "Manchester United",
     stadium: "Etihad Stadium",
+    // Fase 3B.3 — the automatic hotel selection's only geographic
+    // reference point. Real Etihad Stadium coordinates; 5km is a
+    // reasonable "close to the stadium" threshold for a mid-size city
+    // center like Manchester — configured here per-Event, never
+    // hardcoded inside the selection algorithm itself.
+    stadiumLatitude: 53.4831,
+    stadiumLongitude: -2.2004,
+    stadiumHotelRadiusKm: 5,
     city: "Manchester",
     country: "Inglaterra",
     timezone: "Europe/London",

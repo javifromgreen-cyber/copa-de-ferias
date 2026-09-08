@@ -302,6 +302,18 @@ model Event {
   matchDate DateTime
   kickoff   DateTime?
 
+  // Fase 3B.3 — the ONLY geographic reference point for automatic hotel
+  // selection is THE STADIUM (never a "city center" concept). Nullable
+  // because older/less-complete Events may not have this configured yet —
+  // auto hotel selection simply refuses to run without it (§ "sin datos
+  // suficientes -> descarta"), it never falls back to a guessed location.
+  stadiumLatitude  Float?
+  stadiumLongitude Float?
+  // Configurable per Event/destination — different stadiums/cities need
+  // different "close enough" thresholds, so this is deliberately never a
+  // single hardcoded universal radius.
+  stadiumHotelRadiusKm Float?
+
   scheduleStatus ScheduleStatus @default(time_provisional)
 
   // Publication state — independent of scheduleStatus (which is only

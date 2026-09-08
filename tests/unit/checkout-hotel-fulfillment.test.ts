@@ -134,6 +134,13 @@ function reversibleHotelSnapshot(partySize: number, overrides: Partial<FinalQuot
     excludedTaxesAndFees: [{ description: "City tax", amount: 5, currency: "EUR" }],
     refundable: true,
     autoBookability: { autoBookable: true, level: "FULLY_REVERSIBLE", hotelSafeCancellationUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() },
+    // Fase 3B.3 — defaults that satisfy hotelFulfillment.ts's own
+    // pre-BOOK category/radius guard, so every pre-existing test in this
+    // file (which doesn't care about that guard) keeps passing unchanged.
+    stars: 3,
+    hotelStarCategory: 3,
+    distanceToStadiumKm: 1,
+    stadiumHotelRadiusKm: 5,
     ...overrides,
   };
 }
@@ -606,6 +613,54 @@ describe("AF — no Stripe capture is ever attempted while the hotel isn't CONFI
     const result = await progressCapturedCheckoutAttempt(attemptId);
     expect(result.outcome).toBe("recovery_required");
     expect(vi.mocked(captureAuthorization)).not.toHaveBeenCalled();
+  });
+});
+
+// Fase 3B.3 — the defensive pre-BOOK guard: the automatic hotel
+// resolution should always already deliver a hotel of the exact
+// requested category, inside the configured radius — but this codebase
+// never trusts that alone right before a real BOOK call. Any mismatch
+// must refuse to BOOK, void the Stripe authorization, and fail the
+// attempt, exactly like not_auto_bookable/window_expired already do.
+describe("AG — a star-category mismatch (stars !== hotelStarCategory) blocks BOOK entirely", () => {
+  it("never calls bookPrebook, voids Stripe, and fails the attempt", async () => {
+    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { stars: 3, hotelStarCategory: 4 } });
+    vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi());
+
+    const result = await progressCapturedCheckoutAttempt(attemptId);
+    expect(result.outcome).toBe("failed");
+    expect(vi.mocked(bookPrebook)).not.toHaveBeenCalled();
+    expect(vi.mocked(cancelAuthorization)).toHaveBeenCalled();
+
+    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(attempt.hotelStatus).toBe("failed");
+  });
+});
+
+describe("AH — a hotel outside stadiumHotelRadiusKm (distanceToStadiumKm > stadiumHotelRadiusKm) blocks BOOK entirely", () => {
+  it("never calls bookPrebook, voids Stripe, and fails the attempt", async () => {
+    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { distanceToStadiumKm: 10, stadiumHotelRadiusKm: 5 } });
+    vi.mocked(getAuthorization).mockResolvedValueOnce(fakePi());
+
+    const result = await progressCapturedCheckoutAttempt(attemptId);
+    expect(result.outcome).toBe("failed");
+    expect(vi.mocked(bookPrebook)).not.toHaveBeenCalled();
+    expect(vi.mocked(cancelAuthorization)).toHaveBeenCalled();
+
+    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(attempt.hotelStatus).toBe("failed");
+  });
+});
+
+describe("AI — the FinalQuoteSnapshot retains the audit fields (category, delivered stars, distance, radius)", () => {
+  it("hotelStarCategory/stars/distanceToStadiumKm/stadiumHotelRadiusKm all round-trip through the persisted snapshot", async () => {
+    const attemptId = await buildHotelAuthorizedAttempt({ hotel: { stars: 4, hotelStarCategory: 4, distanceToStadiumKm: 2.3, stadiumHotelRadiusKm: 5 } });
+    const attempt = await prisma.checkoutAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    const snapshot = JSON.parse(attempt.finalQuoteSnapshot) as FinalQuoteSnapshot;
+    expect(snapshot.hotel?.hotelStarCategory).toBe(4);
+    expect(snapshot.hotel?.stars).toBe(4);
+    expect(snapshot.hotel?.distanceToStadiumKm).toBe(2.3);
+    expect(snapshot.hotel?.stadiumHotelRadiusKm).toBe(5);
   });
 });
 

@@ -214,6 +214,15 @@ export async function progressHotelFulfillment(checkoutAttemptId: string, fetchI
   }
 
   // attempt.hotelStatus === "prebooked" or "validated" — the fresh path.
+  // Fase 3B.3 — defense-in-depth: the automatic hotel resolution only
+  // ever selects a hotel of the exact requested category, inside the
+  // configured stadium radius, so this should always already hold — but
+  // per the spec's own explicit requirement, re-verify it right here,
+  // right before BOOK, and refuse (never BOOK) on any mismatch.
+  if (hotel.stars !== hotel.hotelStarCategory || hotel.distanceToStadiumKm > hotel.stadiumHotelRadiusKm) {
+    await refuseAndFail(attempt, `hotel_category_or_radius_mismatch:stars=${hotel.stars},category=${hotel.hotelStarCategory},distance=${hotel.distanceToStadiumKm},radius=${hotel.stadiumHotelRadiusKm}`);
+    return { outcome: "not_auto_bookable" };
+  }
   if (!hotel.autoBookability.autoBookable) {
     await refuseAndFail(attempt, `not_auto_bookable:${hotel.autoBookability.level}`);
     return { outcome: "not_auto_bookable" };

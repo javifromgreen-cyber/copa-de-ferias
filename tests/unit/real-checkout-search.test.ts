@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db";
-import { searchRealHotelOptions, searchViableFlightOrigins, getFlightSessionOffers } from "@/server/actions/real-checkout-search";
+import { resolveAutoHotelSelection, searchViableFlightOrigins, getFlightSessionOffers } from "@/server/actions/real-checkout-search";
 import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
+
+const STADIUM_LAT = 53.4831;
+const STADIUM_LNG = -2.2004;
+const STADIUM_RADIUS_KM = 5;
 
 // Fase 2.5 §25 J/K/M (hotel SEARCH-only UI wiring) and N (one Offer
 // Request, two slices) — the new real-checkout SEARCH server actions
@@ -34,7 +38,9 @@ beforeAll(async () => {
     },
   });
   tripId = trip.id;
-  await prisma.event.create({ data: { tripId, homeTeam: "A", awayTeam: "B", stadium: "Test", matchDate: new Date("2026-11-15T20:00:00Z") } });
+  await prisma.event.create({
+    data: { tripId, homeTeam: "A", awayTeam: "B", stadium: "Test", matchDate: new Date("2026-11-15T20:00:00Z"), stadiumLatitude: STADIUM_LAT, stadiumLongitude: STADIUM_LNG, stadiumHotelRadiusKm: STADIUM_RADIUS_KM },
+  });
 });
 
 afterAll(async () => {
@@ -44,60 +50,142 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-function nuiteeSearchBody() {
+const FUTURE_CANCEL_DEADLINE = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+type HotelFixture = { hotelId: string; offerId: string; stars: number; price: number; lat: number; lng: number; name?: string };
+
+function nuiteeSearchBody(hotels: HotelFixture[]) {
   return {
-    data: [
-      {
-        hotelId: "hotel_1",
-        roomTypes: [
-          {
-            offerId: "hotel_offer_1",
-            offerRetailRate: { amount: 300, currency: "EUR" },
-            rates: [
-              { occupancyNumber: 1, name: "Doble", adultCount: 2, retailRate: { total: [{ amount: 150, currency: "EUR" }] }, cancellationPolicies: { refundableTag: "RFN" } },
-              { occupancyNumber: 2, name: "Triple", adultCount: 3, retailRate: { total: [{ amount: 150, currency: "EUR" }] }, cancellationPolicies: { refundableTag: "RFN" } },
-            ],
-          },
-        ],
-      },
-    ],
-    hotels: [{ id: "hotel_1", name: "Hotel Test", address: "Calle Test 1", city_name: "Manchester", stars: 4, rating: 8.5, review_count: 100 }],
+    data: hotels.map((h) => ({
+      hotelId: h.hotelId,
+      roomTypes: [
+        {
+          offerId: h.offerId,
+          offerRetailRate: { amount: h.price, currency: "EUR" },
+          rates: [{ occupancyNumber: 1, name: "Doble", adultCount: 2, retailRate: { total: [{ amount: h.price, currency: "EUR" }] }, cancellationPolicies: { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] } }],
+        },
+      ],
+    })),
+    hotels: hotels.map((h) => ({ id: h.hotelId, name: h.name ?? `Hotel ${h.hotelId}`, address: "Calle Test 1", city_name: "Manchester", stars: h.stars, rating: 8.5, review_count: 100, latitude: h.lat, longitude: h.lng })),
   };
 }
 
-describe("J — TICKET_HOTEL search returns real hotel options, no individual price on the card", () => {
-  it("returns hotels with name/stars/address/rooms, never a price field", async () => {
-    let capturedBody: unknown = null;
-    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-      capturedBody = init?.body ? JSON.parse(init.body as string) : null;
-      return new Response(JSON.stringify(nuiteeSearchBody()), { status: 200 });
-    }) as unknown as typeof fetch;
+function nuiteePrebookBody(h: HotelFixture) {
+  return {
+    data: {
+      prebookId: `prebook_${h.offerId}`,
+      offerId: h.offerId,
+      hotelId: h.hotelId,
+      currency: "EUR",
+      roomTypes: [{ rates: [{ occupancyNumber: 1, name: "Doble", adultCount: 2, retailRate: { total: [{ amount: h.price, currency: "EUR" }] }, cancellationPolicies: { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] } }] }],
+      price: h.price,
+      priceDifferencePercent: 0,
+      cancellationChanged: false,
+      boardChanged: false,
+      paymentTypes: ["ACC_CREDIT_CARD"],
+      checkin: "2026-11-14",
+      checkout: "2026-11-16",
+    },
+  };
+}
 
-    const result = await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 5, travelOriginCountry: "ES", fetchImpl });
+/** ~0.009° latitude ≈ 1km — close enough for these fixtures. */
+function atDistanceKm(km: number): { lat: number; lng: number } {
+  return { lat: STADIUM_LAT + km * 0.009, lng: STADIUM_LNG };
+}
+
+/**
+ * A router fetch mock: SEARCH always returns `hotels`; PREBOOK looks up
+ * the matching fixture by offerId in the URL body and either returns its
+ * body or, for offerIds listed in `failPrebookFor`, throws (simulating
+ * "this candidate is no longer bookable").
+ */
+function makeFetchImpl(hotels: HotelFixture[], opts: { failPrebookFor?: string[] } = {}) {
+  const calls: { url: string; body: unknown }[] = [];
+  const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? JSON.parse(init.body as string) : null;
+    calls.push({ url, body });
+    if (/hotels\/rates/.test(url)) {
+      return new Response(JSON.stringify(nuiteeSearchBody(hotels)), { status: 200 });
+    }
+    if (/rates\/prebook/.test(url)) {
+      const offerId = (body as { offerId: string }).offerId;
+      if (opts.failPrebookFor?.includes(offerId)) {
+        return new Response(JSON.stringify({ error: "gone" }), { status: 410 });
+      }
+      const fixture = hotels.find((h) => h.offerId === offerId);
+      if (!fixture) return new Response(JSON.stringify({ error: "unknown offer" }), { status: 404 });
+      return new Response(JSON.stringify(nuiteePrebookBody(fixture)), { status: 200 });
+    }
+    throw new Error(`unexpected call to ${url}`);
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+describe("J — resolveAutoHotelSelection resolves ONE hotel automatically, never a list", () => {
+  it("returns a single resolved hotel with distance/category audit fields, never an array to pick from", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl } = makeFetchImpl(hotels);
+
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 2, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.hotels).toHaveLength(1);
-    expect(result.hotels[0].name).toBe("Hotel Test");
-    expect(result.hotels[0].rooms.map((r) => r.roomName)).toEqual(["Doble", "Triple"]);
-    // §8 — hotel cards never show an individual price; the DTO simply has no price field.
-    expect(result.hotels[0]).not.toHaveProperty("price");
-
-    // K — partySize 5 must use the canonical [2, 3] occupancy mix.
-    expect((capturedBody as { occupancies: { adults: number }[] }).occupancies).toEqual([{ adults: 2 }, { adults: 3 }]);
+    expect(result.hotel.hotelName).toBe("Hotel hotel_1");
+    expect(result.hotel.stars).toBe(4);
+    expect(result.hotel.hotelStarCategory).toBe(4);
+    expect(result.hotel.distanceToStadiumKm).toBeGreaterThan(0);
+    expect(result.hotel.stadiumHotelRadiusKm).toBe(STADIUM_RADIUS_KM);
+    expect(result.hotel).not.toHaveProperty("hotels");
   });
 });
 
-describe("M — the hotel search action only ever calls SEARCH, never PREBOOK", () => {
-  it("no request to /rates/prebook is made", async () => {
-    const calls: string[] = [];
-    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
-      calls.push(typeof input === "string" ? input : input.toString());
-      return new Response(JSON.stringify(nuiteeSearchBody()), { status: 200 });
-    }) as unknown as typeof fetch;
+describe("K — PREBOOK-failure automatically retries the next candidate of the SAME category/zone, never shows the list", () => {
+  it("the top-ranked (cheaper) candidate's PREBOOK fails, so the next in-zone candidate is resolved instead", async () => {
+    const cheaper: HotelFixture = { hotelId: "hotel_cheap", offerId: "offer_cheap", stars: 4, price: 100, ...atDistanceKm(1) };
+    const pricier: HotelFixture = { hotelId: "hotel_pricier", offerId: "offer_pricier", stars: 4, price: 200, ...atDistanceKm(1) };
+    const { fetchImpl, calls } = makeFetchImpl([cheaper, pricier], { failPrebookFor: ["offer_cheap"] });
 
-    await searchRealHotelOptions({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
-    expect(calls.some((u) => /rates\/prebook/.test(u))).toBe(false);
-    expect(calls.some((u) => /hotels\/rates/.test(u))).toBe(true);
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotel.offerId).toBe("offer_pricier");
+    const prebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url));
+    expect(prebookCalls).toHaveLength(2); // tried the cheaper one first, then fell back.
+  });
+});
+
+describe("N — no auto-bookable candidate at all: a clear, category-specific error, never a silent downgrade", () => {
+  it("only a 3★ hotel exists near the stadium; requesting 4★ never falls back to 3★", async () => {
+    const only3Star: HotelFixture = { hotelId: "hotel_3", offerId: "offer_3", stars: 3, price: 90, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([only3Star]);
+
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("No hay hoteles de 4 estrellas disponibles cerca del estadio para estas fechas.");
+  });
+
+  it("every candidate's PREBOOK fails: same category-specific message, not a generic one", async () => {
+    const h: HotelFixture = { hotelId: "hotel_x", offerId: "offer_x", stars: 3, price: 90, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([h], { failPrebookFor: ["offer_x"] });
+
+    const result = await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 3, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("No hay hoteles de 3 estrellas disponibles cerca del estadio para estas fechas.");
+  });
+});
+
+describe("W/X — resolveAutoHotelSelection only ever calls SEARCH/PREBOOK, never BOOK", () => {
+  it("no request to /rates/book is made", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+
+    await resolveAutoHotelSelection({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", hotelStarCategory: 4, fetchImpl });
+    expect(calls.some((c) => /rates\/book/.test(c.url))).toBe(false);
+    expect(calls.some((c) => /hotels\/rates/.test(c.url))).toBe(true);
+    expect(calls.some((c) => /rates\/prebook/.test(c.url))).toBe(true);
   });
 });
 

@@ -37,6 +37,11 @@ export type PrepareCheckoutAttemptHotelInput = {
   hotelName: string;
   /** Fase 3B.2 §3 — same treatment as hotelName; see QuoteRevalidationHotelInput's own doc comment. */
   hotelAddress?: string;
+  /** Fase 3B.3 — resolveAutoHotelSelection's own output, carried through verbatim; see FinalQuoteSnapshotHotel's doc comment for the trust model. */
+  stars: number;
+  hotelStarCategory: number;
+  distanceToStadiumKm: number;
+  stadiumHotelRadiusKm: number;
 };
 
 /**
