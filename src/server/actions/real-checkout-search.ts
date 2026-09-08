@@ -1,10 +1,15 @@
 "use server";
 
+import type { PackageType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { searchHotels } from "@/lib/providers/hotels/nuitee/search";
 import { computeRequiredRoomMix } from "@/lib/pricing/roomMix";
+import { computeOrganizationFee, type OrganizationFeeGlobalConfig } from "@/lib/pricing/organizationFee";
+import { computeQuote } from "@/lib/pricing/quote";
 import { isoCountryCodeForTripCountry } from "@/lib/checkout-atu-aire/tripCountryCode";
-import { buildHotelShortlist } from "@/lib/checkout-atu-aire/hotelAutoSelection";
+import { buildHotelShortlist, HOTEL_SHORTLIST_SIZE, type HotelCandidate } from "@/lib/checkout-atu-aire/hotelAutoSelection";
+import type { HotelOption } from "@/lib/providers/hotels/nuitee/types";
+import type { LatLng } from "@/lib/geo/distance";
 import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roundTripSearch";
 import { airportForCity } from "@/lib/checkout-atu-aire/airports";
 import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
@@ -46,23 +51,40 @@ export type HotelShortlistOption = {
   city: string;
   /** Proximity to the STADIUM only — never a "city center" concept, never hidden: shown on every card so the customer knows exactly what they're choosing. */
   distanceToStadiumKm: number;
+  /** The raw Nuitee net rate — internal only, used at CONTINUAR to detect a material PREBOOK price change (§16). Never shown to the customer directly; see publicPriceTotal/publicPricePerPerson for the displayed price. */
   expectedTotalPrice: number;
   expectedRooms: { roomName: string; occupancyNumber: number }[];
   board: string | null;
   /** Whether every room in the chosen rate is refundable — shown as the card's "useful tarifa info", never provider cost/margin/clientReference/Nuitee internals. */
   refundable: boolean;
+  /**
+   * The PUBLIC price the customer would pay for the whole trip if they
+   * pick this hotel — ticket + this hotel's net cost, run through the
+   * exact same computeOrganizationFee/computeQuote pipeline
+   * runQuoteRevalidation uses at CONTINUAR (never a second pricing
+   * logic). A comparison PREVIEW only: flight cost (if this modality
+   * has one) isn't known yet at this step, since the customer picks
+   * hotel before flight — the authoritative total is still computed at
+   * CONTINUAR. Never provider cost, margin, or org fee shown on their
+   * own — only this final total/per-person figure.
+   */
+  publicPriceTotal: number;
+  publicPricePerPerson: number;
+  currency: string;
 };
 
 export type SearchHotelShortlistResult = { ok: true; hotels: HotelShortlistOption[]; checkIn: string; checkOut: string } | { ok: false; error: string };
 
 /**
- * Wide enough to virtually never starve the shortlist, without an
- * artificial hard cutoff that could leave the customer with zero
- * options — Nuitee provides inventory, buildHotelShortlist ranks it by
- * proximity and truncates to the top 3; this radius only bounds how much
- * inventory is fetched, it is never used to eliminate a candidate.
+ * Progressive SEARCH radius (km), centered on the stadium — starts close
+ * and only widens when the closer radius didn't yield enough valid
+ * candidates yet. Never a single fixed cutoff that could turn real
+ * inventory into "no hotels": a hotel at 20km or 40km can still end up
+ * in the shortlist if that's genuinely the best available inventory for
+ * the dates. Stops expanding as soon as HOTEL_SHORTLIST_SIZE valid
+ * candidates are found, or the progression is exhausted.
  */
-const HOTEL_SEARCH_RADIUS_KM = 15;
+const HOTEL_SEARCH_RADIUS_PROGRESSION_KM = [5, 10, 20, 40];
 
 /**
  * Fase 3B.2, corrected — replaces both the old "show every Nuitee hotel"
@@ -73,14 +95,15 @@ const HOTEL_SEARCH_RADIUS_KM = 15;
  * breaks a practical tie — see hotelAutoSelection.ts), and the customer
  * picks ONE explicitly.
  *
- * SEARCH only — no PREBOOK here at all. PREBOOK/revalidation of the
- * customer's actual choice happens exactly where it always has: inside
+ * Runs a progressive-radius SEARCH (fetchExpandingHotelCandidates below)
+ * — never PREBOOK here at all. PREBOOK/revalidation of the customer's
+ * actual choice happens exactly where it always has: inside
  * prepareCheckoutAttempt -> runQuoteRevalidation, at CONTINUAR. If that
  * PREBOOK finds the chosen option no longer viable, this function is
  * simply called again to refresh the shortlist — never a silent
  * substitution of a different hotel.
  */
-export async function searchHotelShortlist(input: { tripSlug: string; partySize: number; travelOriginCountry: string; fetchImpl?: typeof fetch }): Promise<SearchHotelShortlistResult> {
+export async function searchHotelShortlist(input: { tripSlug: string; partySize: number; travelOriginCountry: string; ticketOfferId: string; packageType: PackageType; fetchImpl?: typeof fetch }): Promise<SearchHotelShortlistResult> {
   const trip = await prisma.trip.findUnique({ where: { slug: input.tripSlug }, include: { events: true } });
   if (!trip || !trip.published || trip.travelMode !== "A_TU_AIRE") {
     return { ok: false, error: "Este producto no está disponible." };
@@ -93,29 +116,26 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   if (!isoCountryCodeForTripCountry(trip.country)) {
     return { ok: false, error: "No se puede buscar hotel para este destino todavía (país sin mapear)." };
   }
+  const ticketOffer = await prisma.ticketOffer.findUnique({ where: { id: input.ticketOfferId } });
+  if (!ticketOffer) {
+    return { ok: false, error: "La oferta de entradas seleccionada ya no está disponible." };
+  }
 
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
   const stadiumEvent = sortedEvents.find((e) => e.primaryEvent) ?? sortedEvents[0];
   if (stadiumEvent.stadiumLatitude === null || stadiumEvent.stadiumLongitude === null) {
     return { ok: false, error: "Este partido todavía no tiene configurada la ubicación del estadio para mostrar hoteles." };
   }
-  const stadium = { lat: stadiumEvent.stadiumLatitude, lng: stadiumEvent.stadiumLongitude };
+  const stadium: LatLng = { lat: stadiumEvent.stadiumLatitude, lng: stadiumEvent.stadiumLongitude };
 
   const checkIn = addDays(sortedEvents[0].matchDate, -1);
   const checkOut = addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1);
   const mix = computeRequiredRoomMix(input.partySize);
 
-  let searchResult;
+  let shortlist: HotelCandidate[];
   try {
-    // Nuitee's official geographic SEARCH (latitude/longitude/radius,
-    // radius in METERS), centered on the stadium — a generous, fixed
-    // radius so there is enough inventory to rank from, never a small
-    // radius that could return zero hotels. No starRating filter: every
-    // category is a valid shortlist candidate now.
-    searchResult = await searchHotels({
-      latitude: stadium.lat,
-      longitude: stadium.lng,
-      radiusMeters: HOTEL_SEARCH_RADIUS_KM * 1000,
+    shortlist = await fetchExpandingHotelCandidates({
+      stadium,
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
       currency: trip.currency,
@@ -127,26 +147,96 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
     return { ok: false, error: `Búsqueda de hotel no disponible: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const shortlist = buildHotelShortlist({ hotels: searchResult.hotels, stadium });
   if (shortlist.length === 0) {
     return { ok: false, error: "No hay hoteles disponibles para estas fechas." };
   }
 
-  const hotels: HotelShortlistOption[] = shortlist.map((c) => ({
-    hotelId: c.hotel.hotelId,
-    offerId: c.rate.offerId,
-    name: c.hotel.name,
-    stars: c.hotel.stars,
-    address: c.hotel.address,
-    city: c.hotel.city,
-    distanceToStadiumKm: c.distanceToStadiumKm,
-    expectedTotalPrice: c.rate.price.total,
-    expectedRooms: c.rate.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
-    board: c.rate.rooms[0]?.board ?? null,
-    refundable: c.rate.rooms.every((r) => r.refundable),
-  }));
+  // Same commercial pipeline runQuoteRevalidation uses at CONTINUAR
+  // (computeOrganizationFee + computeQuote) — reused here, never a
+  // second pricing logic, so each card's public price is directly
+  // comparable to what CONTINUAR will actually charge.
+  const feeConfig = await prisma.organizationFeeConfig.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
+  const global: OrganizationFeeGlobalConfig = feeConfig;
+  const matchCount = trip.events.length;
+  const ticketCostNetTotal = ticketOffer.costNet * input.partySize;
+  const orgFee = computeOrganizationFee({
+    packageType: input.packageType,
+    partySize: input.partySize,
+    matchCount,
+    global,
+    overrides: {
+      orgFeeTicketOnlyOverride: trip.orgFeeTicketOnlyOverride,
+      orgFeeHotelTiersOverride: trip.orgFeeHotelTiersOverride,
+      orgFeeHotelFlightTiersOverride: trip.orgFeeHotelFlightTiersOverride,
+      additionalMatchFeeOverride: trip.additionalMatchFeeOverride,
+    },
+  });
+
+  const hotels: HotelShortlistOption[] = shortlist.map((c) => {
+    // Flight cost isn't known yet at this step (hotel is picked before
+    // flight) — the preview below is ticket+hotel only; CONTINUAR still
+    // computes the real, authoritative total once flight (if any) joins.
+    const quote = computeQuote({ costs: { ticketCostNetTotal, hotelCostNetTotal: c.rate.price.total, flightCostNetTotal: 0, hostCostNetTotal: 0 }, orgFee, buffer: 0, paymentMethodInternalCost: 0 });
+    return {
+      hotelId: c.hotel.hotelId,
+      offerId: c.rate.offerId,
+      name: c.hotel.name,
+      stars: c.hotel.stars,
+      address: c.hotel.address,
+      city: c.hotel.city,
+      distanceToStadiumKm: c.distanceToStadiumKm,
+      expectedTotalPrice: c.rate.price.total,
+      expectedRooms: c.rate.rooms.map((r) => ({ roomName: r.roomName, occupancyNumber: r.occupancyNumber })),
+      board: c.rate.rooms[0]?.board ?? null,
+      refundable: c.rate.rooms.every((r) => r.refundable),
+      publicPriceTotal: quote.commercialTotal,
+      publicPricePerPerson: quote.commercialTotal / input.partySize,
+      currency: trip.currency,
+    };
+  });
 
   return { ok: true, hotels, checkIn: toIsoDate(checkIn), checkOut: toIsoDate(checkOut) };
+}
+
+/**
+ * The progressive-radius expansion itself: one SEARCH call per radius in
+ * HOTEL_SEARCH_RADIUS_PROGRESSION_KM, accumulating hotels (deduplicated
+ * by hotelId — a wider radius's response naturally re-includes closer
+ * hotels) and re-ranking after each step. Stops issuing further SEARCH
+ * calls the moment HOTEL_SHORTLIST_SIZE valid candidates are found — no
+ * unnecessary duplicate calls once the shortlist is already full.
+ */
+async function fetchExpandingHotelCandidates(params: {
+  stadium: LatLng;
+  checkin: string;
+  checkout: string;
+  currency: string;
+  guestNationality: string;
+  mix: ReturnType<typeof computeRequiredRoomMix>;
+  fetchImpl?: typeof fetch;
+}): Promise<HotelCandidate[]> {
+  const byHotelId = new Map<string, HotelOption>();
+  let shortlist: HotelCandidate[] = [];
+
+  for (const radiusKm of HOTEL_SEARCH_RADIUS_PROGRESSION_KM) {
+    const searchResult = await searchHotels({
+      latitude: params.stadium.lat,
+      longitude: params.stadium.lng,
+      radiusMeters: radiusKm * 1000,
+      checkin: params.checkin,
+      checkout: params.checkout,
+      currency: params.currency,
+      guestNationality: params.guestNationality,
+      mix: params.mix,
+      fetchImpl: params.fetchImpl,
+    });
+    for (const hotel of searchResult.hotels) byHotelId.set(hotel.hotelId, hotel);
+
+    shortlist = buildHotelShortlist({ hotels: [...byHotelId.values()], stadium: params.stadium });
+    if (shortlist.length >= HOTEL_SHORTLIST_SIZE) break;
+  }
+
+  return shortlist;
 }
 
 export type { RealFlightSegmentDTO, RealFlightSliceDTO, RealCommercialProductDTO, StoredFlightOffer };

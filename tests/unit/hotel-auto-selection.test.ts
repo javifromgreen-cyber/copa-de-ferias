@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { haversineDistanceKm } from "@/lib/geo/distance";
 import { buildHotelShortlist, HOTEL_SHORTLIST_SIZE, type HotelCandidate } from "@/lib/checkout-atu-aire/hotelAutoSelection";
+import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility";
 import type { HotelOption, HotelRoom } from "@/lib/providers/hotels/nuitee/types";
 
 // Fase 3B.2, corrected — pure-logic tests for the automatic hotel
@@ -201,18 +202,32 @@ describe("N — the cheapest VALID (auto-bookable) rate wins within a hotel, nev
   });
 });
 
-describe("O — a hotel with no auto-bookable rate at all is discarded entirely", () => {
+describe("O — a hotel SEARCH can reliably prove invalid (definitively non-refundable) is discarded entirely", () => {
   it("every rate non-refundable -> the whole hotel is excluded", () => {
     const irreversible = hotel({ hotelId: "h_irreversible", rates: [{ offerId: "o_bad", rooms: [nonRefundableRoom()], price: { total: 50, currency: "EUR" } }] });
     const shortlist = buildHotelShortlist({ hotels: [irreversible], stadium: STADIUM });
     expect(shortlist).toHaveLength(0);
   });
+});
 
-  it("a rate whose free-cancellation deadline has already passed the safety window is excluded", () => {
+describe("K — the shortlist is never emptied merely by information only PREBOOK can confirm", () => {
+  it("a refundable rate with an unknown/expired free-cancellation deadline still appears — SEARCH's own refundableTag is the only reliable signal at this stage", () => {
     const pastDeadline = new Date(Date.now() - 60_000).toISOString();
-    const unsafe = hotel({ hotelId: "h_unsafe", rates: [{ offerId: "o_unsafe", rooms: [room({ freeCancellationUntil: pastDeadline })], price: { total: 50, currency: "EUR" } }] });
-    const shortlist = buildHotelShortlist({ hotels: [unsafe], stadium: STADIUM });
-    expect(shortlist).toHaveLength(0);
+    const unknownWindow = hotel({ hotelId: "h_unknown_window", rates: [{ offerId: "o_unknown_window", rooms: [room({ freeCancellationUntil: pastDeadline })], price: { total: 50, currency: "EUR" } }] });
+    const shortlist = buildHotelShortlist({ hotels: [unknownWindow], stadium: STADIUM });
+    expect(shortlist).toHaveLength(1);
+  });
+
+  it("a refundable rate with NO freeCancellationUntil at all (Nuitee's real SEARCH-time gap) still appears", () => {
+    const noDeadlineInfo = hotel({ hotelId: "h_no_deadline_info", rates: [{ offerId: "o_no_deadline_info", rooms: [room({ freeCancellationUntil: null })], price: { total: 50, currency: "EUR" } }] });
+    const shortlist = buildHotelShortlist({ hotels: [noDeadlineInfo], stadium: STADIUM });
+    expect(shortlist).toHaveLength(1);
+  });
+
+  it("but the STRICT gate (classifyHotelAutoBookability) still correctly flags that same room as not-yet-safe — the barrier is deferred to PREBOOK, never removed", () => {
+    const pastDeadline = new Date(Date.now() - 60_000).toISOString();
+    const rooms = [room({ freeCancellationUntil: pastDeadline })];
+    expect(classifyHotelAutoBookability(rooms).autoBookable).toBe(false);
   });
 });
 

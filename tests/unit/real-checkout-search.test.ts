@@ -14,6 +14,7 @@ const STADIUM_LNG = -2.2004;
 
 const RUN_ID = `realsearch-${Date.now()}`;
 let tripId: string;
+let ticketOfferId: string;
 
 beforeAll(async () => {
   const trip = await prisma.trip.create({
@@ -37,9 +38,11 @@ beforeAll(async () => {
     },
   });
   tripId = trip.id;
-  await prisma.event.create({
+  const event = await prisma.event.create({
     data: { tripId, homeTeam: "A", awayTeam: "B", stadium: "Test", matchDate: new Date("2026-11-15T20:00:00Z"), stadiumLatitude: STADIUM_LAT, stadiumLongitude: STADIUM_LNG },
   });
+  const ticketOffer = await prisma.ticketOffer.create({ data: { eventId: event.id, costNet: 50, currency: "EUR", stock: 10, active: true } });
+  ticketOfferId = ticketOffer.id;
 });
 
 afterAll(async () => {
@@ -49,9 +52,14 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/** Shared args every searchHotelShortlist call in this file needs beyond the hotel-specific bits. */
+function baseArgs(overrides: { partySize?: number; travelOriginCountry?: string; fetchImpl?: typeof fetch } = {}) {
+  return { tripSlug: RUN_ID, partySize: overrides.partySize ?? 1, travelOriginCountry: overrides.travelOriginCountry ?? "ES", ticketOfferId, packageType: "TICKET_HOTEL" as const, fetchImpl: overrides.fetchImpl };
+}
+
 const FUTURE_CANCEL_DEADLINE = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-type HotelFixture = { hotelId: string; offerId: string; stars: number; price: number; lat: number; lng: number; name?: string; refundable?: boolean };
+type HotelFixture = { hotelId: string; offerId: string; stars: number; price: number; lat: number; lng: number; name?: string; refundable?: boolean; unknownCancellationInfo?: boolean };
 
 function nuiteeSearchBody(hotels: HotelFixture[]) {
   return {
@@ -68,7 +76,11 @@ function nuiteeSearchBody(hotels: HotelFixture[]) {
               adultCount: 2,
               retailRate: { total: [{ amount: h.price, currency: "EUR" }] },
               cancellationPolicies:
-                h.refundable === false ? { refundableTag: "NRFN" } : { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] },
+                h.refundable === false
+                  ? { refundableTag: "NRFN" }
+                  : h.unknownCancellationInfo
+                    ? { refundableTag: "RFN" } // RFN but no cancelPolicyInfos — the real Nuitee sandbox gap this correction stops discarding on.
+                    : { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] },
             },
           ],
         },
@@ -83,14 +95,27 @@ function atDistanceKm(km: number): { lat: number; lng: number } {
   return { lat: STADIUM_LAT + km * 0.009, lng: STADIUM_LNG };
 }
 
-/** A router fetch mock: SEARCH always returns `hotels`. searchHotelShortlist never calls PREBOOK/BOOK. */
+/** A router fetch mock: every SEARCH radius returns the same `hotels` list. searchHotelShortlist never calls PREBOOK/BOOK. */
 function makeFetchImpl(hotels: HotelFixture[]) {
+  return makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels });
+}
+
+/**
+ * A router fetch mock keyed by SEARCH radius (km) — mirrors how a real
+ * geographic SEARCH behaves: a wider radius's response is a superset of
+ * a narrower one's (so fixtures for a bigger radius should normally
+ * include the smaller radius's hotels too, plus whatever new hotels
+ * that wider circle reaches).
+ */
+function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>) {
   const calls: { url: string; body: unknown }[] = [];
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const body = init?.body ? JSON.parse(init.body as string) : null;
     calls.push({ url, body });
     if (/hotels\/rates/.test(url)) {
+      const radiusKm = (body as { radius: number }).radius / 1000;
+      const hotels = hotelsByRadiusKm[radiusKm] ?? [];
       return new Response(JSON.stringify(nuiteeSearchBody(hotels)), { status: 200 });
     }
     throw new Error(`unexpected call to ${url}`);
@@ -98,11 +123,15 @@ function makeFetchImpl(hotels: HotelFixture[]) {
   return { fetchImpl, calls };
 }
 
-describe("A — the public UI never shows the old raw Nuitee list: searchHotelShortlist returns at most HOTEL_SHORTLIST_SIZE (3) hotels", () => {
-  it("5 valid candidates -> only the 3 closest are returned", async () => {
+function searchCallRadiiKm(calls: { url: string; body: unknown }[]): number[] {
+  return calls.filter((c) => /hotels\/rates/.test(c.url)).map((c) => (c.body as { radius: number }).radius / 1000);
+}
+
+describe("F — the public UI never shows the old raw Nuitee list: searchHotelShortlist returns at most HOTEL_SHORTLIST_SIZE (3) hotels", () => {
+  it("5 valid candidates within the first (5km) radius -> only the 3 closest are returned", async () => {
     const hotels: HotelFixture[] = [1, 2, 3, 4, 5].map((n) => ({ hotelId: `h${n}`, offerId: `o${n}`, stars: 4, price: 100, ...atDistanceKm(n) }));
     const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 2, travelOriginCountry: "ES", fetchImpl });
+    const result = await searchHotelShortlist(baseArgs({ partySize: 2, fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hotels).toHaveLength(3);
@@ -110,11 +139,77 @@ describe("A — the public UI never shows the old raw Nuitee list: searchHotelSh
   });
 });
 
-describe("D/E — the shortlist shows exactly as many hotels as are actually valid, never invented", () => {
+describe("A — the first SEARCH call uses the closest radius in the progression (5km)", () => {
+  it("issues its first request with radius=5000", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(searchCallRadiiKm(calls)[0]).toBe(5);
+  });
+});
+
+describe("B — fewer than 3 valid candidates at the current radius widens the search", () => {
+  it("1 hotel within 5km, two more only within 10km (reaching 3) -> two SEARCH calls, all three hotels in the result", async () => {
+    const near: HotelFixture = { hotelId: "h_near", offerId: "o_near", stars: 4, price: 100, ...atDistanceKm(2) };
+    const mid1: HotelFixture = { hotelId: "h_mid1", offerId: "o_mid1", stars: 4, price: 100, ...atDistanceKm(7) };
+    const mid2: HotelFixture = { hotelId: "h_mid2", offerId: "o_mid2", stars: 4, price: 100, ...atDistanceKm(8) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [near], 10: [near, mid1, mid2], 20: [near, mid1, mid2], 40: [near, mid1, mid2] });
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(searchCallRadiiKm(calls)).toEqual([5, 10]);
+    expect(result.hotels.map((h) => h.hotelId).sort()).toEqual(["h_mid1", "h_mid2", "h_near"]);
+  });
+});
+
+describe("C — reaching HOTEL_SHORTLIST_SIZE (3) valid candidates stops the expansion", () => {
+  it("3 hotels already within 5km -> only one SEARCH call is made", async () => {
+    const hotels: HotelFixture[] = [1, 2, 3].map((n) => ({ hotelId: `h${n}`, offerId: `o${n}`, stars: 4, price: 100, ...atDistanceKm(n) }));
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels });
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(searchCallRadiiKm(calls)).toEqual([5]);
+    expect(result.hotels).toHaveLength(3);
+  });
+});
+
+describe("D — hotels repeated across radius expansions are deduplicated", () => {
+  it("the same hotelId returned at both 5km and 10km appears only once in the final shortlist", async () => {
+    const repeated: HotelFixture = { hotelId: "h_repeated", offerId: "o_repeated", stars: 4, price: 100, ...atDistanceKm(2) };
+    const onlyAt10: HotelFixture = { hotelId: "h_new", offerId: "o_new", stars: 4, price: 100, ...atDistanceKm(7) };
+    const { fetchImpl } = makeExpandingFetchImpl({ 5: [repeated], 10: [repeated, onlyAt10], 20: [repeated, onlyAt10], 40: [repeated, onlyAt10] });
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.hotels.map((h) => h.hotelId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((id) => id === "h_repeated")).toHaveLength(1);
+  });
+});
+
+describe("E — a hotel beyond the old 15km cutoff can still appear if it's among the best available options", () => {
+  it("only a 22km hotel exists at all -> the expansion reaches 40km and returns it", async () => {
+    const veryFar: HotelFixture = { hotelId: "hotel_22km", offerId: "offer_22km", stars: 4, price: 100, ...atDistanceKm(22) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [], 10: [], 20: [], 40: [veryFar] });
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(searchCallRadiiKm(calls)).toEqual([5, 10, 20, 40]);
+    expect(result.hotels).toHaveLength(1);
+    expect(result.hotels[0].distanceToStadiumKm).toBeGreaterThan(15);
+  });
+});
+
+describe("G — 1 or 2 real hotels -> exactly 1 or 2 shown, never padded", () => {
   it("1 candidate -> exactly 1 shown", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hotels).toHaveLength(1);
@@ -126,99 +221,96 @@ describe("D/E — the shortlist shows exactly as many hotels as are actually val
       { hotelId: "h_b", offerId: "o_b", stars: 3, price: 90, ...atDistanceKm(2) },
     ];
     const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hotels).toHaveLength(2);
   });
 });
 
-describe("G — the shortlist DTO carries the required per-card fields, and never a raw price/provider internal", () => {
-  it("returns name/stars/address/distance/rooms/board/refundable, never clientReference/provider cost", async () => {
+describe("H — each card shows the public price for choosing that hotel", () => {
+  it("publicPriceTotal/publicPricePerPerson are present and reflect ticket + this hotel's cost + org fee", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 2, travelOriginCountry: "ES", fetchImpl });
+    const result = await searchHotelShortlist(baseArgs({ partySize: 2, fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const h = result.hotels[0];
-    expect(h.name).toBe("Hotel hotel_1");
-    expect(h.stars).toBe(4);
-    expect(h.distanceToStadiumKm).toBeGreaterThan(0);
-    expect(h.expectedRooms.length).toBeGreaterThan(0);
-    expect(h.refundable).toBe(true);
+    // ticketCostNetTotal (50*2=100) + hotelCostNetTotal (150) = 250 net; the public price must be strictly higher (org fee added), never equal to the bare net cost.
+    expect(h.publicPriceTotal).toBeGreaterThan(250);
+    expect(h.publicPricePerPerson).toBeCloseTo(h.publicPriceTotal / 2, 5);
+    expect(h.currency).toBe("EUR");
+  });
+});
+
+describe("I — never shows provider cost, margin, org fee, or buffer on their own", () => {
+  it("the DTO carries only the final public price fields, never a cost/fee breakdown", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const h = result.hotels[0];
     expect(h).not.toHaveProperty("clientReference");
     expect(h).not.toHaveProperty("providerCost");
     expect(h).not.toHaveProperty("margin");
+    expect(h).not.toHaveProperty("orgFee");
+    expect(h).not.toHaveProperty("buffer");
   });
 });
 
-describe("I — a genuinely distant hotel can still appear in the shortlist if it's among the best available options", () => {
-  it("only far candidates available -> they still populate the shortlist, never an empty result from an artificial radius", async () => {
-    const hotels: HotelFixture[] = [
-      { hotelId: "h_far1", offerId: "o_far1", stars: 4, price: 100, ...atDistanceKm(12) },
-      { hotelId: "h_far2", offerId: "o_far2", stars: 4, price: 100, ...atDistanceKm(14) },
-    ];
-    const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+describe("J — selecting different hotels produces the correspondingly different public price", () => {
+  it("a pricier hotel's card shows a higher publicPriceTotal than a cheaper one, by exactly the net cost delta", async () => {
+    const cheap: HotelFixture = { hotelId: "h_cheap", offerId: "o_cheap", stars: 4, price: 100, ...atDistanceKm(1) };
+    const pricier: HotelFixture = { hotelId: "h_pricier", offerId: "o_pricier", stars: 4, price: 180, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([cheap, pricier]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.hotels).toHaveLength(2);
-    expect(result.hotels.some((h) => h.distanceToStadiumKm > 10)).toBe(true);
+    const cheapCard = result.hotels.find((h) => h.hotelId === "h_cheap")!;
+    const pricierCard = result.hotels.find((h) => h.hotelId === "h_pricier")!;
+    expect(pricierCard.publicPriceTotal - cheapCard.publicPriceTotal).toBeCloseTo(80, 5);
   });
 });
 
-describe("J — there is no hard 5km (or any) radius filter anymore", () => {
-  it("a single candidate at 8km (outside the OLD 5km hard filter) is still returned", async () => {
-    const hotels: HotelFixture[] = [{ hotelId: "hotel_8km", offerId: "offer_8km", stars: 4, price: 100, ...atDistanceKm(8) }];
-    const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+describe("K — the shortlist is never emptied merely by information only PREBOOK can confirm", () => {
+  it("an RFN rate with no cancelPolicyInfos (unknown safe-window deadline) still appears in the shortlist", async () => {
+    const hotel: HotelFixture = { hotelId: "hotel_unknown_window", offerId: "offer_unknown_window", stars: 4, price: 120, unknownCancellationInfo: true, ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([hotel]);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hotels).toHaveLength(1);
-    expect(result.hotels[0].distanceToStadiumKm).toBeGreaterThan(5);
+    expect(result.hotels[0].hotelId).toBe("hotel_unknown_window");
   });
 });
 
-describe("L/M — no duplicate hotels in the shortlist even with multiple rates per hotel", () => {
-  it("a single-hotel SEARCH response with one rate still yields exactly one card (dedup is structural — see hotelAutoSelection.test.ts for the multi-rate case)", async () => {
-    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
-    const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const hotelIds = result.hotels.map((h) => h.hotelId);
-    expect(new Set(hotelIds).size).toBe(hotelIds.length);
-  });
-});
-
-describe("O — a non-refundable-only hotel is discarded entirely from the shortlist", () => {
-  it("excludes a hotel whose only rate is non-refundable", async () => {
+describe("O — a definitively non-refundable hotel is still discarded entirely (reliable SEARCH evidence)", () => {
+  it("excludes a hotel whose only rate is explicitly NRFN", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_bad", offerId: "offer_bad", stars: 4, price: 50, refundable: false, ...atDistanceKm(1) }];
     const { fetchImpl } = makeFetchImpl(hotels);
-    const result = await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBe("No hay hoteles disponibles para estas fechas.");
   });
 });
 
-describe("V/W — searchHotelShortlist only ever calls SEARCH, never PREBOOK/BOOK", () => {
-  it("no request to /rates/prebook or /rates/book is made", async () => {
+describe("L/V/W — searchHotelShortlist only ever calls SEARCH, never PREBOOK/BOOK", () => {
+  it("no request to /rates/prebook or /rates/book is made, at any radius", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl, calls } = makeFetchImpl(hotels);
 
-    await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(calls.some((c) => /rates\/prebook/.test(c.url))).toBe(false);
     expect(calls.some((c) => /rates\/book/.test(c.url))).toBe(false);
     expect(calls.some((c) => /hotels\/rates/.test(c.url))).toBe(true);
   });
 });
 
-// Fase 3B.2 correction — LiteAPI/Nuitee's own official geographic SEARCH
-// (POST /v3.0/hotels/rates with latitude/longitude/radius) is still the
-// SEARCH mechanism, but the radius is now a generous, fixed constant
-// (HOTEL_SEARCH_RADIUS_KM) — never the Event's legacy stadiumHotelRadiusKm
-// field, and never a starRating filter (there is no user category anymore).
+// SEARCH still uses Nuitee's official geographic search (latitude/
+// longitude/radius), progressively expanded — never a starRating filter
+// (there is no user category anymore) and never cityName/countryCode.
 type SearchRequestBody = { latitude?: number; longitude?: number; radius?: number; starRating?: number[]; cityName?: string; countryCode?: string };
 
 function capturedSearchBody(calls: { url: string; body: unknown }[]): SearchRequestBody {
@@ -227,36 +319,27 @@ function capturedSearchBody(calls: { url: string; body: unknown }[]): SearchRequ
   return call!.body as SearchRequestBody;
 }
 
-describe("SEARCH sends the stadium's own coordinates, a generous fixed radius, and no star filter", () => {
+describe("SEARCH sends the stadium's own coordinates and no star filter", () => {
   it("sends the Event's stadiumLatitude/stadiumLongitude", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl, calls } = makeFetchImpl(hotels);
-    await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    await searchHotelShortlist(baseArgs({ fetchImpl }));
     const body = capturedSearchBody(calls);
     expect(body.latitude).toBe(STADIUM_LAT);
     expect(body.longitude).toBe(STADIUM_LNG);
   });
 
-  it("K — sends a radius wide enough to obtain sufficient inventory (>= 10km), never a small fixed cutoff", async () => {
-    const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
-    const { fetchImpl, calls } = makeFetchImpl(hotels);
-    await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
-    const radius = capturedSearchBody(calls).radius;
-    expect(radius).toBeDefined();
-    expect(radius! / 1000).toBeGreaterThanOrEqual(10);
-  });
-
   it("never sends a starRating filter — every category is a valid shortlist candidate now", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl, calls } = makeFetchImpl(hotels);
-    await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    await searchHotelShortlist(baseArgs({ fetchImpl }));
     expect(capturedSearchBody(calls).starRating).toBeUndefined();
   });
 
   it("never sends cityName/countryCode for this geographic search", async () => {
     const hotels: HotelFixture[] = [{ hotelId: "hotel_1", offerId: "offer_1", stars: 4, price: 150, ...atDistanceKm(1) }];
     const { fetchImpl, calls } = makeFetchImpl(hotels);
-    await searchHotelShortlist({ tripSlug: RUN_ID, partySize: 1, travelOriginCountry: "ES", fetchImpl });
+    await searchHotelShortlist(baseArgs({ fetchImpl }));
     const body = capturedSearchBody(calls);
     expect(body.cityName).toBeUndefined();
     expect(body.countryCode).toBeUndefined();

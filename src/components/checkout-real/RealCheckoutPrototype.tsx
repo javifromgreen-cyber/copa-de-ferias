@@ -172,7 +172,7 @@ export function RealCheckoutPrototype({
     setSelectedHotelOfferId(null);
     setHotelStatus("loading");
     setHotelError(null);
-    const res = await searchHotelShortlist({ tripSlug, partySize, travelOriginCountry });
+    const res = await searchHotelShortlist({ tripSlug, partySize, travelOriginCountry, ticketOfferId, packageType });
     if (res.ok) {
       setHotelOptions(res.hotels);
       setHotelStatus("loaded");
@@ -184,8 +184,9 @@ export function RealCheckoutPrototype({
   }
 
   // Search automatically whenever the hotel step becomes relevant, and
-  // again whenever partySize/travelOriginCountry change (both affect
-  // occupancy/pricing, so a stale shortlist must never be reused).
+  // again whenever partySize/travelOriginCountry/ticketOfferId change
+  // (all three affect occupancy and/or the public price shown per card,
+  // so a stale shortlist must never be reused).
   // Deferred via setTimeout(0) so the fetch (and its setState calls)
   // never run synchronously within the effect body itself.
   useEffect(() => {
@@ -195,7 +196,7 @@ export function RealCheckoutPrototype({
     }, 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requiresHotel, partySize, travelOriginCountry]);
+  }, [requiresHotel, partySize, travelOriginCountry, ticketOfferId]);
 
   async function handleSearchOrigins() {
     resetFlightSelection();
@@ -394,6 +395,9 @@ export function RealCheckoutPrototype({
                   <div className="text-carbon/60">{h.expectedRooms.map((r) => r.roomName).join(", ")}</div>
                   <div className="text-carbon/60">
                     {h.board ? `Régimen: ${h.board}` : "Solo alojamiento"} · {h.refundable ? "Cancelación gratuita" : "No reembolsable"}
+                  </div>
+                  <div className="font-semibold">
+                    Precio del viaje: {h.publicPriceTotal.toFixed(2)} {h.currency} ({h.publicPricePerPerson.toFixed(2)} {h.currency}/persona)
                   </div>
                 </label>
               ))}
