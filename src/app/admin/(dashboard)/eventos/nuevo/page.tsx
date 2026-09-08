@@ -19,6 +19,8 @@ export default async function NewEventPage({ searchParams }: { searchParams: Pro
     homeTeam: "",
     awayTeam: "",
     stadium: "",
+    stadiumLatitude: null,
+    stadiumLongitude: null,
     city: "",
     country: "",
     timezone: "Europe/Madrid",

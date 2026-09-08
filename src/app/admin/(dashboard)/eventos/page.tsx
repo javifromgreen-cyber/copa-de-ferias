@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import type { Prisma, EventStatus, ScheduleStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { REGION_LABELS } from "@/lib/catalog/labels";
+import { validateEventHotelConfiguration } from "@/lib/events/validation";
 
 export const metadata: Metadata = { title: "Admin — Eventos" };
 
@@ -177,6 +178,9 @@ export default async function AdminEventsPage({
               if (event.scheduleStatus !== "confirmed") badges.push("Horario provisional");
               if (event.ticketOffers.length === 0) badges.push("Sin entradas");
               if (event.status !== "published") badges.push("No publicado");
+              if (!validateEventHotelConfiguration({ travelMode: event.trip.travelMode, stadiumLatitude: event.stadiumLatitude, stadiumLongitude: event.stadiumLongitude }).ok) {
+                badges.push("Sin coordenadas de estadio");
+              }
               return (
                 <tr key={event.id} className="border-b border-carbon/5 last:border-0">
                   <td className="px-4 py-3">

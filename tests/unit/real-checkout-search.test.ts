@@ -160,9 +160,9 @@ function nuiteePrebookBody(fixture: HotelFixture) {
   };
 }
 
-/** A router fetch mock: every SEARCH radius (including the 80km last-resort tier) returns the same `hotels` list, and PREBOOK is answered per each fixture's own `prebookOutcome`. */
+/** A router fetch mock: every SEARCH radius (including the 80km last-resort tier) returns the same `hotels` list, and the cityName/countryCode fallback tier (if reached) sees the same set too — so it never introduces new candidates on its own, only exercises the code path. PREBOOK is answered per each fixture's own `prebookOutcome`. */
 function makeFetchImpl(hotels: HotelFixture[]) {
-  return makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels, 80: hotels });
+  return makeExpandingFetchImpl({ 5: hotels, 10: hotels, 20: hotels, 40: hotels, 80: hotels }, hotels);
 }
 
 /**
@@ -170,25 +170,36 @@ function makeFetchImpl(hotels: HotelFixture[]) {
  * geographic SEARCH behaves: a wider radius's response is a superset of
  * a narrower one's (so fixtures for a bigger radius should normally
  * include the smaller radius's hotels too, plus whatever new hotels
- * that wider circle reaches). Also answers `/rates/prebook` for any
- * offerId appearing in any radius tier's fixtures, per that fixture's own
- * `prebookOutcome` — "fails" answers with a 404 (lost availability),
- * exactly like resolveValidatedHotelShortlist's own catch branch expects.
+ * that wider circle reaches). `cityFallbackHotels` (optional, defaults to
+ * none) answers the last-resort cityName/countryCode SEARCH that runs
+ * once the whole radius progression is exhausted with fewer than 3
+ * validated candidates and budget remains — a real geo SEARCH call is
+ * told apart from this fallback call by whether its body carries
+ * `radius` at all. Also answers `/rates/prebook` for any offerId
+ * appearing in any tier's fixtures (radius or fallback), per that
+ * fixture's own `prebookOutcome` — "fails" answers with a 404 (lost
+ * availability), exactly like resolveValidatedHotelShortlist's own catch
+ * branch expects.
  */
-function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>) {
+function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>, cityFallbackHotels: HotelFixture[] = []) {
   const calls: { url: string; body: unknown }[] = [];
   const fixturesByOfferId = new Map<string, HotelFixture>();
   for (const hotels of Object.values(hotelsByRadiusKm)) {
     for (const h of hotels) fixturesByOfferId.set(h.offerId, h);
   }
+  for (const h of cityFallbackHotels) fixturesByOfferId.set(h.offerId, h);
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const body = init?.body ? JSON.parse(init.body as string) : null;
     calls.push({ url, body });
     if (/hotels\/rates/.test(url)) {
-      const radiusKm = (body as { radius: number }).radius / 1000;
-      const hotels = hotelsByRadiusKm[radiusKm] ?? [];
-      return new Response(JSON.stringify(nuiteeSearchBody(hotels)), { status: 200 });
+      const radius = (body as { radius?: number }).radius;
+      if (typeof radius === "number") {
+        const hotels = hotelsByRadiusKm[radius / 1000] ?? [];
+        return new Response(JSON.stringify(nuiteeSearchBody(hotels)), { status: 200 });
+      }
+      // No `radius` -> the cityName/countryCode last-resort fallback tier.
+      return new Response(JSON.stringify(nuiteeSearchBody(cityFallbackHotels)), { status: 200 });
     }
     if (/rates\/prebook/.test(url)) {
       const offerId = (body as { offerId: string }).offerId;
@@ -204,8 +215,51 @@ function makeExpandingFetchImpl(hotelsByRadiusKm: Record<number, HotelFixture[]>
 }
 
 function searchCallRadiiKm(calls: { url: string; body: unknown }[]): number[] {
-  return calls.filter((c) => /hotels\/rates/.test(c.url)).map((c) => (c.body as { radius: number }).radius / 1000);
+  return calls.filter((c) => /hotels\/rates/.test(c.url) && typeof (c.body as { radius?: number }).radius === "number").map((c) => (c.body as { radius: number }).radius / 1000);
 }
+
+function fallbackCityCalls(calls: { url: string; body: unknown }[]): { url: string; body: unknown }[] {
+  return calls.filter((c) => /hotels\/rates/.test(c.url) && typeof (c.body as { radius?: number }).radius !== "number");
+}
+
+describe("Config gap — an Event with no stadium coordinates never leaks a technical error to the public", () => {
+  it("a misconfigured Event returns a generic unavailability message, never mentioning 'coordenadas'/'estadio'/'ubicación'", async () => {
+    const noCoordsRunId = `${RUN_ID}-nocoords`;
+    const trip = await prisma.trip.create({
+      data: {
+        number: 900008,
+        slug: noCoordsRunId,
+        name: "Test Trip Sin Coordenadas",
+        subtitle: "Test",
+        city: "Manchester",
+        country: "Reino Unido",
+        homeTeam: "A",
+        awayTeam: "B",
+        stadium: "Test",
+        matchDate: new Date(),
+        price: 100,
+        currency: "EUR",
+        travelMode: "A_TU_AIRE",
+        published: true,
+        hotelStars: 3,
+        isDemo: true,
+      },
+    });
+    const event = await prisma.event.create({
+      data: { tripId: trip.id, homeTeam: "A", awayTeam: "B", stadium: "Test", matchDate: new Date("2026-11-15T20:00:00Z") },
+    });
+    const offer = await prisma.ticketOffer.create({ data: { eventId: event.id, costNet: 50, currency: "EUR", stock: 10, active: true } });
+
+    const result = await searchHotelShortlist({ tripSlug: noCoordsRunId, partySize: 1, travelOriginCountry: "ES", ticketOfferId: offer.id, packageType: "TICKET_HOTEL" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.toLowerCase()).not.toContain("coordenada");
+    expect(result.error.toLowerCase()).not.toContain("estadio");
+    expect(result.error.toLowerCase()).not.toContain("ubicación");
+
+    await prisma.trip.delete({ where: { id: trip.id } });
+  });
+});
 
 describe("F — the public UI never shows the old raw Nuitee list: searchHotelShortlist returns at most HOTEL_SHORTLIST_SIZE (3) hotels", () => {
   it("5 valid candidates within the first (5km) radius -> only the 3 closest are returned", async () => {
@@ -522,9 +576,104 @@ describe("PREBOOK-validation L — 0 options is only reported after exhausting t
 // green, flight still gated) are covered by this file's untouched
 // flight-side describe blocks below and by the full suite run.
 
-// SEARCH still uses Nuitee's official geographic search (latitude/
-// longitude/radius), progressively expanded — never a starRating filter
-// (there is no user category anymore) and never cityName/countryCode.
+// Second correction — a fixed [5,10,20,40,80]km radius progression is
+// still just a set of arbitrary rings: Nuitee can have real, bookable
+// inventory further out that no ring reaches. Once the whole progression
+// is exhausted with fewer than 3 validated candidates (and only then,
+// and only if there's still PREBOOK budget to spend), ONE extra SEARCH
+// by cityName/countryCode runs as a genuine last resort — never a second
+// uncontrolled search, never promising a maximum distance to the
+// customer, priority always still distance-to-stadium.
+
+describe("Fallback A — the cityName/countryCode tier only runs after the full radius progression comes up short", () => {
+  it("a candidate that only the city-wide fallback search can find still ends up in the shortlist", async () => {
+    const radiusHotel: HotelFixture = { hotelId: "h_radius", offerId: "o_radius", stars: 4, price: 100, ...atDistanceKm(2) };
+    const fallbackOnlyHotel: HotelFixture = { hotelId: "h_fallback_only", offerId: "o_fallback_only", stars: 3, price: 90, ...atDistanceKm(6) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [radiusHotel], 10: [radiusHotel], 20: [radiusHotel], 40: [radiusHotel], 80: [radiusHotel] }, [radiusHotel, fallbackOnlyHotel]);
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(searchCallRadiiKm(calls)).toEqual([5, 10, 20, 40, 80]); // the full radius progression still ran first.
+    expect(fallbackCityCalls(calls)).toHaveLength(1); // exactly one extra SEARCH — never uncontrolled.
+    expect(result.hotels.map((h) => h.hotelId).sort()).toEqual(["h_fallback_only", "h_radius"]);
+  });
+
+  it("never runs the fallback search once the radius progression already reached 3 validated candidates", async () => {
+    const hotels: HotelFixture[] = [1, 2, 3].map((n) => ({ hotelId: `h${n}`, offerId: `o${n}`, stars: 4, price: 100, ...atDistanceKm(n) }));
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(fallbackCityCalls(calls)).toHaveLength(0);
+  });
+});
+
+describe("Fallback B — deduplicates against every hotel already seen from the radius progression", () => {
+  it("a hotel invalid at the radius tier is never retried when the fallback search returns it again", async () => {
+    const bad: HotelFixture = { hotelId: "h_bad", offerId: "o_bad", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(2) };
+    const good: HotelFixture = { hotelId: "h_fallback_good", offerId: "o_fallback_good", stars: 4, price: 90, ...atDistanceKm(6) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl({ 5: [bad], 10: [bad], 20: [bad], 40: [bad], 80: [bad] }, [bad, good]);
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels.map((h) => h.hotelId)).toEqual(["h_fallback_good"]);
+    const badPrebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url) && (c.body as { offerId: string }).offerId === "o_bad");
+    expect(badPrebookCalls).toHaveLength(1); // once at the radius tier, never again at the fallback tier.
+  });
+});
+
+describe("Fallback C — still ranks its own candidates by proximity to the stadium, and never exceeds HOTEL_SHORTLIST_SIZE", () => {
+  it("with only one shortlist slot left, the closer fallback candidate is validated and the farther one is never attempted", async () => {
+    const near1: HotelFixture = { hotelId: "h_near1", offerId: "o_near1", stars: 4, price: 100, ...atDistanceKm(1) };
+    const near2: HotelFixture = { hotelId: "h_near2", offerId: "o_near2", stars: 4, price: 100, ...atDistanceKm(2) };
+    const fallbackClose: HotelFixture = { hotelId: "h_fallback_close", offerId: "o_fallback_close", stars: 4, price: 80, ...atDistanceKm(6) };
+    const fallbackFar: HotelFixture = { hotelId: "h_fallback_far", offerId: "o_fallback_far", stars: 4, price: 80, ...atDistanceKm(50) };
+    const { fetchImpl, calls } = makeExpandingFetchImpl(
+      { 5: [near1, near2], 10: [near1, near2], 20: [near1, near2], 40: [near1, near2], 80: [near1, near2] },
+      [fallbackClose, fallbackFar],
+    );
+
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hotels).toHaveLength(3);
+    expect(result.hotels.map((h) => h.hotelId)).toContain("h_fallback_close");
+    expect(result.hotels.map((h) => h.hotelId)).not.toContain("h_fallback_far");
+    const fallbackFarPrebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url) && (c.body as { offerId: string }).offerId === "o_fallback_far");
+    expect(fallbackFarPrebookCalls).toHaveLength(0); // never attempted once the 3rd slot was already filled by the closer one.
+  });
+});
+
+describe("Budget vs inventory — the PREBOOK attempt budget running out is never confused with genuinely 0 inventory", () => {
+  it("9 candidates, all invalid at PREBOOK -> the budget cap (8) is hit with 1 genuinely untried candidate left, and the customer never sees 'no hay hoteles disponibles'", async () => {
+    const hotels: HotelFixture[] = Array.from({ length: 9 }, (_, i) => ({ hotelId: `h${i}`, offerId: `o${i}`, stars: 4, price: 100, prebookOutcome: "nrfn" as const, ...atDistanceKm(i + 1) }));
+    const { fetchImpl, calls } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).not.toBe("No hay hoteles disponibles para estas fechas.");
+    const prebookCalls = calls.filter((c) => /rates\/prebook/.test(c.url));
+    expect(prebookCalls).toHaveLength(8); // MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION, never all 9.
+    expect(fallbackCityCalls(calls)).toHaveLength(0); // no budget left -> the fallback tier is never called either.
+  });
+
+  it("a genuine 0-inventory outcome (every candidate exhausted, including the fallback tier, budget never the limiting factor) still reports 'no hay hoteles disponibles'", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "hotel_bad", offerId: "offer_bad", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(1) }];
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("No hay hoteles disponibles para estas fechas.");
+  });
+});
+
+// SEARCH's PRIMARY call still uses Nuitee's official geographic search
+// (latitude/longitude/radius), progressively expanded — never a
+// starRating filter (there is no user category anymore) and never
+// cityName/countryCode on this first call (that combination is reserved
+// for the last-resort fallback tier, tested separately below).
 type SearchRequestBody = { latitude?: number; longitude?: number; radius?: number; starRating?: number[]; cityName?: string; countryCode?: string };
 
 function capturedSearchBody(calls: { url: string; body: unknown }[]): SearchRequestBody {

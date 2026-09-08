@@ -6,6 +6,7 @@ import { TicketOfferManager, type TicketOfferRow } from "@/components/admin/Tick
 import type { EventFormInput } from "@/server/actions/admin-events";
 import { eventHasBookings } from "@/lib/events/bookingRefs";
 import { extractMatchTimeUTC } from "@/lib/events/matchDateTime";
+import { validateEventHotelConfiguration } from "@/lib/events/validation";
 
 export const metadata: Metadata = { title: "Admin — Editar evento" };
 
@@ -22,7 +23,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
       where: { id },
       include: {
         ticketOffers: { orderBy: { createdAt: "asc" } },
-        trip: { select: { homeFeatured: true, bookings: { select: { priceBreakdownSnapshot: true } } } },
+        trip: { select: { homeFeatured: true, travelMode: true, bookings: { select: { priceBreakdownSnapshot: true } } } },
       },
     }),
     prisma.trip.findMany({ orderBy: { number: "asc" }, select: { id: true, name: true, number: true, travelMode: true } }),
@@ -40,6 +41,8 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   else warnings.push({ text: "Borrador — no visible en el catálogo público.", tone: "info" });
   if (event.trip.homeFeatured) warnings.push({ text: "El producto de este evento está destacado en Home.", tone: "info" });
   if (hasBookings) warnings.push({ text: "Este evento ya tiene reservas asociadas — evita eliminarlo o cambiar equipos/estadio sin necesidad.", tone: "alert" });
+  const hotelConfig = validateEventHotelConfiguration({ travelMode: event.trip.travelMode, stadiumLatitude: event.stadiumLatitude, stadiumLongitude: event.stadiumLongitude });
+  if (!hotelConfig.ok) warnings.push({ text: "Faltan las coordenadas del estadio — la búsqueda automática de hotel no funcionará hasta configurarlas.", tone: "alert" });
 
   const initial: EventFormInput = {
     id: event.id,
@@ -49,6 +52,8 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
     homeTeam: event.homeTeam,
     awayTeam: event.awayTeam,
     stadium: event.stadium,
+    stadiumLatitude: event.stadiumLatitude,
+    stadiumLongitude: event.stadiumLongitude,
     city: event.city,
     country: event.country,
     timezone: event.timezone,

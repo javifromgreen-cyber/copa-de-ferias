@@ -25,6 +25,34 @@ export function validateEventPublishable(event: {
 }
 
 /**
+ * A_TU_AIRE-only — the automatic hotel shortlist (searchHotelShortlist)
+ * depends structurally on Event.stadiumLatitude/stadiumLongitude, with
+ * no fallback (never a guessed/"city center" location). An A_TU_AIRE
+ * Event always conceptually offers TICKET_HOTEL (§1/§5 — there's no
+ * per-modality publish toggle), so missing stadium coordinates mean the
+ * hotel side of this product isn't correctly configured — this must be
+ * caught here, in Admin, never discovered for the first time by a
+ * customer at checkout. Never applies to GROUP_CDF, which has no
+ * automatic hotel search at all. Used both as a publish gate (saveEvent)
+ * and as a standalone check for Admin "needs attention" warnings, so a
+ * misconfigured Event is visible even before anyone tries to publish it.
+ */
+export function validateEventHotelConfiguration(event: {
+  travelMode: "A_TU_AIRE" | "GROUP_CDF";
+  stadiumLatitude: number | null;
+  stadiumLongitude: number | null;
+}): ValidationResult {
+  if (event.travelMode !== "A_TU_AIRE") return { ok: true };
+  if (event.stadiumLatitude === null || event.stadiumLongitude === null) {
+    return {
+      ok: false,
+      error: "Este evento pertenece a un producto A TU AIRE y necesita la latitud/longitud del estadio antes de publicarse, para poder ofrecer hotel automáticamente.",
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * A_TU_AIRE-only publish gate — GROUP_CDF trips keep their existing,
  * unchanged publish behavior (this function returns ok for them
  * unconditionally). An A_TU_AIRE product can't go public without at least

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import type { ScheduleStatus, EventStatus } from "@prisma/client";
-import { validateEventPublishable } from "@/lib/events/validation";
+import { validateEventPublishable, validateEventHotelConfiguration } from "@/lib/events/validation";
 import { eventHasBookings } from "@/lib/events/bookingRefs";
 import { combineMatchDateTime } from "@/lib/events/matchDateTime";
 
@@ -15,6 +15,12 @@ export type EventFormInput = {
   homeTeam: string;
   awayTeam: string;
   stadium: string;
+  // The automatic hotel shortlist's only geographic reference point
+  // (never a "city center" concept) — null while unconfigured. Reuses
+  // `stadium` above as the stadium's name; these are only its
+  // coordinates, a genuinely new, separate piece of data.
+  stadiumLatitude: number | null;
+  stadiumLongitude: number | null;
   city: string;
   country: string;
   timezone: string;
@@ -34,6 +40,9 @@ export async function saveEvent(input: EventFormInput): Promise<{ ok: true; id: 
   if (!input.stadium.trim()) return { ok: false, error: "Falta el estadio" };
   if (!input.matchDate) return { ok: false, error: "Falta la fecha del partido" };
 
+  const trip = await prisma.trip.findUnique({ where: { id: input.tripId }, select: { travelMode: true } });
+  if (!trip) return { ok: false, error: "El producto (viaje) seleccionado no existe" };
+
   if (input.status === "published") {
     const check = validateEventPublishable({
       competitionId: input.competitionId || null,
@@ -42,6 +51,13 @@ export async function saveEvent(input: EventFormInput): Promise<{ ok: true; id: 
       stadium: input.stadium,
     });
     if (!check.ok) return { ok: false, error: check.error };
+
+    const hotelCheck = validateEventHotelConfiguration({
+      travelMode: trip.travelMode,
+      stadiumLatitude: input.stadiumLatitude,
+      stadiumLongitude: input.stadiumLongitude,
+    });
+    if (!hotelCheck.ok) return { ok: false, error: hotelCheck.error };
   }
 
   const data = {
@@ -51,6 +67,8 @@ export async function saveEvent(input: EventFormInput): Promise<{ ok: true; id: 
     homeTeam: input.homeTeam.trim(),
     awayTeam: input.awayTeam.trim(),
     stadium: input.stadium.trim(),
+    stadiumLatitude: input.stadiumLatitude,
+    stadiumLongitude: input.stadiumLongitude,
     city: input.city.trim(),
     country: input.country.trim(),
     timezone: input.timezone.trim() || "Europe/Madrid",

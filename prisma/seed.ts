@@ -11,6 +11,7 @@ import { KNOWN_COMPETITIONS } from "../src/lib/catalog/knownCompetitions";
 import { computeOrganizationFee, NO_OVERRIDES } from "../src/lib/pricing/organizationFee";
 import { computeRequiredRoomMix } from "../src/lib/pricing/roomMix";
 import { assignTravelersToRooms } from "../src/lib/checkout-atu-aire/rooming";
+import { seedManchesterDemo } from "./seed-manchester-demo";
 
 const prisma = new PrismaClient();
 
@@ -819,82 +820,17 @@ async function main() {
   // Event/TicketOffer rows (all FKs onDelete: Restrict) — a bare
   // deleteMany would either be rejected by Postgres or, worse, wipe and
   // recreate the row with a NEW id, orphaning that operational data. A
-  // second seed run must only update these canonical demo rows in place.
+  // second seed run must only update these canonical demo rows in place
+  // — extracted into seed-manchester-demo.ts so this specific behavior
+  // (including re-asserting stadium coordinates on an Event that
+  // predates that field, or was otherwise left null in a past
+  // Production run) can be exercised directly by a test.
   const demoDMatchDate = nextSaturday(95);
-  const demoDTripData = {
-    number: 7,
-    name: "Manchester",
-    subtitle: "Derbi de Manchester",
-    city: "Manchester",
-    country: "Inglaterra",
-    homeTeam: "Manchester City",
-    awayTeam: "Manchester United",
-    stadium: "Etihad Stadium",
+  const { trip: demoD, event: demoDEvent } = await seedManchesterDemo(prisma, {
     matchDate: demoDMatchDate,
-    durationDays: 3,
-    durationNights: 2,
-    status: "open" as const,
-    published: true,
-    homeFeatured: true,
-    order: 6,
-    isDemo: true,
     price: fromPrice(55),
-    scheduleStatus: "confirmed" as const,
-    travelMode: "A_TU_AIRE" as const,
-    maxPartySize: 10,
-    availablePackageTypes: "TICKET_ONLY,TICKET_HOTEL,TICKET_HOTEL_FLIGHT",
-    heroImageKey: "manchester",
-    description: "Producto de prueba A_TU_AIRE — horario confirmado, pensado para recorrer todo el checkout de principio a fin.",
-    seoTitle: "Manchester — Derbi de Manchester | Copa de Ferias",
-    seoDescription: "Manchester City - Manchester United, a tu aire.",
-  };
-  const demoD = await prisma.trip.upsert({
-    where: { slug: "manchester-a-tu-aire" },
-    update: demoDTripData,
-    create: { slug: "manchester-a-tu-aire", ...demoDTripData },
+    premierLeagueCompetitionId: competitionByName.get("Premier League") ?? null,
   });
-  const demoDEventData = {
-    tripId: demoD.id,
-    competitionId: competitionByName.get("Premier League") ?? null,
-    homeTeam: "Manchester City",
-    awayTeam: "Manchester United",
-    stadium: "Etihad Stadium",
-    // Fase 3B.2 — the automatic hotel selection's only geographic
-    // reference point. Real Etihad Stadium coordinates; 5km is a
-    // reasonable "close to the stadium" threshold for a mid-size city
-    // center like Manchester — configured here per-Event, never
-    // hardcoded inside the selection algorithm itself.
-    stadiumLatitude: 53.4831,
-    stadiumLongitude: -2.2004,
-    stadiumHotelRadiusKm: 5,
-    city: "Manchester",
-    country: "Inglaterra",
-    timezone: "Europe/London",
-    matchDate: demoDMatchDate,
-    kickoff: new Date(new Date(demoDMatchDate).setHours(17, 30, 0, 0)),
-    scheduleStatus: "confirmed" as const,
-    status: "published" as const,
-    primaryEvent: true,
-    order: 0,
-  };
-  const existingDemoDEvent = await prisma.event.findFirst({ where: { tripId: demoD.id, primaryEvent: true } });
-  const demoDEvent = existingDemoDEvent
-    ? await prisma.event.update({ where: { id: existingDemoDEvent.id }, data: demoDEventData })
-    : await prisma.event.create({ data: demoDEventData });
-
-  const demoDOffers = [
-    { category: "General", sector: "Away end", costNet: 55, currency: "EUR", stock: 100, deliveryType: "digital" as const, active: true, restrictions: "Documento de identidad obligatorio en el acceso." },
-    { category: "Members", sector: "Tier 1", costNet: 105, currency: "EUR", stock: 25, deliveryType: "digital" as const, active: true },
-  ];
-  for (const offer of demoDOffers) {
-    const existingOffer = await prisma.ticketOffer.findFirst({ where: { eventId: demoDEvent.id, category: offer.category } });
-    const offerData = { eventId: demoDEvent.id, provider: "manual", ...offer };
-    if (existingOffer) {
-      await prisma.ticketOffer.update({ where: { id: existingOffer.id }, data: offerData });
-    } else {
-      await prisma.ticketOffer.create({ data: offerData });
-    }
-  }
 
   // -----------------------------------------------------------------
   // Mi Viaje demo — a stable, fixed-token A_TU_AIRE booking on the

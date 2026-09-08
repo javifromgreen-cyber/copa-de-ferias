@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateEventPublishable, validateTripPublishable } from "@/lib/events/validation";
+import { validateEventPublishable, validateEventHotelConfiguration, validateTripPublishable } from "@/lib/events/validation";
 import { parseAvailablePackageTypes, ALL_PACKAGE_TYPES } from "@/lib/pricing/packageTypes";
 
 describe("parseAvailablePackageTypes", () => {
@@ -31,6 +31,28 @@ describe("validateEventPublishable", () => {
   it("rejects missing teams or stadium", () => {
     expect(validateEventPublishable({ ...base, homeTeam: "" }).ok).toBe(false);
     expect(validateEventPublishable({ ...base, stadium: "" }).ok).toBe(false);
+  });
+});
+
+describe("validateEventHotelConfiguration", () => {
+  it("blocks an A_TU_AIRE Event that has no stadium coordinates — it always conceptually offers TICKET_HOTEL (§1/§5)", () => {
+    const result = validateEventHotelConfiguration({ travelMode: "A_TU_AIRE", stadiumLatitude: null, stadiumLongitude: null });
+    expect(result.ok).toBe(false);
+  });
+
+  it("blocks an A_TU_AIRE Event missing only one of the two coordinates", () => {
+    expect(validateEventHotelConfiguration({ travelMode: "A_TU_AIRE", stadiumLatitude: 53.4831, stadiumLongitude: null }).ok).toBe(false);
+    expect(validateEventHotelConfiguration({ travelMode: "A_TU_AIRE", stadiumLatitude: null, stadiumLongitude: -2.2004 }).ok).toBe(false);
+  });
+
+  it("accepts an A_TU_AIRE Event with both coordinates set", () => {
+    const result = validateEventHotelConfiguration({ travelMode: "A_TU_AIRE", stadiumLatitude: 53.4831, stadiumLongitude: -2.2004 });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("never blocks a GROUP_CDF Event — it has no automatic hotel search at all", () => {
+    const result = validateEventHotelConfiguration({ travelMode: "GROUP_CDF", stadiumLatitude: null, stadiumLongitude: null });
+    expect(result).toEqual({ ok: true });
   });
 });
 

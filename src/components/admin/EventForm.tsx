@@ -44,6 +44,12 @@ export function EventForm({
   }
 
   const selectedCompetition = competitions.find((c) => c.id === form.competitionId);
+  const selectedTrip = trips.find((t) => t.id === form.tripId);
+  // A_TU_AIRE always conceptually offers TICKET_HOTEL (§1) — there's no
+  // per-modality toggle — so any A_TU_AIRE Event needs the stadium's
+  // coordinates to run the automatic hotel shortlist at all.
+  const offersHotel = selectedTrip?.travelMode === "A_TU_AIRE";
+  const missingStadiumCoordinates = offersHotel && (form.stadiumLatitude === null || form.stadiumLongitude === null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,6 +68,12 @@ export function EventForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 pb-24">
+      {missingStadiumCoordinates ? (
+        <p className="rounded-sm bg-stamp/10 px-3 py-2 text-xs text-stamp">
+          Falta la latitud/longitud del estadio — este producto es A TU AIRE (siempre ofrece hotel), así que la
+          búsqueda automática de hotel no funcionará y el evento no podrá publicarse hasta configurarlas.
+        </p>
+      ) : null}
       <div className="rounded-sm border border-carbon/15 bg-white p-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Producto (viaje)">
@@ -85,6 +97,26 @@ export function EventForm({
           </Field>
           <Field label="Estadio">
             <input value={form.stadium} onChange={(e) => set("stadium", e.target.value)} className={inputClass} required />
+          </Field>
+          <Field label={`Latitud del estadio${offersHotel ? " (obligatoria para hotel)" : ""}`}>
+            <input
+              type="number"
+              step="any"
+              value={form.stadiumLatitude ?? ""}
+              onChange={(e) => set("stadiumLatitude", e.target.value === "" ? null : Number(e.target.value))}
+              placeholder="53.4831"
+              className={inputClass}
+            />
+          </Field>
+          <Field label={`Longitud del estadio${offersHotel ? " (obligatoria para hotel)" : ""}`}>
+            <input
+              type="number"
+              step="any"
+              value={form.stadiumLongitude ?? ""}
+              onChange={(e) => set("stadiumLongitude", e.target.value === "" ? null : Number(e.target.value))}
+              placeholder="-2.2004"
+              className={inputClass}
+            />
           </Field>
           <Field label="Ciudad">
             <input value={form.city} onChange={(e) => set("city", e.target.value)} className={inputClass} />

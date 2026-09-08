@@ -143,7 +143,8 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   }
   // Still a business gate on supported destinations (independent of the
   // SEARCH mechanism below).
-  if (!isoCountryCodeForTripCountry(trip.country)) {
+  const countryCode = isoCountryCodeForTripCountry(trip.country);
+  if (!countryCode) {
     return { ok: false, error: "No se puede buscar hotel para este destino todavía (país sin mapear)." };
   }
   const ticketOffer = await prisma.ticketOffer.findUnique({ where: { id: input.ticketOfferId } });
@@ -154,7 +155,16 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   const sortedEvents = [...trip.events].sort((a, b) => a.matchDate.getTime() - b.matchDate.getTime());
   const stadiumEvent = sortedEvents.find((e) => e.primaryEvent) ?? sortedEvents[0];
   if (stadiumEvent.stadiumLatitude === null || stadiumEvent.stadiumLongitude === null) {
-    return { ok: false, error: "Este partido todavía no tiene configurada la ubicación del estadio para mostrar hoteles." };
+    // A misconfigured Event (an A_TU_AIRE match with no stadium
+    // coordinates set in Admin) is an internal configuration problem,
+    // never something a customer should see spelled out — Admin now has
+    // its own publish-time gate (validateEventHotelConfiguration) and a
+    // "Sin coordenadas de estadio" listing warning so this is caught long
+    // before anyone reaches checkout. If one still slips through, log it
+    // server-side and show the same generic unavailability the customer
+    // would see for any other reason hotel can't be offered right now.
+    console.error(`[hotel-config-error] Event ${stadiumEvent.id} (trip ${trip.slug}) offers TICKET_HOTEL but has no stadium coordinates configured.`);
+    return { ok: false, error: "Alojamiento no disponible para este partido en este momento." };
   }
   const stadium: LatLng = { lat: stadiumEvent.stadiumLatitude, lng: stadiumEvent.stadiumLongitude };
 
@@ -162,22 +172,33 @@ export async function searchHotelShortlist(input: { tripSlug: string; partySize:
   const checkOut = addDays(sortedEvents[sortedEvents.length - 1].matchDate, 1);
   const mix = computeRequiredRoomMix(input.partySize);
 
-  let validated: ValidatedHotelCandidate[];
+  let resolution: ResolveHotelShortlistResult;
   try {
-    validated = await resolveValidatedHotelShortlist({
+    resolution = await resolveValidatedHotelShortlist({
       stadium,
       checkin: toIsoDate(checkIn),
       checkout: toIsoDate(checkOut),
       currency: trip.currency,
       guestNationality: input.travelOriginCountry,
       mix,
+      cityName: trip.city.trim(),
+      countryCode,
       fetchImpl: input.fetchImpl,
     });
   } catch (err) {
     return { ok: false, error: `Búsqueda de hotel no disponible: ${err instanceof Error ? err.message : String(err)}` };
   }
+  const { validated, budgetExhausted } = resolution;
 
   if (validated.length === 0) {
+    if (budgetExhausted) {
+      // Never "no hay hoteles" here — the PREBOOK attempt budget ran out
+      // with real, untried candidates still in the pool. This is a
+      // technical limit, not proof the inventory is empty, so it must
+      // read as a transient/retry situation, not a dead end.
+      console.warn(`[hotel-search] PREBOOK attempt budget exhausted before validating any candidate for trip ${trip.slug} — untried candidates remained.`);
+      return { ok: false, error: "No hemos podido completar la búsqueda de hotel en este momento. Vuelve a intentarlo en unos segundos." };
+    }
     return { ok: false, error: "No hay hoteles disponibles para estas fechas." };
   }
 
@@ -238,6 +259,59 @@ type ValidatedHotelCandidate = {
   prebook: HotelPrebook;
 };
 
+type ResolveHotelShortlistResult = {
+  validated: ValidatedHotelCandidate[];
+  /**
+   * true only when this resolution stopped with fewer than
+   * HOTEL_SHORTLIST_SIZE validated candidates because
+   * MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION ran out while genuine, untried
+   * candidates were still sitting in the already-fetched SEARCH pool —
+   * a technical attempt-budget limit, never proof the destination has no
+   * bookable inventory. The caller must never phrase this to the
+   * customer as "no hay hoteles disponibles" (§3) — it's kept separate
+   * from a real 0-inventory outcome precisely so a retry/continuation
+   * stays safe and distinguishable, without this function itself issuing
+   * more requests than its own budget allows.
+   */
+  budgetExhausted: boolean;
+};
+
+/**
+ * PREBOOKs each ranked candidate (already excluding anything validated
+ * or found invalid earlier this resolution) in order, up to whatever is
+ * left of the shared attempt budget, mutating `validated`/`invalidHotelIds`
+ * in place. Shared by both the radius-progression loop and the
+ * cityName/countryCode fallback tier below so the exact same
+ * validation/exclusion logic runs in both — the only difference between
+ * the two tiers is where their candidates came from.
+ */
+async function prebookValidateRanked(
+  ranked: ReturnType<typeof buildHotelShortlist>,
+  validated: ValidatedHotelCandidate[],
+  invalidHotelIds: Set<string>,
+  attemptsRef: { count: number },
+  fetchImpl: typeof fetch | undefined,
+): Promise<void> {
+  for (const candidate of ranked) {
+    if (validated.length >= HOTEL_SHORTLIST_SIZE || attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
+    attemptsRef.count++;
+
+    let prebook: HotelPrebook;
+    try {
+      prebook = await prebookOffer(candidate.rate.offerId, fetchImpl);
+    } catch {
+      invalidHotelIds.add(candidate.hotel.hotelId); // lost availability, or PREBOOK itself failed — never retried this resolution.
+      continue;
+    }
+    if (prebook.hotelId !== candidate.hotel.hotelId || !classifyHotelAutoBookability(prebook.rooms).autoBookable) {
+      invalidHotelIds.add(candidate.hotel.hotelId); // NRFN, unsafe window, or otherwise not auto-bookable — never retried this resolution.
+      continue;
+    }
+
+    validated.push({ hotel: candidate.hotel, distanceToStadiumKm: candidate.distanceToStadiumKm, prebook });
+  }
+}
+
 /**
  * The progressive-radius SEARCH + progressive PREBOOK-validation loop:
  * for each radius tier (widening only if still short of
@@ -252,6 +326,19 @@ type ValidatedHotelCandidate = {
  * in this codebase (classifyHotelAutoBookability) — a thrown PREBOOK
  * error, a hotelId mismatch, or a failed gate all mark that hotel
  * invalid for the rest of this resolution.
+ *
+ * Correction — 80km is the widest RING this resolution tries, but a ring
+ * is still an arbitrary cutoff: Nuitee may have real, bookable inventory
+ * further out that no radius in the progression would ever reach. So
+ * once the whole radius progression is exhausted and fewer than
+ * HOTEL_SHORTLIST_SIZE candidates are validated (and only if there's
+ * still PREBOOK budget left to spend), ONE extra SEARCH by
+ * cityName/countryCode — Nuitee's other officially supported SEARCH
+ * shape — runs as a last-resort fallback, deduplicated against every
+ * hotel already seen, still ranked by distance to the stadium and
+ * PREBOOK-validated exactly like every other candidate. Never a second,
+ * uncontrolled search: at most one extra SEARCH call, and it never
+ * spends more PREBOOK attempts than the shared budget has left.
  */
 async function resolveValidatedHotelShortlist(params: {
   stadium: LatLng;
@@ -260,12 +347,14 @@ async function resolveValidatedHotelShortlist(params: {
   currency: string;
   guestNationality: string;
   mix: ReturnType<typeof computeRequiredRoomMix>;
+  cityName: string;
+  countryCode: string;
   fetchImpl?: typeof fetch;
-}): Promise<ValidatedHotelCandidate[]> {
+}): Promise<ResolveHotelShortlistResult> {
   const byHotelId = new Map<string, HotelOption>();
   const invalidHotelIds = new Set<string>();
   const validated: ValidatedHotelCandidate[] = [];
-  let attempts = 0;
+  const attemptsRef = { count: 0 };
 
   for (const radiusKm of HOTEL_SEARCH_RADIUS_PROGRESSION_KM) {
     const searchResult = await searchHotels({
@@ -289,29 +378,52 @@ async function resolveValidatedHotelShortlist(params: {
       excludeHotelIds,
     });
 
-    for (const candidate of ranked) {
-      if (validated.length >= HOTEL_SHORTLIST_SIZE || attempts >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
-      attempts++;
+    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, params.fetchImpl);
 
-      let prebook: HotelPrebook;
-      try {
-        prebook = await prebookOffer(candidate.rate.offerId, params.fetchImpl);
-      } catch {
-        invalidHotelIds.add(candidate.hotel.hotelId); // lost availability, or PREBOOK itself failed — never retried this resolution.
-        continue;
-      }
-      if (prebook.hotelId !== candidate.hotel.hotelId || !classifyHotelAutoBookability(prebook.rooms).autoBookable) {
-        invalidHotelIds.add(candidate.hotel.hotelId); // NRFN, unsafe window, or otherwise not auto-bookable — never retried this resolution.
-        continue;
-      }
-
-      validated.push({ hotel: candidate.hotel, distanceToStadiumKm: candidate.distanceToStadiumKm, prebook });
-    }
-
-    if (validated.length >= HOTEL_SHORTLIST_SIZE || attempts >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
+    if (validated.length >= HOTEL_SHORTLIST_SIZE || attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
   }
 
-  return validated;
+  // Last-resort cityName/countryCode fallback — only when the radius
+  // progression alone didn't reach a full shortlist, there's still
+  // budget to spend on it, and there's an actual city to search (an
+  // empty Trip.city can't produce a meaningful cityName search).
+  if (validated.length < HOTEL_SHORTLIST_SIZE && attemptsRef.count < MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION && params.cityName) {
+    const fallbackResult = await searchHotels({
+      cityName: params.cityName,
+      countryCode: params.countryCode,
+      checkin: params.checkin,
+      checkout: params.checkout,
+      currency: params.currency,
+      guestNationality: params.guestNationality,
+      mix: params.mix,
+      fetchImpl: params.fetchImpl,
+    });
+    for (const hotel of fallbackResult.hotels) byHotelId.set(hotel.hotelId, hotel);
+
+    const excludeHotelIds = new Set<string>([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]);
+    const ranked = buildHotelShortlist({
+      hotels: [...byHotelId.values()],
+      stadium: params.stadium,
+      maxResults: MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION,
+      excludeHotelIds,
+    });
+
+    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, params.fetchImpl);
+  }
+
+  // Precise, not a guess: only "true" when the already-fetched SEARCH
+  // pool genuinely still has at least one untried candidate left over —
+  // i.e. we stopped because of our own attempt cap, not because we ran
+  // out of real candidates to try (which is simply "no inventory").
+  const stillUntried = buildHotelShortlist({
+    hotels: [...byHotelId.values()],
+    stadium: params.stadium,
+    maxResults: 1,
+    excludeHotelIds: new Set([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]),
+  });
+  const budgetExhausted = validated.length < HOTEL_SHORTLIST_SIZE && attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION && stillUntried.length > 0;
+
+  return { validated, budgetExhausted };
 }
 
 export type { RealFlightSegmentDTO, RealFlightSliceDTO, RealCommercialProductDTO, StoredFlightOffer };
