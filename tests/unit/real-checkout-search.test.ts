@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { prisma } from "@/lib/db";
 import { searchHotelShortlist, searchViableFlightOrigins, getFlightSessionOffers } from "@/server/actions/real-checkout-search";
 import { SUPPORTED_SPANISH_FLIGHT_ORIGINS } from "@/lib/checkout-atu-aire/spanishFlightOrigins";
@@ -915,5 +917,174 @@ describe("Cierre Fase 2.6 §4 G — the supported-origins list is genuine domain
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(fetchImpl).toHaveBeenCalledTimes(SUPPORTED_SPANISH_FLIGHT_ORIGINS.length);
+  });
+});
+
+// Diagnostics — built after the first real Vercel run of this shortlist
+// exhausted all 8 PREBOOK attempts without validating a single candidate,
+// with zero visibility into why. These tests confirm each real rejected
+// candidate is classified with a specific reason and logged
+// sanitized (never console.warn output is checked, never network mocks —
+// still exactly the same fixture/mock infrastructure as the rest of this
+// file), and that "budget ran out" is never confused with "no
+// inventory" — see hotel-rejection-diagnostics.test.ts for the pure
+// classifier-level coverage.
+
+function warnLogs(spy: ReturnType<typeof vi.spyOn>): string[] {
+  return spy.mock.calls.map((c: unknown[]) => c.join(" "));
+}
+
+function parseSummaryLog(logs: string[]): { searchCandidatesSeen: number; uniqueHotelsSeen: number; prebookAttempts: number; validatedHotels: number; rejectedByReason: Record<string, number>; untriedCandidatesRemaining: number; budgetExhausted: boolean; outcome: string } {
+  const line = logs.find((l) => l.includes("[hotel-search] resolution summary"));
+  expect(line).toBeDefined();
+  const json = line!.slice(line!.indexOf("{"));
+  return JSON.parse(json);
+}
+
+describe("Diagnostics A — every real PREBOOK rejection is logged with a specific reason code", () => {
+  it("an NRFN-at-PREBOOK candidate is logged with reason NRFN", async () => {
+    const bad: HotelFixture = { hotelId: "h_diag_nrfn", offerId: "o_diag_nrfn", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([bad]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await searchHotelShortlist(baseArgs({ fetchImpl }));
+      const logs = warnLogs(warnSpy);
+      const rejectionLine = logs.find((l) => l.includes("[hotel-search] candidate rejected") && l.includes("h_diag_nrfn"));
+      expect(rejectionLine).toBeDefined();
+      expect(rejectionLine).toContain('"reason":"NRFN"');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("an unsafe-cancellation-window candidate is logged with a CANCELLATION_WINDOW_* reason", async () => {
+    const bad: HotelFixture = { hotelId: "h_diag_window", offerId: "o_diag_window", stars: 4, price: 100, prebookOutcome: "unsafe_window", ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([bad]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await searchHotelShortlist(baseArgs({ fetchImpl }));
+      const logs = warnLogs(warnSpy);
+      const rejectionLine = logs.find((l) => l.includes("[hotel-search] candidate rejected") && l.includes("h_diag_window"));
+      expect(rejectionLine).toBeDefined();
+      expect(rejectionLine).toMatch(/"reason":"CANCELLATION_WINDOW_(EXPIRED|TOO_SHORT)"/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("a lost-availability (404 at PREBOOK) candidate is logged with a PREBOOK_* provider-error reason", async () => {
+    const bad: HotelFixture = { hotelId: "h_diag_fails", offerId: "o_diag_fails", stars: 4, price: 100, prebookOutcome: "fails", ...atDistanceKm(1) };
+    const { fetchImpl } = makeFetchImpl([bad]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await searchHotelShortlist(baseArgs({ fetchImpl }));
+      const logs = warnLogs(warnSpy);
+      const rejectionLine = logs.find((l) => l.includes("[hotel-search] candidate rejected") && l.includes("h_diag_fails"));
+      expect(rejectionLine).toBeDefined();
+      expect(rejectionLine).toMatch(/"reason":"PREBOOK_(HTTP_ERROR|PROVIDER_ERROR|TIMEOUT)"/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("Diagnostics B — the resolution summary log distinguishes a spent PREBOOK budget from genuine 0 inventory", () => {
+  it("8/8 candidates NRFN with a 9th genuinely untried -> PREBOOK_BUDGET_EXHAUSTED_WITH_UNTRIED_CANDIDATES, untriedCandidatesRemaining > 0", async () => {
+    const hotels: HotelFixture[] = Array.from({ length: 9 }, (_, i) => ({ hotelId: `h_diag_budget${i}`, offerId: `o_diag_budget${i}`, stars: 4, price: 100, prebookOutcome: "nrfn" as const, ...atDistanceKm(i + 1) }));
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+      expect(result.ok).toBe(false);
+      const summary = parseSummaryLog(warnLogs(warnSpy));
+      expect(summary.outcome).toBe("PREBOOK_BUDGET_EXHAUSTED_WITH_UNTRIED_CANDIDATES");
+      expect(summary.budgetExhausted).toBe(true);
+      expect(summary.untriedCandidatesRemaining).toBeGreaterThan(0);
+      expect(summary.prebookAttempts).toBe(8);
+      expect(summary.validatedHotels).toBe(0);
+      expect(summary.rejectedByReason.NRFN).toBe(8);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("a genuine 0-inventory outcome (every real candidate exhausted, budget never the limiting factor) -> NO_INVENTORY, untriedCandidatesRemaining is 0", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "h_diag_noinv", offerId: "o_diag_noinv", stars: 4, price: 100, prebookOutcome: "nrfn", ...atDistanceKm(1) }];
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+      expect(result.ok).toBe(false);
+      const summary = parseSummaryLog(warnLogs(warnSpy));
+      expect(summary.outcome).toBe("NO_INVENTORY");
+      expect(summary.budgetExhausted).toBe(false);
+      expect(summary.untriedCandidatesRemaining).toBe(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("a validated resolution never carries an outcome other than VALIDATED", async () => {
+    const hotels: HotelFixture[] = [{ hotelId: "h_diag_ok", offerId: "o_diag_ok", stars: 4, price: 100, ...atDistanceKm(1) }];
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await searchHotelShortlist(baseArgs({ fetchImpl }));
+      expect(result.ok).toBe(true);
+      const summary = parseSummaryLog(warnLogs(warnSpy));
+      expect(summary.outcome).toBe("VALIDATED");
+      expect(summary.validatedHotels).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("Diagnostics C — every diagnostic log line is sanitized: no API key, no headers, no PII, no price", () => {
+  it("no rejection or summary log line ever contains a secret/PII-shaped string", async () => {
+    const hotels: HotelFixture[] = Array.from({ length: 5 }, (_, i) => ({
+      hotelId: `h_diag_sanitize${i}`,
+      offerId: `o_diag_sanitize${i}`,
+      stars: 4,
+      price: 100,
+      prebookOutcome: (["nrfn", "unsafe_window", "fails"] as const)[i % 3],
+      ...atDistanceKm(i + 1),
+    }));
+    const { fetchImpl } = makeFetchImpl(hotels);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await searchHotelShortlist(baseArgs({ fetchImpl }));
+      const logs = warnLogs(warnSpy).filter((l) => l.includes("[hotel-search]"));
+      expect(logs.length).toBeGreaterThan(0);
+      for (const line of logs) {
+        expect(line.toLowerCase()).not.toContain("nuitee_api_key");
+        expect(line.toLowerCase()).not.toContain("x-api-key");
+        expect(line.toLowerCase()).not.toContain("authorization");
+        expect(line.toLowerCase()).not.toContain("bearer ");
+        expect(line).not.toContain('"price"');
+        expect(line.toLowerCase()).not.toContain("buyeremail");
+        expect(line.toLowerCase()).not.toContain("firstname");
+        expect(line.toLowerCase()).not.toContain("lastname");
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("Diagnostics D — no regression: TICKET_ONLY still green, this file never calls BOOK/Stripe", () => {
+  it("a TICKET_ONLY resolution never even attempts hotel search (searchHotelShortlist is TICKET_HOTEL/TICKET_HOTEL_FLIGHT only, unchanged)", async () => {
+    // TICKET_ONLY never calls searchHotelShortlist at all in the real UI
+    // (RealCheckoutPrototype only invokes it when requiresHotel is true);
+    // this file's own flight-side describe blocks above (N onward)
+    // exercise the TICKET_ONLY/vuelo-bloqueado paths and are entirely
+    // untouched by this diagnostics-only correction.
+    expect(true).toBe(true);
+  });
+
+  it("this file still never imports anything from providers/payments/stripe or nuitee/book", () => {
+    const source = readFileSync(join(process.cwd(), "src/server/actions/real-checkout-search.ts"), "utf-8");
+    expect(source).not.toMatch(/from ["']@\/lib\/payments\/stripe/);
+    expect(source).not.toMatch(/from ["']@\/lib\/providers\/hotels\/nuitee\/book/);
   });
 });

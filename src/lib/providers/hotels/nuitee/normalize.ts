@@ -120,6 +120,7 @@ export function normalizeRoom(raw: RawRate): HotelRoom {
     excludedTaxesAndFees: excluded,
     refundable: raw.cancellationPolicies?.refundableTag === "RFN",
     freeCancellationUntil: computeFreeCancellationUntil(raw.cancellationPolicies?.refundableTag, raw.cancellationPolicies?.cancelPolicyInfos),
+    cancelPolicyInfoCount: raw.cancellationPolicies?.cancelPolicyInfos?.length ?? 0,
   };
 }
 

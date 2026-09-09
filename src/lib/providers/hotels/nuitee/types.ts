@@ -46,6 +46,17 @@ export type HotelRoom = {
    * cancelPolicyInfos is null here, not a guessed date.
    */
   freeCancellationUntil: string | null;
+  /**
+   * Diagnostic-only — the raw count of cancellationPolicies.cancelPolicyInfos
+   * entries Nuitee returned for this room, never used to decide
+   * refundable/freeCancellationUntil (that's computeFreeCancellationUntil's
+   * job alone). Lets a rejection-reason classifier tell "no schedule at
+   * all" (0) apart from "a schedule exists but doesn't prove free-now"
+   * (>0) without re-parsing raw provider JSON. Optional so existing
+   * fixtures/tests that build a HotelRoom by hand never need to know
+   * about it.
+   */
+  cancelPolicyInfoCount?: number;
 };
 
 export type HotelRate = {

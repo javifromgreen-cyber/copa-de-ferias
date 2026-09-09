@@ -10,6 +10,15 @@ import { computeQuote } from "@/lib/pricing/quote";
 import { isoCountryCodeForTripCountry } from "@/lib/checkout-atu-aire/tripCountryCode";
 import { buildHotelShortlist, HOTEL_SHORTLIST_SIZE } from "@/lib/checkout-atu-aire/hotelAutoSelection";
 import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility";
+import {
+  classifyPrebookError,
+  classifyPrebookRejection,
+  refundableTagOf,
+  resolutionOutcome,
+  type CandidateRejectionLog,
+  type HotelRejectionReason,
+  type ResolutionSummaryLog,
+} from "@/lib/checkout-atu-aire/hotelRejectionDiagnostics";
 import type { HotelOption, HotelPrebook } from "@/lib/providers/hotels/nuitee/types";
 import type { LatLng } from "@/lib/geo/distance";
 import { searchDirectRoundTripOffers } from "@/lib/providers/flights/duffel/roundTripSearch";
@@ -277,21 +286,42 @@ type ResolveHotelShortlistResult = {
 };
 
 /**
+ * Sanitized, single-line, grep-friendly diagnostic for exactly one
+ * rejected candidate — see hotelRejectionDiagnostics.ts's own doc
+ * comment for the full field list and what's deliberately excluded
+ * (NUITEE_API_KEY, headers, PII/buyer data, any price/cost figure).
+ */
+function logCandidateRejection(entry: CandidateRejectionLog): void {
+  console.warn(`[hotel-search] candidate rejected ${JSON.stringify(entry)}`);
+}
+
+/**
  * PREBOOKs each ranked candidate (already excluding anything validated
  * or found invalid earlier this resolution) in order, up to whatever is
- * left of the shared attempt budget, mutating `validated`/`invalidHotelIds`
- * in place. Shared by both the radius-progression loop and the
- * cityName/countryCode fallback tier below so the exact same
- * validation/exclusion logic runs in both — the only difference between
- * the two tiers is where their candidates came from.
+ * left of the shared attempt budget, mutating `validated`/`invalidHotelIds`/
+ * `rejectedByReason` in place. Shared by both the radius-progression loop
+ * and the cityName/countryCode fallback tier below so the exact same
+ * validation/exclusion/diagnostic logic runs in both — the only
+ * difference between the two tiers is where their candidates came from.
+ *
+ * The accept/reject decision itself is unchanged from before this
+ * correction (still exactly `prebook.hotelId !== candidate.hotel.hotelId
+ * || !classifyHotelAutoBookability(prebook.rooms).autoBookable`) — the
+ * classifiers below only explain WHY an already-rejected candidate was
+ * rejected, they never influence the decision.
  */
 async function prebookValidateRanked(
   ranked: ReturnType<typeof buildHotelShortlist>,
   validated: ValidatedHotelCandidate[],
   invalidHotelIds: Set<string>,
   attemptsRef: { count: number },
+  rejectedByReason: Partial<Record<HotelRejectionReason, number>>,
   fetchImpl: typeof fetch | undefined,
 ): Promise<void> {
+  const countReason = (reason: HotelRejectionReason) => {
+    rejectedByReason[reason] = (rejectedByReason[reason] ?? 0) + 1;
+  };
+
   for (const candidate of ranked) {
     if (validated.length >= HOTEL_SHORTLIST_SIZE || attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
     attemptsRef.count++;
@@ -299,12 +329,43 @@ async function prebookValidateRanked(
     let prebook: HotelPrebook;
     try {
       prebook = await prebookOffer(candidate.rate.offerId, fetchImpl);
-    } catch {
+    } catch (err) {
       invalidHotelIds.add(candidate.hotel.hotelId); // lost availability, or PREBOOK itself failed — never retried this resolution.
+      const { reason, providerErrorCode } = classifyPrebookError(err);
+      countReason(reason);
+      logCandidateRejection({
+        hotelId: candidate.hotel.hotelId,
+        hotelName: candidate.hotel.name,
+        offerId: candidate.rate.offerId,
+        distanceToStadiumKm: candidate.distanceToStadiumKm,
+        reason,
+        refundableTag: "UNKNOWN",
+        cancellationPolicyCount: null,
+        cancellationDeadline: null,
+        safeCancellationUntil: null,
+        autoBookability: "UNKNOWN",
+        providerErrorCode,
+      });
       continue;
     }
+
     if (prebook.hotelId !== candidate.hotel.hotelId || !classifyHotelAutoBookability(prebook.rooms).autoBookable) {
       invalidHotelIds.add(candidate.hotel.hotelId); // NRFN, unsafe window, or otherwise not auto-bookable — never retried this resolution.
+      const { reason, detail } = classifyPrebookRejection(candidate.hotel.hotelId, prebook);
+      countReason(reason);
+      logCandidateRejection({
+        hotelId: candidate.hotel.hotelId,
+        hotelName: candidate.hotel.name,
+        offerId: candidate.rate.offerId,
+        distanceToStadiumKm: candidate.distanceToStadiumKm,
+        reason,
+        refundableTag: refundableTagOf(prebook.rooms),
+        cancellationPolicyCount: detail.cancellationPolicyCount,
+        cancellationDeadline: detail.cancellationDeadline,
+        safeCancellationUntil: detail.safeCancellationUntil,
+        autoBookability: detail.autoBookability,
+        providerErrorCode: null,
+      });
       continue;
     }
 
@@ -355,6 +416,8 @@ async function resolveValidatedHotelShortlist(params: {
   const invalidHotelIds = new Set<string>();
   const validated: ValidatedHotelCandidate[] = [];
   const attemptsRef = { count: 0 };
+  const rejectedByReason: Partial<Record<HotelRejectionReason, number>> = {};
+  let searchCandidatesSeen = 0;
 
   for (const radiusKm of HOTEL_SEARCH_RADIUS_PROGRESSION_KM) {
     const searchResult = await searchHotels({
@@ -368,6 +431,7 @@ async function resolveValidatedHotelShortlist(params: {
       mix: params.mix,
       fetchImpl: params.fetchImpl,
     });
+    searchCandidatesSeen += searchResult.hotels.length;
     for (const hotel of searchResult.hotels) byHotelId.set(hotel.hotelId, hotel);
 
     const excludeHotelIds = new Set<string>([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]);
@@ -378,7 +442,7 @@ async function resolveValidatedHotelShortlist(params: {
       excludeHotelIds,
     });
 
-    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, params.fetchImpl);
+    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, rejectedByReason, params.fetchImpl);
 
     if (validated.length >= HOTEL_SHORTLIST_SIZE || attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION) break;
   }
@@ -398,6 +462,7 @@ async function resolveValidatedHotelShortlist(params: {
       mix: params.mix,
       fetchImpl: params.fetchImpl,
     });
+    searchCandidatesSeen += fallbackResult.hotels.length;
     for (const hotel of fallbackResult.hotels) byHotelId.set(hotel.hotelId, hotel);
 
     const excludeHotelIds = new Set<string>([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]);
@@ -408,20 +473,34 @@ async function resolveValidatedHotelShortlist(params: {
       excludeHotelIds,
     });
 
-    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, params.fetchImpl);
+    await prebookValidateRanked(ranked, validated, invalidHotelIds, attemptsRef, rejectedByReason, params.fetchImpl);
   }
 
-  // Precise, not a guess: only "true" when the already-fetched SEARCH
-  // pool genuinely still has at least one untried candidate left over —
-  // i.e. we stopped because of our own attempt cap, not because we ran
-  // out of real candidates to try (which is simply "no inventory").
-  const stillUntried = buildHotelShortlist({
+  // Precise, not a guess: the already-fetched SEARCH pool's genuinely
+  // untried candidates — i.e. everything neither validated nor found
+  // invalid this resolution. A non-empty remainder here (combined with
+  // having hit the attempt cap) is what tells "we stopped because of our
+  // own budget" apart from "we ran out of real candidates to try" (which
+  // is simply no inventory) — see resolutionOutcome.
+  const untried = buildHotelShortlist({
     hotels: [...byHotelId.values()],
     stadium: params.stadium,
-    maxResults: 1,
+    maxResults: byHotelId.size,
     excludeHotelIds: new Set([...invalidHotelIds, ...validated.map((v) => v.hotel.hotelId)]),
   });
-  const budgetExhausted = validated.length < HOTEL_SHORTLIST_SIZE && attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION && stillUntried.length > 0;
+  const budgetExhausted = validated.length < HOTEL_SHORTLIST_SIZE && attemptsRef.count >= MAX_PREBOOK_ATTEMPTS_PER_RESOLUTION && untried.length > 0;
+
+  const summary: ResolutionSummaryLog = {
+    searchCandidatesSeen,
+    uniqueHotelsSeen: byHotelId.size,
+    prebookAttempts: attemptsRef.count,
+    validatedHotels: validated.length,
+    rejectedByReason,
+    untriedCandidatesRemaining: untried.length,
+    budgetExhausted,
+    outcome: resolutionOutcome(validated.length, budgetExhausted),
+  };
+  console.warn(`[hotel-search] resolution summary ${JSON.stringify(summary)}`);
 
   return { validated, budgetExhausted };
 }
