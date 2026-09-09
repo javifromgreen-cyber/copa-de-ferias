@@ -13,8 +13,10 @@ import { classifyHotelAutoBookability } from "@/lib/checkout-saga/reversibility"
 import {
   classifyPrebookError,
   classifyPrebookRejection,
+  offerIdPrefix,
   refundableTagOf,
   resolutionOutcome,
+  sanitizeCancelPolicyInfos,
   type CandidateRejectionLog,
   type HotelRejectionReason,
   type ResolutionSummaryLog,
@@ -336,7 +338,7 @@ async function prebookValidateRanked(
       logCandidateRejection({
         hotelId: candidate.hotel.hotelId,
         hotelName: candidate.hotel.name,
-        offerId: candidate.rate.offerId,
+        offerIdPrefix: offerIdPrefix(candidate.rate.offerId),
         distanceToStadiumKm: candidate.distanceToStadiumKm,
         reason,
         refundableTag: "UNKNOWN",
@@ -345,6 +347,7 @@ async function prebookValidateRanked(
         safeCancellationUntil: null,
         autoBookability: "UNKNOWN",
         providerErrorCode,
+        cancellationPolicies: [], // PREBOOK itself never responded — no policy evidence to show.
       });
       continue;
     }
@@ -356,7 +359,7 @@ async function prebookValidateRanked(
       logCandidateRejection({
         hotelId: candidate.hotel.hotelId,
         hotelName: candidate.hotel.name,
-        offerId: candidate.rate.offerId,
+        offerIdPrefix: offerIdPrefix(candidate.rate.offerId),
         distanceToStadiumKm: candidate.distanceToStadiumKm,
         reason,
         refundableTag: refundableTagOf(prebook.rooms),
@@ -365,6 +368,7 @@ async function prebookValidateRanked(
         safeCancellationUntil: detail.safeCancellationUntil,
         autoBookability: detail.autoBookability,
         providerErrorCode: null,
+        cancellationPolicies: sanitizeCancelPolicyInfos(prebook.rooms),
       });
       continue;
     }

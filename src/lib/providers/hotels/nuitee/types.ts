@@ -19,6 +19,24 @@ export type TaxAndFee = {
 };
 
 /**
+ * Fase 3B.2 §4, corrected — one entry of Nuitee/LiteAPI's own time-based
+ * cancellation fee schedule: "cancelling on/after `cancelTime` costs
+ * `amount`". `cancelTime` is preserved verbatim exactly as the provider
+ * sent it (its real shape is an offset-less "YYYY-MM-DD HH:mm:ss" string
+ * — never assume ISO-with-Z); see normalize.ts's parseNuiteeCancelTime
+ * for how it's actually turned into a real UTC instant, using
+ * `timezone`. Kept in full (not just a count) so a rejection-reason
+ * diagnostic can show real evidence, never a guess.
+ */
+export type CancelPolicyInfo = {
+  cancelTime: string;
+  amount: number;
+  currency: string | null;
+  type: string | null;
+  timezone: string | null;
+};
+
+/**
  * One physical room within a rate combination, identified by
  * occupancyNumber (1, 2, 3...) — this is the same numbering Copa de
  * Ferias' own occupancies[] request used to ask for it (see
@@ -47,16 +65,17 @@ export type HotelRoom = {
    */
   freeCancellationUntil: string | null;
   /**
-   * Diagnostic-only — the raw count of cancellationPolicies.cancelPolicyInfos
-   * entries Nuitee returned for this room, never used to decide
-   * refundable/freeCancellationUntil (that's computeFreeCancellationUntil's
-   * job alone). Lets a rejection-reason classifier tell "no schedule at
-   * all" (0) apart from "a schedule exists but doesn't prove free-now"
-   * (>0) without re-parsing raw provider JSON. Optional so existing
-   * fixtures/tests that build a HotelRoom by hand never need to know
-   * about it.
+   * The raw cancellationPolicies.cancelPolicyInfos entries Nuitee
+   * returned for this room, preserved in full — never used to decide
+   * refundable/freeCancellationUntil directly (that's
+   * computeFreeCancellationUntil's job alone, from the SAME data). Lets
+   * a rejection-reason diagnostic tell "no schedule at all" (empty)
+   * apart from "a schedule exists but doesn't prove free-now" (has
+   * entries, none chargeable, or unparseable), and show the real
+   * evidence in a sanitized log. Optional so existing fixtures/tests
+   * that build a HotelRoom by hand never need to know about it.
    */
-  cancelPolicyInfoCount?: number;
+  cancelPolicyInfos?: CancelPolicyInfo[];
 };
 
 export type HotelRate = {

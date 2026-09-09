@@ -24,16 +24,19 @@ type RawAmount = { amount: number; currency: string };
 type RawTaxAndFee = { included: boolean; description: string; amount: number; currency: string };
 type RawRetailRate = { total: RawAmount[]; taxesAndFees?: RawTaxAndFee[] };
 /**
- * Fase 3B.2 §4 — `cancelPolicyInfos` is Nuitee's own time-based fee
- * schedule (each entry: "cancelling on/after `cancelTime` costs `amount`").
- * Real sandbox captures seen so far always returned this as `[]`, even for
- * an NRFN room — so this codebase has never actually observed a populated
- * schedule. Parsed defensively here regardless: see
- * computeFreeCancellationUntil below for exactly how a genuine free-window
- * deadline is derived from it, and its own doc comment for why an empty
- * array is treated as "no evidence" rather than "free forever".
+ * Fase 3B.2 §4, corrected after the first real Vercel TICKET_HOTEL run —
+ * `cancelPolicyInfos` is Nuitee/LiteAPI's own time-based fee schedule:
+ * each entry means "cancelling on/after `cancelTime` costs `amount`".
+ * Real Production PREBOOK responses DO populate this (contrary to this
+ * codebase's earlier sandbox captures, which only ever saw `[]`) — see
+ * computeFreeCancellationUntil below for exactly how a genuine
+ * free-window deadline is derived from it. `cancelTime` is LiteAPI's own
+ * offset-less "YYYY-MM-DD HH:mm:ss" format (never assume ISO-with-Z), so
+ * `timezone` (LiteAPI's documented default: "GMT") must be interpreted
+ * explicitly rather than handed to `new Date()` as-is — see
+ * parseNuiteeCancelTime.
  */
-type RawCancelPolicyInfo = { cancelTime: string; amount: number };
+type RawCancelPolicyInfo = { cancelTime: string; amount: number; currency?: string; type?: string; timezone?: string };
 export type RawRate = {
   occupancyNumber: number;
   name?: string;
@@ -83,23 +86,65 @@ export function normalizeTaxesAndFees(raw: RawTaxAndFee[] | undefined): { includ
 }
 
 /**
- * Fase 3B.2 §4 — the real, evidence-based free-cancellation deadline for
- * one room, NEVER inferred from `refundableTag` alone ("No asumir: RFN ==
- * siempre gratis"). Only ever non-null when the schedule itself proves a
- * free window: NRFN rooms never get one, and an RFN room with an empty or
- * missing `cancelPolicyInfos` (the only shape this codebase has ever
- * actually observed in a real sandbox capture) stays null too — "we don't
- * know" is a distinct, honest outcome from "not refundable", never
- * collapsed into it. When populated, the earliest-dated entry describes
- * the boundary a fee schedule starts from; if that boundary itself already
- * carries a nonzero fee, cancellation is not free even right now, so this
- * still returns null rather than a fabricated "free until" instant.
+ * Nuitee/LiteAPI's `cancelTime` has no UTC offset of its own
+ * ("YYYY-MM-DD HH:mm:ss") — handing that straight to `new Date()` is
+ * implementation-defined (V8 treats it as the RUNTIME's local time, not
+ * necessarily UTC), which is exactly the kind of environment-dependent
+ * bug this codebase must never risk on a real cancellation deadline.
+ * Only an explicitly-recognized timezone is resolved (LiteAPI's own
+ * documented default and the only value observed so far: "GMT"/"UTC");
+ * anything else is left unparsed — `null` — rather than guessed at. A
+ * `cancelTime` that already carries its own offset/`Z` (defensive, in
+ * case a future response shape includes one) is parsed directly, since
+ * that's unambiguous regardless of `timezone`.
+ */
+function parseNuiteeCancelTime(cancelTime: string, timezone: string | undefined): Date | null {
+  const trimmed = cancelTime.trim();
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    const direct = new Date(trimmed);
+    return Number.isNaN(direct.getTime()) ? null : direct;
+  }
+  const tz = (timezone ?? "GMT").trim().toUpperCase();
+  if (tz !== "GMT" && tz !== "UTC") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s] = match;
+  const asUtc = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
+  return Number.isNaN(asUtc.getTime()) ? null : asUtc;
+}
+
+/**
+ * Fase 3B.2 §4, corrected — the real, evidence-based free-cancellation
+ * deadline for one room, NEVER inferred from `refundableTag` alone ("No
+ * asumir: RFN == siempre gratis"). NRFN rooms never get one, and an RFN
+ * room with an empty/missing `cancelPolicyInfos` stays null too — "we
+ * don't know" is a distinct, honest outcome from "not refundable", never
+ * collapsed into it.
+ *
+ * A `cancelPolicyInfo` entry means "cancelling on/after `cancelTime`
+ * costs `amount`" — so the free-cancellation deadline is the EARLIEST
+ * entry that actually carries a fee (`amount > 0`), never simply the
+ * earliest cancelTime regardless of amount (the previous version of this
+ * function had that inverted — see the real Vercel diagnostic that
+ * caught it: every genuine candidate came back
+ * CANCELLATION_POLICY_AMBIGUOUS despite having exactly the evidence
+ * needed). An `amount === 0` entry carries no financial penalty and is
+ * skipped in favor of the next chargeable one, per LiteAPI's own
+ * schedule semantics; entries are sorted chronologically first since the
+ * provider never guarantees array order. If NO entry ever carries a fee,
+ * this still returns null rather than inventing "free forever" — the
+ * schedule genuinely doesn't prove a deadline either way. Only a
+ * cancelTime this module can actually parse (see parseNuiteeCancelTime)
+ * counts; an unparseable one is skipped, never guessed at.
  */
 export function computeFreeCancellationUntil(refundableTag: "RFN" | "NRFN" | undefined, infos: RawCancelPolicyInfo[] | undefined): string | null {
   if (refundableTag !== "RFN" || !infos || infos.length === 0) return null;
-  const sorted = [...infos].sort((a, b) => new Date(a.cancelTime).getTime() - new Date(b.cancelTime).getTime());
-  if (sorted[0].amount !== 0) return null;
-  return sorted[0].cancelTime;
+  const parsed = infos
+    .map((info) => ({ info, at: parseNuiteeCancelTime(info.cancelTime, info.timezone) }))
+    .filter((p): p is { info: RawCancelPolicyInfo; at: Date } => p.at !== null)
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  const firstChargeable = parsed.find((p) => p.info.amount > 0);
+  return firstChargeable ? firstChargeable.at.toISOString() : null;
 }
 
 /** Shared by SEARCH (roomTypes[].rates[]) and PREBOOK (same nested shape, leaner — no name/maxOccupancy guaranteed). */
@@ -120,7 +165,13 @@ export function normalizeRoom(raw: RawRate): HotelRoom {
     excludedTaxesAndFees: excluded,
     refundable: raw.cancellationPolicies?.refundableTag === "RFN",
     freeCancellationUntil: computeFreeCancellationUntil(raw.cancellationPolicies?.refundableTag, raw.cancellationPolicies?.cancelPolicyInfos),
-    cancelPolicyInfoCount: raw.cancellationPolicies?.cancelPolicyInfos?.length ?? 0,
+    cancelPolicyInfos: (raw.cancellationPolicies?.cancelPolicyInfos ?? []).map((i) => ({
+      cancelTime: i.cancelTime,
+      amount: i.amount,
+      currency: i.currency ?? null,
+      type: i.type ?? null,
+      timezone: i.timezone ?? null,
+    })),
   };
 }
 

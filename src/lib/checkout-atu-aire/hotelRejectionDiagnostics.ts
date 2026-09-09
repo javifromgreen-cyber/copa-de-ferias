@@ -34,11 +34,15 @@ export type HotelRejectionReason =
   | "ROOMING_MISMATCH"
   | "OTHER_VALIDATION_FAILURE";
 
+/** One cancelPolicyInfo entry, sanitized for logging — the room's rate/cost isn't here, only the cancellation fee schedule itself (public commercial terms of the rate, not PII). */
+export type SanitizedCancelPolicyLog = { cancelTime: string; amount: number; currency: string | null; type: string | null; timezone: string | null };
+
 /** Sanitized, safe-to-log detail for exactly one rejected candidate — never a price/cost figure, never anything from headers/PII/buyer data. */
 export type CandidateRejectionLog = {
   hotelId: string;
   hotelName: string;
-  offerId: string;
+  /** Never the full offerId — see offerIdPrefix's own doc comment for why. */
+  offerIdPrefix: string;
   distanceToStadiumKm: number;
   reason: HotelRejectionReason;
   refundableTag: "RFN" | "NRFN" | "MIXED" | "UNKNOWN";
@@ -47,7 +51,45 @@ export type CandidateRejectionLog = {
   safeCancellationUntil: string | null;
   autoBookability: string;
   providerErrorCode: string | null;
+  /**
+   * Temporary diagnostic scaffolding for the cancellation-policy
+   * normalization correction — the real cancelPolicyInfos evidence
+   * behind `reason`/`cancellationDeadline`, sanitized (never a price
+   * beyond the policy's own public fee amount, never PII/headers/API
+   * key). Safe to trim once the fix is confirmed working against real
+   * Vercel traffic.
+   */
+  cancellationPolicies: SanitizedCancelPolicyLog[];
 };
+
+const MAX_LOGGED_CANCEL_POLICIES = 10;
+
+/** Collects every distinct cancelPolicyInfo across a candidate's rooms, sanitized, capped so one candidate's log line can never grow unbounded. */
+export function sanitizeCancelPolicyInfos(rooms: HotelRoom[]): SanitizedCancelPolicyLog[] {
+  const seen = new Set<string>();
+  const out: SanitizedCancelPolicyLog[] = [];
+  for (const room of rooms) {
+    for (const info of room.cancelPolicyInfos ?? []) {
+      const key = `${info.cancelTime}|${info.amount}|${info.currency}|${info.type}|${info.timezone}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ cancelTime: info.cancelTime, amount: info.amount, currency: info.currency, type: info.type, timezone: info.timezone });
+      if (out.length >= MAX_LOGGED_CANCEL_POLICIES) return out;
+    }
+  }
+  return out;
+}
+
+/**
+ * offerId is a long opaque token — logging it in full makes every
+ * candidate-rejected line unreadably long. A short, deterministic prefix
+ * is enough to eyeball/grep a specific candidate's log lines without
+ * bloating output; `hotelId` is still the real correlation key.
+ */
+const OFFER_ID_PREFIX_LENGTH = 12;
+export function offerIdPrefix(offerId: string): string {
+  return offerId.length <= OFFER_ID_PREFIX_LENGTH ? offerId : `${offerId.slice(0, OFFER_ID_PREFIX_LENGTH)}…`;
+}
 
 /**
  * Classifies a thrown PREBOOK call itself (no response ever evaluated) —
@@ -82,7 +124,7 @@ function earliestFreeCancellationDeadline(rooms: HotelRoom[]): string | null {
 }
 
 function minCancelPolicyInfoCount(rooms: HotelRoom[]): number | null {
-  const counts = rooms.map((r) => r.cancelPolicyInfoCount).filter((c): c is number => typeof c === "number");
+  const counts = rooms.map((r) => r.cancelPolicyInfos?.length).filter((c): c is number => typeof c === "number");
   if (counts.length === 0) return null;
   return Math.min(...counts);
 }
@@ -122,7 +164,7 @@ export function classifyPrebookRejection(
 
   const roomsMissingDeadline = prebook.rooms.filter((r) => !r.freeCancellationUntil);
   if (roomsMissingDeadline.length > 0) {
-    const allTrulyMissing = roomsMissingDeadline.every((r) => (r.cancelPolicyInfoCount ?? 0) === 0);
+    const allTrulyMissing = roomsMissingDeadline.every((r) => (r.cancelPolicyInfos?.length ?? 0) === 0);
     return { reason: allTrulyMissing ? "CANCELLATION_POLICY_MISSING" : "CANCELLATION_POLICY_AMBIGUOUS", detail };
   }
 

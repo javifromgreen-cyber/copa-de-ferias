@@ -104,7 +104,7 @@ function nuiteeSearchBody(hotels: HotelFixture[]) {
                   ? { refundableTag: "NRFN" }
                   : h.unknownCancellationInfo
                     ? { refundableTag: "RFN" } // RFN but no cancelPolicyInfos — the real Nuitee sandbox gap this correction stops discarding on.
-                    : { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] },
+                    : { refundableTag: "RFN", cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 100 }] }, // amount > 0: cancelling on/after this time costs a fee — that IS the free-cancellation deadline, per LiteAPI's own schedule semantics.
             },
           ],
         },
@@ -134,8 +134,8 @@ function nuiteePrebookBody(fixture: HotelFixture) {
     fixture.prebookOutcome === "nrfn"
       ? { refundableTag: "NRFN" as const }
       : fixture.prebookOutcome === "unsafe_window"
-        ? { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: UNSAFE_CANCEL_DEADLINE, amount: 0 }] }
-        : { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 0 }] };
+        ? { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: UNSAFE_CANCEL_DEADLINE, amount: 100 }] }
+        : { refundableTag: "RFN" as const, cancelPolicyInfos: [{ cancelTime: FUTURE_CANCEL_DEADLINE, amount: 100 }] }; // amount > 0 marks the real free-cancellation deadline (see computeFreeCancellationUntil's corrected semantics).
   return {
     data: {
       prebookId: `prebook_${fixture.offerId}`,

@@ -756,22 +756,56 @@ describe("cancelHotelBooking — PUT /v3.0/bookings/{bookingId}, correct contrac
   });
 });
 
-describe("computeFreeCancellationUntil — §4, never assumes RFN == free forever", () => {
+describe("computeFreeCancellationUntil — §4, corrected after the first real Vercel TICKET_HOTEL run", () => {
+  // Root cause of that run's CANCELLATION_POLICY_AMBIGUOUS x8: a
+  // cancelPolicyInfo entry means "cancelling on/after cancelTime costs
+  // amount" — the free-cancellation deadline is the EARLIEST entry that
+  // actually carries a fee (amount > 0), never simply the earliest
+  // cancelTime regardless of amount. The previous version of this
+  // function had that inverted (only returned a deadline when the
+  // earliest entry's amount WAS 0), so every real single-entry,
+  // amount>0 policy — the normal, expected shape — came back null.
   it("NRFN never gets a free-cancellation deadline, regardless of cancelPolicyInfos", () => {
-    expect(computeFreeCancellationUntil("NRFN", [{ cancelTime: "2026-01-01T00:00:00Z", amount: 0 }])).toBeNull();
+    expect(computeFreeCancellationUntil("NRFN", [{ cancelTime: "2026-01-01T00:00:00Z", amount: 100 }])).toBeNull();
   });
-  it("RFN with an empty cancelPolicyInfos (the only real sandbox shape observed so far) -> null, never assumed free", () => {
+  it("RFN with an empty/undefined cancelPolicyInfos -> null, never assumed free", () => {
     expect(computeFreeCancellationUntil("RFN", [])).toBeNull();
     expect(computeFreeCancellationUntil("RFN", undefined)).toBeNull();
   });
-  it("RFN with a real schedule whose earliest entry is free -> that entry's cancelTime", () => {
+  it("RFN whose earliest entry already carries a fee -> that entry's cancelTime IS the deadline (free cancellation ends the moment a fee first applies)", () => {
+    const deadline = computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-09-10T00:00:00Z", amount: 20 }]);
+    expect(deadline).toBe(new Date("2026-09-10T00:00:00Z").toISOString());
+  });
+  it("RFN with a real schedule -> the deadline is the FIRST chargeable (amount > 0) entry, never the earliest cancelTime regardless of amount", () => {
     const deadline = computeFreeCancellationUntil("RFN", [
       { cancelTime: "2026-09-10T00:00:00Z", amount: 0 },
       { cancelTime: "2026-09-20T00:00:00Z", amount: 50 },
     ]);
-    expect(deadline).toBe("2026-09-10T00:00:00Z");
+    expect(deadline).toBe(new Date("2026-09-20T00:00:00Z").toISOString());
   });
-  it("RFN whose earliest entry already carries a fee -> null (not free right now either)", () => {
-    expect(computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-09-10T00:00:00Z", amount: 20 }])).toBeNull();
+  it("every entry amount=0 (no chargeable tier at all) -> null, never invents 'free forever'", () => {
+    expect(computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-09-10T00:00:00Z", amount: 0 }])).toBeNull();
+  });
+  it("unordered entries are still interpreted chronologically, never assuming index 0 is the earliest", () => {
+    const deadline = computeFreeCancellationUntil("RFN", [
+      { cancelTime: "2026-09-20T00:00:00Z", amount: 50 },
+      { cancelTime: "2026-09-25T00:00:00Z", amount: 80 },
+      { cancelTime: "2026-09-10T00:00:00Z", amount: 0 },
+    ]);
+    expect(deadline).toBe(new Date("2026-09-20T00:00:00Z").toISOString());
+  });
+  it("Nuitee's real offset-less 'YYYY-MM-DD HH:mm:ss' + timezone: GMT shape is parsed as a genuine UTC instant, never the runtime's local time", () => {
+    const deadline = computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-12-15 10:00:00", amount: 100, timezone: "GMT" }]);
+    expect(deadline).toBe("2026-12-15T10:00:00.000Z");
+  });
+  it("the offset-less shape with no explicit timezone defaults to GMT, matching LiteAPI's own documented default", () => {
+    const deadline = computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-12-15 10:00:00", amount: 100 }]);
+    expect(deadline).toBe("2026-12-15T10:00:00.000Z");
+  });
+  it("a policy with an unparseable cancelTime never gets a deadline invented", () => {
+    expect(computeFreeCancellationUntil("RFN", [{ cancelTime: "not-a-date", amount: 100 }])).toBeNull();
+  });
+  it("a policy in an unrecognized timezone is left unparsed rather than guessed at", () => {
+    expect(computeFreeCancellationUntil("RFN", [{ cancelTime: "2026-12-15 10:00:00", amount: 100, timezone: "America/New_York" }])).toBeNull();
   });
 });

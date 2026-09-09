@@ -2,11 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   classifyPrebookError,
   classifyPrebookRejection,
+  offerIdPrefix,
   refundableTagOf,
   resolutionOutcome,
+  sanitizeCancelPolicyInfos,
 } from "@/lib/checkout-atu-aire/hotelRejectionDiagnostics";
 import { ProviderError } from "@/lib/providers/errors";
-import type { HotelPrebook, HotelRoom } from "@/lib/providers/hotels/nuitee/types";
+import type { CancelPolicyInfo, HotelPrebook, HotelRoom } from "@/lib/providers/hotels/nuitee/types";
+
+function cancelPolicyInfo(overrides: Partial<CancelPolicyInfo> = {}): CancelPolicyInfo {
+  return { cancelTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), amount: 0, currency: "EUR", type: "amount", timezone: "GMT", ...overrides };
+}
 
 // Built after the first real Vercel TICKET_HOTEL run exhausted the whole
 // PREBOOK attempt budget (8/8) without validating a single candidate,
@@ -27,7 +33,7 @@ function room(overrides: Partial<HotelRoom> = {}): HotelRoom {
     excludedTaxesAndFees: [],
     refundable: true,
     freeCancellationUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    cancelPolicyInfoCount: 1,
+    cancelPolicyInfos: [cancelPolicyInfo()],
     ...overrides,
   };
 }
@@ -87,12 +93,12 @@ describe("classifyPrebookRejection — PREBOOK responded, but failed the reversi
   });
 
   it("refundable with zero cancelPolicyInfos entries -> CANCELLATION_POLICY_MISSING (the real Nuitee sandbox gap)", () => {
-    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: null, cancelPolicyInfoCount: 0 })] }));
+    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: null, cancelPolicyInfos: [] })] }));
     expect(result.reason).toBe("CANCELLATION_POLICY_MISSING");
   });
 
   it("refundable with cancelPolicyInfos present but not proving free-now -> CANCELLATION_POLICY_AMBIGUOUS", () => {
-    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: null, cancelPolicyInfoCount: 2 })] }));
+    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: null, cancelPolicyInfos: [cancelPolicyInfo(), cancelPolicyInfo()] })] }));
     expect(result.reason).toBe("CANCELLATION_POLICY_AMBIGUOUS");
   });
 
@@ -115,11 +121,49 @@ describe("classifyPrebookRejection — PREBOOK responded, but failed the reversi
 
   it("carries the underlying evidence (deadline/safe-until/policy count/level) in its detail, never a price figure", () => {
     const pastDeadline = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: pastDeadline, cancelPolicyInfoCount: 1 })] }));
+    const result = classifyPrebookRejection("hotel_1", prebook({ rooms: [room({ freeCancellationUntil: pastDeadline, cancelPolicyInfos: [cancelPolicyInfo()] })] }));
     expect(result.detail.cancellationDeadline).toBe(pastDeadline);
     expect(result.detail.cancellationPolicyCount).toBe(1);
     expect(result.detail.autoBookability).toBe("UNKNOWN");
     expect(result.detail).not.toHaveProperty("price");
+  });
+});
+
+describe("sanitizeCancelPolicyInfos — temporary diagnostic scaffolding, deduplicated and capped", () => {
+  it("collects distinct entries across a candidate's rooms", () => {
+    const a = cancelPolicyInfo({ cancelTime: "2026-12-15 10:00:00", amount: 100, timezone: "GMT" });
+    const b = cancelPolicyInfo({ cancelTime: "2026-12-20 10:00:00", amount: 200, timezone: "GMT" });
+    const result = sanitizeCancelPolicyInfos([room({ cancelPolicyInfos: [a] }), room({ cancelPolicyInfos: [b] })]);
+    expect(result).toEqual([a, b]);
+  });
+
+  it("never duplicates the same entry seen on multiple rooms", () => {
+    const a = cancelPolicyInfo({ cancelTime: "2026-12-15 10:00:00", amount: 100, timezone: "GMT" });
+    const result = sanitizeCancelPolicyInfos([room({ cancelPolicyInfos: [a] }), room({ cancelPolicyInfos: [a] })]);
+    expect(result).toHaveLength(1);
+  });
+
+  it("caps the number of entries returned so a candidate's log line can never grow unbounded", () => {
+    const many = Array.from({ length: 25 }, (_, i) => cancelPolicyInfo({ cancelTime: `2026-12-${String((i % 27) + 1).padStart(2, "0")} 10:00:00`, amount: i + 1 }));
+    const result = sanitizeCancelPolicyInfos([room({ cancelPolicyInfos: many })]);
+    expect(result.length).toBeLessThanOrEqual(10);
+  });
+
+  it("no rooms / no policies -> empty array, never a guess", () => {
+    expect(sanitizeCancelPolicyInfos([room({ cancelPolicyInfos: [] })])).toEqual([]);
+  });
+});
+
+describe("offerIdPrefix — keeps candidate-rejected log lines readable", () => {
+  it("shortens a long offerId to a fixed-length prefix with an ellipsis", () => {
+    const long = "a".repeat(40);
+    const result = offerIdPrefix(long);
+    expect(result.length).toBeLessThan(long.length);
+    expect(long.startsWith(result.replace("…", ""))).toBe(true);
+  });
+
+  it("leaves a short offerId untouched", () => {
+    expect(offerIdPrefix("short_id")).toBe("short_id");
   });
 });
 
